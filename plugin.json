@@ -1,6 +1,6 @@
 {
   "id": "dev.auton.english-vocab",
-  "name": "English Vocab",
+  "name": "EnglishVocab",
   "version": "0.1.0",
   "description": "Collect English vocabulary from reading and review it with FSRS scheduling.",
   "runtime": {
