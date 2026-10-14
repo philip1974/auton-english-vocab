@@ -8,7 +8,7 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
 
 - 右侧面板 `English Vocab`：今日复习、生词本搜索、熟悉度标记、忽略与恢复。
 - 三种复习形式：翻卡、反向拼写、听音拼写。听音拼写会先调用 `speechSynthesis.cancel()`，因此会打断正在进行的朗读；没有英语声音时会禁用。
-- 选区动作「收为生词」支持 reading 和 web 两个 surface，会把请求追加到 Auton Knowledge 对话框，由 Agent 调用 `vocab_add`。
+- 选区动作「收为生词」支持 reading 和 web 两个 surface，会把请求追加到 Auton Knowledge 对话框，由 Agent 调用 `vocab_add`。网页里的右键收词需要开启了选区共享的网页面板，例如 Browser Panel 0.7.0 或更新。
 - Agent 工具：
   - `vocab_lookup { word }`
   - `vocab_add { entries }`
@@ -36,11 +36,11 @@ wiki/vocab/<slug>.md
 复习进度保存在宿主的插件存储里：
 
 ```text
-plugin-files/dev.auton.english-vocab/<rootKey>/review.json
-plugin-files/dev.auton.english-vocab/<rootKey>/log.json
+~/.auton/apps/auton-knowledge/plugin-files/dev.auton.english-vocab/<rootKey>/review.json
+~/.auton/apps/auton-knowledge/plugin-files/dev.auton.english-vocab/<rootKey>/log.json
 ```
 
-进度按知识库根目录分开保存，插件卸载时由宿主删除。
+进度按知识库文件夹的物理路径分开保存（移动或改名知识库文件夹后，进度不会跟着走），插件卸载时由宿主删除。
 
 ## 版本要求 / Requirements
 
