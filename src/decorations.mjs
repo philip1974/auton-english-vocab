@@ -33,6 +33,35 @@ function entryMap(entries) {
   return new Map((entries ?? []).map((entry) => [entry.word, entry]));
 }
 
+function dictionaryLineGroups(entry, locale) {
+  const zh = String(entry?.t ?? '').split('\n').filter(Boolean);
+  const en = String(entry?.d ?? '').split('\n').filter(Boolean);
+  const groups = locale.toLowerCase().startsWith('zh')
+    ? [['zh', zh], ['en', en]]
+    : [['en', en], ['zh', zh]];
+  return groups.filter(([, lines]) => lines.length > 0);
+}
+
+function renderDefinition(entry, locale) {
+  const wrapper = el('div', 'ev-dict-definition');
+  for (const [kind, lines] of dictionaryLineGroups(entry, locale)) {
+    const group = el('div', `ev-dict-lines ev-dict-lines-${kind}`);
+    for (const line of lines) group.append(el('div', 'ev-dict-line', line));
+    wrapper.append(group);
+  }
+  return wrapper;
+}
+
+function renderDictionaryBlock(card, result, t, locale) {
+  if (result.surface !== result.lemma) card.append(el('p', 'ev-dict-relation', `${result.surface} → ${result.lemma}`));
+  const head = el('div', 'ev-dict-head');
+  head.append(el('strong', 'ev-reading-word', result.lemma));
+  if (result.entry.p) head.append(el('span', 'ev-reading-phonetic', `/${result.entry.p}/`));
+  card.append(head);
+  const definition = renderDefinition(result.entry, locale);
+  if (definition.childElementCount > 0) card.append(definition);
+}
+
 export function buildReadingTerms({ entries = [], review = { cards: {}, flags: {} } } = {}) {
   const entriesByWord = entryMap(entries);
   const surfaceMap = buildSurfaceMap(entries);
@@ -48,14 +77,14 @@ export function buildReadingTerms({ entries = [], review = { cards: {}, flags: {
   return terms.sort((a, b) => a.surface.localeCompare(b.surface) || a.key.localeCompare(b.key));
 }
 
-export function createReadingDecorationSpec({ locale = 'en', getState, onReview, onUndo, onTermsChanged, speak }) {
+export function createReadingDecorationSpec({ locale = 'en', getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord }) {
   const t = uiText(locale);
   return {
     id: 'english-vocab',
     renderCard(container, context) {
       let cleaned = false;
       const current = () => getState?.() ?? {};
-      const render = (rated = null) => {
+      const renderCollected = (rated = null) => {
         const state = current();
         const entry = entryMap(state.entries).get(context.key);
         container.textContent = '';
@@ -68,6 +97,14 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
         card.append(heading);
         if (entry?.definition) card.append(el('p', 'ev-reading-definition', entry.definition));
         for (const example of (entry?.examples ?? []).slice(0, 2)) card.append(el('p', 'ev-reading-example', example));
+        const dictionaryArea = el('div', 'ev-dict');
+        lookupDictionary?.(context.word).then((result) => {
+          dictionaryArea.textContent = '';
+          if (result) renderDictionaryBlock(dictionaryArea, result, t, locale);
+        }).catch(() => {
+          dictionaryArea.textContent = t.dictionaryLoadFailed;
+        });
+        card.append(dictionaryArea);
         const actions = el('div', 'ev-reading-actions');
         const speakButton = button('🔊', () => speak?.(context.key));
         speakButton.dataset.role = 'speak';
@@ -75,13 +112,13 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
           ratingButton(t.readingKnow, 'Good', async () => {
             if (await onReview?.(context.key, 'Good', 'reading-card')) {
               onTermsChanged?.();
-              render('good');
+              renderCollected('good');
             }
           }, 'ev-reading-good'),
           ratingButton(t.readingDontKnow, 'Again', async () => {
             if (await onReview?.(context.key, 'Again', 'reading-card')) {
               onTermsChanged?.();
-              render('again');
+              renderCollected('again');
             }
           }, 'ev-reading-again'),
           speakButton,
@@ -92,7 +129,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
           const undo = button(t.undo, async () => {
             if (await onUndo?.(context.key)) {
               onTermsChanged?.();
-              render();
+              renderCollected();
             }
           });
           undo.dataset.role = 'undo';
@@ -101,7 +138,49 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
         }
         container.append(card);
       };
-      render();
+      const renderDictionaryOnly = () => {
+        container.textContent = '';
+        const card = el('section', 'ev-reading-card');
+        card.addEventListener('click', (event) => event.stopPropagation());
+        const body = el('div', 'ev-dict');
+        card.append(body);
+        const draw = () => {
+          body.textContent = '';
+          lookupDictionary?.(context.word).then((result) => {
+            body.textContent = '';
+            if (!result) {
+              body.append(el('p', 'ev-reading-note', t.dictionaryNoEntry));
+              body.append(button(t.explainWord, () => onExplainWord?.(context.word, context)));
+              return;
+            }
+            renderDictionaryBlock(body, result, t, locale);
+            const state = current();
+            const collected = entryMap(state.entries).has(result.lemma);
+            if (collected) {
+              body.append(el('p', 'ev-reading-note', t.collectedWord));
+              return;
+            }
+            const status = el('p', 'ev-reading-note');
+            const collect = button(t.collectWord, async () => {
+              collect.disabled = true;
+              const receipt = await onCollectWord?.(result, context);
+              if (receipt?.outcome === 'applied') status.textContent = t.dictionaryAdded;
+              else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.dictionaryCancelled;
+              else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);
+              else status.textContent = t.dictionaryLoadFailed;
+            });
+            collect.dataset.role = 'collect-dictionary-word';
+            body.append(collect, status);
+          }).catch(() => {
+            body.textContent = '';
+            body.append(el('p', 'ev-reading-note', t.dictionaryLoadFailed), button(t.retry, draw));
+          });
+        };
+        draw();
+        container.append(card);
+      };
+      if (context.tone === null) renderDictionaryOnly();
+      else renderCollected();
       return () => {
         if (cleaned) return;
         cleaned = true;

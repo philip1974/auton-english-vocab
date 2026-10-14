@@ -5,6 +5,7 @@ import { uiText, currentLocale } from './ui-text.mjs';
 import { requestTextForWord, requestTextFromSelection } from './request-text.mjs';
 import { validateLevelSettings } from './reading-level.mjs';
 
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -22,6 +23,25 @@ function button(text, onClick, className = '') {
 function cloze(example, word) {
   if (!example) return '';
   return example.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
+}
+
+function dictionaryLineGroups(entry, locale) {
+  const zh = String(entry?.t ?? '').split('\n').filter(Boolean);
+  const en = String(entry?.d ?? '').split('\n').filter(Boolean);
+  const groups = locale.toLowerCase().startsWith('zh')
+    ? [['zh', zh], ['en', en]]
+    : [['en', en], ['zh', zh]];
+  return groups.filter(([, lines]) => lines.length > 0);
+}
+
+function renderDictionaryDefinition(entry, locale) {
+  const wrapper = el('div', 'ev-dict-definition');
+  for (const [kind, lines] of dictionaryLineGroups(entry, locale)) {
+    const group = el('div', `ev-dict-lines ev-dict-lines-${kind}`);
+    for (const line of lines) group.append(el('div', 'ev-dict-line', line));
+    wrapper.append(group);
+  }
+  return wrapper;
 }
 
 export function hasRequiredHost(app) {
@@ -44,6 +64,7 @@ export function renderPanel(container, controls) {
   let tab = 'today';
   let flipped = false;
   let lastSpokenWord = null;
+  let dictionaryResult = null;
 
   const review = (rating) => {
     const state = read();
@@ -105,6 +126,51 @@ export function renderPanel(container, controls) {
   };
 
   const renderNotebook = (state) => {
+    const lookupBox = el('section', 'ev-dict-lookup');
+    lookupBox.append(el('h3', 'ev-section-title', t.dictionaryTitle));
+    const lookupInput = el('input', 'ev-input');
+    lookupInput.placeholder = t.dictionarySearch;
+    lookupInput.dataset.role = 'dictionary-search';
+    const suggestions = el('div', 'ev-dict-suggestions');
+    const resultBox = el('div', 'ev-dict-result');
+    const showResult = (result) => {
+      dictionaryResult = result;
+      resultBox.textContent = '';
+      if (!result) {
+        resultBox.append(el('p', 'ev-empty', t.dictionaryNoEntry));
+        return;
+      }
+      const title = el('div', 'ev-dict-head');
+      title.append(el('strong', 'ev-row-word', result.surface === result.lemma ? result.lemma : `${result.surface} → ${result.lemma}`));
+      if (result.entry.p) title.append(el('small', 'ev-reading-phonetic', `/${result.entry.p}/`));
+      resultBox.append(title, renderDictionaryDefinition(result.entry, currentLocale()));
+      const collected = state.entries.some((entry) => entry.word === result.lemma);
+      resultBox.append(collected ? el('p', 'ev-note', t.collectedWord) : button(t.collectWord, () => controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null })));
+    };
+    const runSuggest = async () => {
+      const q = lookupInput.value.trim().toLowerCase();
+      suggestions.textContent = '';
+      resultBox.textContent = '';
+      if (q.length < 2) return;
+      const items = await controls.suggestDictionary?.(q, 8) ?? [];
+      if (!items.length) {
+        suggestions.append(el('p', 'ev-empty', t.dictionaryNoEntry));
+        return;
+      }
+      for (const item of items) {
+        suggestions.append(button(item.word, async () => showResult(await controls.lookupDictionary?.(item.word)), 'ev-dict-chip'));
+      }
+    };
+    lookupInput.addEventListener('input', () => { runSuggest(); });
+    lookupInput.addEventListener('keydown', async (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      showResult(await controls.lookupDictionary?.(lookupInput.value));
+    });
+    lookupBox.append(lookupInput, suggestions, resultBox);
+    body.append(lookupBox);
+    if (dictionaryResult) showResult(dictionaryResult);
+
     const addRow = el('div', 'ev-add');
     const addInput = el('input', 'ev-input');
     addInput.placeholder = t.addWord;
@@ -150,7 +216,9 @@ export function renderPanel(container, controls) {
     };
     search.addEventListener('input', draw);
     filter.addEventListener('change', draw);
-    body.append(addRow, search, filter, list);
+    const notebookTools = el('section', 'ev-notebook-tools');
+    notebookTools.append(addRow, search, filter);
+    body.append(notebookTools, list);
     draw();
   };
 
@@ -227,6 +295,16 @@ export function renderPanel(container, controls) {
       input.addEventListener('click', () => controls.onHighlightChange?.(input.checked));
       label.append(input, el('span', '', t.highlightReading));
       toolbar.append(label);
+      if (typeof controls.app?.readingDecorations?.register === 'function') {
+        const lookupLabel = el('label', 'ev-toggle');
+        const lookupInput = document.createElement('input');
+        lookupInput.type = 'checkbox';
+        lookupInput.checked = state.lookupAnyWord !== false;
+        lookupInput.dataset.role = 'lookup-any-word';
+        lookupInput.addEventListener('click', () => controls.onLookupAnyWordChange?.(lookupInput.checked));
+        lookupLabel.append(lookupInput, el('span', '', t.lookupAnyWord));
+        toolbar.append(lookupLabel);
+      }
     }
     tabs.textContent = '';
     tabs.append(button(t.today, () => { tab = 'today'; rerender(); }), button(t.notebook, () => { tab = 'notebook'; rerender(); }));

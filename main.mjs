@@ -1,5 +1,6 @@
 // English Vocab — code: MIT (see LICENSE). The bundled English word list is adapted from wordfreq 3.1.1
 // (Robyn Speer) and licensed CC BY-SA 4.0; attribution and source notes: data/LICENSE.md.
+// Offline dictionary chunks are derived from ECDICT (MIT); attribution and source notes: dict/LICENSE-ECDICT.md.
 
 // src/ui-text.mjs
 var TEXT = {
@@ -60,6 +61,19 @@ var TEXT = {
     restore: "Restore",
     add: "Add",
     highlightReading: "Mark collected words in reading text",
+    lookupAnyWord: "Look up any English word in reading text",
+    lookupNotice: "Now you can click any English word in the reading text to look it up. Turn this off in the vocabulary panel.",
+    dictionarySearch: "Look up a word",
+    dictionaryTitle: "Dictionary",
+    dictionaryNoEntry: "This word is not in the dictionary.",
+    dictionaryLoadFailed: "Dictionary failed to load.",
+    retry: "Retry",
+    collectWord: "Add word",
+    collectedWord: "Already in vocabulary",
+    dictionaryAdded: "Added to vocabulary.",
+    dictionaryCancelled: "Cancelled.",
+    dictionaryNotReviewed: (reason) => `Not reviewed${reason ? `: ${reason}` : ""}`,
+    explainWord: "Ask Agent to explain",
     undo: "Undo",
     readingKnow: "I know it",
     readingDontKnow: "Don't know",
@@ -141,6 +155,19 @@ var TEXT = {
     restore: "恢复",
     add: "添加",
     highlightReading: "在正文里标出已收的词",
+    lookupAnyWord: "点任意词查词典",
+    lookupNotice: "现在点正文里任意英文词即可查词典，可在生词本面板关闭",
+    dictionarySearch: "查词",
+    dictionaryTitle: "词典",
+    dictionaryNoEntry: "词典中没有这个词",
+    dictionaryLoadFailed: "词典加载失败",
+    retry: "重试",
+    collectWord: "收词",
+    collectedWord: "已在生词本",
+    dictionaryAdded: "已收进生词本",
+    dictionaryCancelled: "已取消",
+    dictionaryNotReviewed: (reason) => `未审阅${reason ? `：${reason}` : ""}`,
+    explainWord: "让 Agent 解释",
     undo: "撤销",
     readingKnow: "认识",
     readingDontKnow: "不认识",
@@ -222,6 +249,19 @@ var TEXT = {
     restore: "戻す",
     add: "追加",
     highlightReading: "本文中の登録済み単語を表示",
+    lookupAnyWord: "本文の任意の英単語を調べる",
+    lookupNotice: "本文中の任意の英単語をクリックして辞書を引けます。単語帳パネルでオフにできます。",
+    dictionarySearch: "単語を検索",
+    dictionaryTitle: "辞書",
+    dictionaryNoEntry: "辞書にこの単語はありません。",
+    dictionaryLoadFailed: "辞書を読み込めませんでした。",
+    retry: "再試行",
+    collectWord: "単語に追加",
+    collectedWord: "単語帳に登録済み",
+    dictionaryAdded: "単語帳に追加しました。",
+    dictionaryCancelled: "キャンセルしました。",
+    dictionaryNotReviewed: (reason) => `未レビュー${reason ? `：${reason}` : ""}`,
+    explainWord: "Agent に説明してもらう",
     undo: "元に戻す",
     readingKnow: "知っている",
     readingDontKnow: "知らない",
@@ -303,6 +343,19 @@ var TEXT = {
     restore: "복원",
     add: "추가",
     highlightReading: "본문에서 수집한 단어 표시",
+    lookupAnyWord: "본문의 모든 영어 단어 사전 찾기",
+    lookupNotice: "이제 본문의 영어 단어를 클릭하면 사전을 볼 수 있습니다. 단어장 패널에서 끌 수 있습니다.",
+    dictionarySearch: "단어 찾기",
+    dictionaryTitle: "사전",
+    dictionaryNoEntry: "사전에 없는 단어입니다.",
+    dictionaryLoadFailed: "사전을 불러오지 못했습니다.",
+    retry: "다시 시도",
+    collectWord: "단어 추가",
+    collectedWord: "이미 단어장에 있음",
+    dictionaryAdded: "단어장에 추가했습니다.",
+    dictionaryCancelled: "취소되었습니다.",
+    dictionaryNotReviewed: (reason) => `검토되지 않음${reason ? `: ${reason}` : ""}`,
+    explainWord: "Agent에게 설명 요청",
     undo: "실행 취소",
     readingKnow: "알아요",
     readingDontKnow: "몰라요",
@@ -1410,6 +1463,21 @@ function cloze(example, word) {
   if (!example) return "";
   return example.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "_____");
 }
+function dictionaryLineGroups(entry, locale) {
+  const zh = String(entry?.t ?? "").split("\n").filter(Boolean);
+  const en = String(entry?.d ?? "").split("\n").filter(Boolean);
+  const groups = locale.toLowerCase().startsWith("zh") ? [["zh", zh], ["en", en]] : [["en", en], ["zh", zh]];
+  return groups.filter(([, lines]) => lines.length > 0);
+}
+function renderDictionaryDefinition(entry, locale) {
+  const wrapper = el("div", "ev-dict-definition");
+  for (const [kind, lines] of dictionaryLineGroups(entry, locale)) {
+    const group = el("div", `ev-dict-lines ev-dict-lines-${kind}`);
+    for (const line of lines) group.append(el("div", "ev-dict-line", line));
+    wrapper.append(group);
+  }
+  return wrapper;
+}
 function hasRequiredHost(app) {
   return Boolean(app.storage && app.selectionActions && app.chat);
 }
@@ -1431,6 +1499,7 @@ function renderPanel(container, controls) {
   let tab = "today";
   let flipped = false;
   let lastSpokenWord = null;
+  let dictionaryResult = null;
   const review = (rating) => {
     const state = read();
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
@@ -1497,6 +1566,52 @@ function renderPanel(container, controls) {
     body.append(card);
   };
   const renderNotebook = (state) => {
+    const lookupBox = el("section", "ev-dict-lookup");
+    lookupBox.append(el("h3", "ev-section-title", t.dictionaryTitle));
+    const lookupInput = el("input", "ev-input");
+    lookupInput.placeholder = t.dictionarySearch;
+    lookupInput.dataset.role = "dictionary-search";
+    const suggestions = el("div", "ev-dict-suggestions");
+    const resultBox = el("div", "ev-dict-result");
+    const showResult = (result) => {
+      dictionaryResult = result;
+      resultBox.textContent = "";
+      if (!result) {
+        resultBox.append(el("p", "ev-empty", t.dictionaryNoEntry));
+        return;
+      }
+      const title = el("div", "ev-dict-head");
+      title.append(el("strong", "ev-row-word", result.surface === result.lemma ? result.lemma : `${result.surface} → ${result.lemma}`));
+      if (result.entry.p) title.append(el("small", "ev-reading-phonetic", `/${result.entry.p}/`));
+      resultBox.append(title, renderDictionaryDefinition(result.entry, currentLocale()));
+      const collected = state.entries.some((entry) => entry.word === result.lemma);
+      resultBox.append(collected ? el("p", "ev-note", t.collectedWord) : button(t.collectWord, () => controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null })));
+    };
+    const runSuggest = async () => {
+      const q2 = lookupInput.value.trim().toLowerCase();
+      suggestions.textContent = "";
+      resultBox.textContent = "";
+      if (q2.length < 2) return;
+      const items = await controls.suggestDictionary?.(q2, 8) ?? [];
+      if (!items.length) {
+        suggestions.append(el("p", "ev-empty", t.dictionaryNoEntry));
+        return;
+      }
+      for (const item of items) {
+        suggestions.append(button(item.word, async () => showResult(await controls.lookupDictionary?.(item.word)), "ev-dict-chip"));
+      }
+    };
+    lookupInput.addEventListener("input", () => {
+      runSuggest();
+    });
+    lookupInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      showResult(await controls.lookupDictionary?.(lookupInput.value));
+    });
+    lookupBox.append(lookupInput, suggestions, resultBox);
+    body.append(lookupBox);
+    if (dictionaryResult) showResult(dictionaryResult);
     const addRow = el("div", "ev-add");
     const addInput = el("input", "ev-input");
     addInput.placeholder = t.addWord;
@@ -1547,7 +1662,9 @@ function renderPanel(container, controls) {
     };
     search.addEventListener("input", draw);
     filter.addEventListener("change", draw);
-    body.append(addRow, search, filter, list);
+    const notebookTools = el("section", "ev-notebook-tools");
+    notebookTools.append(addRow, search, filter);
+    body.append(notebookTools, list);
     draw();
   };
   const renderRecommendations = (state) => {
@@ -1621,6 +1738,16 @@ function renderPanel(container, controls) {
       input.addEventListener("click", () => controls.onHighlightChange?.(input.checked));
       label.append(input, el("span", "", t.highlightReading));
       toolbar.append(label);
+      if (typeof controls.app?.readingDecorations?.register === "function") {
+        const lookupLabel = el("label", "ev-toggle");
+        const lookupInput = document.createElement("input");
+        lookupInput.type = "checkbox";
+        lookupInput.checked = state.lookupAnyWord !== false;
+        lookupInput.dataset.role = "lookup-any-word";
+        lookupInput.addEventListener("click", () => controls.onLookupAnyWordChange?.(lookupInput.checked));
+        lookupLabel.append(lookupInput, el("span", "", t.lookupAnyWord));
+        toolbar.append(lookupLabel);
+      }
     }
     tabs.textContent = "";
     tabs.append(button(t.today, () => {
@@ -2204,6 +2331,30 @@ function ratingButton(text, rating, onClick, className = "") {
 function entryMap(entries) {
   return new Map((entries ?? []).map((entry) => [entry.word, entry]));
 }
+function dictionaryLineGroups2(entry, locale) {
+  const zh = String(entry?.t ?? "").split("\n").filter(Boolean);
+  const en = String(entry?.d ?? "").split("\n").filter(Boolean);
+  const groups = locale.toLowerCase().startsWith("zh") ? [["zh", zh], ["en", en]] : [["en", en], ["zh", zh]];
+  return groups.filter(([, lines]) => lines.length > 0);
+}
+function renderDefinition(entry, locale) {
+  const wrapper = el2("div", "ev-dict-definition");
+  for (const [kind, lines] of dictionaryLineGroups2(entry, locale)) {
+    const group = el2("div", `ev-dict-lines ev-dict-lines-${kind}`);
+    for (const line of lines) group.append(el2("div", "ev-dict-line", line));
+    wrapper.append(group);
+  }
+  return wrapper;
+}
+function renderDictionaryBlock(card, result, t, locale) {
+  if (result.surface !== result.lemma) card.append(el2("p", "ev-dict-relation", `${result.surface} → ${result.lemma}`));
+  const head = el2("div", "ev-dict-head");
+  head.append(el2("strong", "ev-reading-word", result.lemma));
+  if (result.entry.p) head.append(el2("span", "ev-reading-phonetic", `/${result.entry.p}/`));
+  card.append(head);
+  const definition = renderDefinition(result.entry, locale);
+  if (definition.childElementCount > 0) card.append(definition);
+}
 function buildReadingTerms({ entries = [], review = { cards: {}, flags: {} } } = {}) {
   const entriesByWord = entryMap(entries);
   const surfaceMap = buildSurfaceMap(entries);
@@ -2218,14 +2369,14 @@ function buildReadingTerms({ entries = [], review = { cards: {}, flags: {} } } =
   }
   return terms.sort((a, b2) => a.surface.localeCompare(b2.surface) || a.key.localeCompare(b2.key));
 }
-function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo, onTermsChanged, speak }) {
+function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord }) {
   const t = uiText(locale);
   return {
     id: "english-vocab",
     renderCard(container, context) {
       let cleaned = false;
       const current = () => getState?.() ?? {};
-      const render = (rated = null) => {
+      const renderCollected = (rated = null) => {
         const state = current();
         const entry = entryMap(state.entries).get(context.key);
         container.textContent = "";
@@ -2238,6 +2389,14 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
         card.append(heading);
         if (entry?.definition) card.append(el2("p", "ev-reading-definition", entry.definition));
         for (const example of (entry?.examples ?? []).slice(0, 2)) card.append(el2("p", "ev-reading-example", example));
+        const dictionaryArea = el2("div", "ev-dict");
+        lookupDictionary?.(context.word).then((result) => {
+          dictionaryArea.textContent = "";
+          if (result) renderDictionaryBlock(dictionaryArea, result, t, locale);
+        }).catch(() => {
+          dictionaryArea.textContent = t.dictionaryLoadFailed;
+        });
+        card.append(dictionaryArea);
         const actions = el2("div", "ev-reading-actions");
         const speakButton = button2("🔊", () => speak?.(context.key));
         speakButton.dataset.role = "speak";
@@ -2245,13 +2404,13 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
           ratingButton(t.readingKnow, "Good", async () => {
             if (await onReview?.(context.key, "Good", "reading-card")) {
               onTermsChanged?.();
-              render("good");
+              renderCollected("good");
             }
           }, "ev-reading-good"),
           ratingButton(t.readingDontKnow, "Again", async () => {
             if (await onReview?.(context.key, "Again", "reading-card")) {
               onTermsChanged?.();
-              render("again");
+              renderCollected("again");
             }
           }, "ev-reading-again"),
           speakButton
@@ -2262,7 +2421,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
           const undo = button2(t.undo, async () => {
             if (await onUndo?.(context.key)) {
               onTermsChanged?.();
-              render();
+              renderCollected();
             }
           });
           undo.dataset.role = "undo";
@@ -2271,7 +2430,49 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
         }
         container.append(card);
       };
-      render();
+      const renderDictionaryOnly = () => {
+        container.textContent = "";
+        const card = el2("section", "ev-reading-card");
+        card.addEventListener("click", (event) => event.stopPropagation());
+        const body = el2("div", "ev-dict");
+        card.append(body);
+        const draw = () => {
+          body.textContent = "";
+          lookupDictionary?.(context.word).then((result) => {
+            body.textContent = "";
+            if (!result) {
+              body.append(el2("p", "ev-reading-note", t.dictionaryNoEntry));
+              body.append(button2(t.explainWord, () => onExplainWord?.(context.word, context)));
+              return;
+            }
+            renderDictionaryBlock(body, result, t, locale);
+            const state = current();
+            const collected = entryMap(state.entries).has(result.lemma);
+            if (collected) {
+              body.append(el2("p", "ev-reading-note", t.collectedWord));
+              return;
+            }
+            const status = el2("p", "ev-reading-note");
+            const collect = button2(t.collectWord, async () => {
+              collect.disabled = true;
+              const receipt = await onCollectWord?.(result, context);
+              if (receipt?.outcome === "applied") status.textContent = t.dictionaryAdded;
+              else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.dictionaryCancelled;
+              else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);
+              else status.textContent = t.dictionaryLoadFailed;
+            });
+            collect.dataset.role = "collect-dictionary-word";
+            body.append(collect, status);
+          }).catch(() => {
+            body.textContent = "";
+            body.append(el2("p", "ev-reading-note", t.dictionaryLoadFailed), button2(t.retry, draw));
+          });
+        };
+        draw();
+        container.append(card);
+      };
+      if (context.tone === null) renderDictionaryOnly();
+      else renderCollected();
       return () => {
         if (cleaned) return;
         cleaned = true;
@@ -32698,6 +32899,137 @@ var ReadingRecommender = class {
   }
 };
 
+// src/dictionary.mjs
+var LETTER_RE = /^[a-z]$/u;
+var cache = /* @__PURE__ */ new Map();
+var IRREGULAR_BASES = /* @__PURE__ */ new Map([
+  ["ran", "run"],
+  ["went", "go"],
+  ["gone", "go"]
+]);
+function normalizeWord3(value) {
+  return String(value ?? "").normalize("NFC").trim().toLowerCase();
+}
+function firstLetter(word) {
+  const letter = word[0];
+  return LETTER_RE.test(letter) ? letter : null;
+}
+async function defaultImporter(letter) {
+  try {
+    return await import(new URL(`./dict/${letter}.mjs`, import.meta.url).href);
+  } catch (error) {
+    if (!String(import.meta.url).includes("/src/")) throw error;
+    return import(new URL(`../dict/${letter}.mjs`, import.meta.url).href);
+  }
+}
+function loadChunk(letter, importer = defaultImporter) {
+  if (!LETTER_RE.test(String(letter))) return Promise.resolve(null);
+  if (!cache.has(letter)) {
+    cache.set(letter, Promise.resolve().then(() => importer(letter)).then((module) => module.default ?? module));
+  }
+  return cache.get(letter);
+}
+async function entryFor(word, importer) {
+  const letter = firstLetter(word);
+  if (!letter) return null;
+  const chunk = await loadChunk(letter, importer);
+  return chunk?.[word] ?? null;
+}
+function exchangeLemma(entry) {
+  const exchange = String(entry?.x ?? "");
+  const match = exchange.match(/(?:^|\/)0:([^/]+)/u);
+  if (!match) return null;
+  return match[1].split(",")[0]?.trim().toLowerCase() || null;
+}
+function candidateBases(surface) {
+  const bases = [];
+  const add = (value) => {
+    if (value && value !== surface && /^[a-z]+(?:'[a-z]+)*$/u.test(value) && !bases.includes(value)) bases.push(value);
+  };
+  add(IRREGULAR_BASES.get(surface));
+  if (surface.endsWith("ies") && surface.length > 4) add(`${surface.slice(0, -3)}y`);
+  if (surface.endsWith("ied") && surface.length > 4) add(`${surface.slice(0, -3)}y`);
+  if (surface.endsWith("ing") && surface.length > 5) {
+    const stem = surface.slice(0, -3);
+    add(stem);
+    add(`${stem}e`);
+    if (stem.at(-1) === stem.at(-2)) add(stem.slice(0, -1));
+  }
+  if (surface.endsWith("ed") && surface.length > 4) {
+    const stem = surface.slice(0, -2);
+    add(stem);
+    add(`${stem}e`);
+    if (stem.at(-1) === stem.at(-2)) add(stem.slice(0, -1));
+  }
+  if (surface.endsWith("es") && surface.length > 4) add(surface.slice(0, -2));
+  if (surface.endsWith("s") && surface.length > 3) add(surface.slice(0, -1));
+  if (surface.endsWith("er") && surface.length > 4) {
+    const stem = surface.slice(0, -2);
+    add(stem);
+    if (stem.at(-1) === stem.at(-2)) add(stem.slice(0, -1));
+  }
+  if (surface.endsWith("est") && surface.length > 5) {
+    const stem = surface.slice(0, -3);
+    add(stem);
+    if (stem.at(-1) === stem.at(-2)) add(stem.slice(0, -1));
+  }
+  return bases;
+}
+async function lookup(word, { importer = defaultImporter } = {}) {
+  const surface = normalizeWord3(word);
+  const letter = firstLetter(surface);
+  if (!letter) return null;
+  const direct = await entryFor(surface, importer);
+  if (direct) {
+    const lemma = exchangeLemma(direct);
+    if (lemma && lemma !== surface) {
+      const lemmaEntry = await entryFor(lemma, importer);
+      if (lemmaEntry) return { surface, lemma, entry: lemmaEntry, surfaceEntry: direct };
+    }
+    return { surface, lemma: surface, entry: direct, surfaceEntry: direct };
+  }
+  for (const lemma of candidateBases(surface)) {
+    const entry = await entryFor(lemma, importer);
+    if (entry) return { surface, lemma, entry, surfaceEntry: null };
+  }
+  return null;
+}
+async function suggest(prefix, n = 8, { importer = defaultImporter } = {}) {
+  const normalized = normalizeWord3(prefix);
+  const letter = firstLetter(normalized);
+  if (!letter || normalized.length < 1) return [];
+  const chunk = await loadChunk(letter, importer);
+  if (!chunk) return [];
+  return Object.entries(chunk).filter(([word]) => word.startsWith(normalized)).sort(([leftWord, left], [rightWord, right]) => {
+    const leftRank = Number.isFinite(left.r) ? left.r : Number.POSITIVE_INFINITY;
+    const rightRank = Number.isFinite(right.r) ? right.r : Number.POSITIVE_INFINITY;
+    return leftRank - rightRank || leftWord.localeCompare(rightWord);
+  }).slice(0, n).map(([word, entry]) => ({ word, entry }));
+}
+function dictionaryDefinition(entry, locale = "en") {
+  const chinese = String(entry?.t ?? "").split("\n").filter(Boolean);
+  const english = String(entry?.d ?? "").split("\n").filter(Boolean);
+  const first = locale.toLowerCase().startsWith("zh") ? chinese : english;
+  const second = first === chinese ? english : chinese;
+  return [...first, ...second].join("\n");
+}
+function inferPos(entry) {
+  const first = String(entry?.t ?? "").split("\n").find(Boolean) ?? "";
+  const prefix = first.match(/^\s*(n|v|vt|vi|a|adj|adv|prep|conj|pron)\./iu)?.[1]?.toLowerCase();
+  return {
+    n: "noun",
+    v: "verb",
+    vt: "verb",
+    vi: "verb",
+    a: "adjective",
+    adj: "adjective",
+    adv: "adverb",
+    prep: "preposition",
+    conj: "conjunction",
+    pron: "pronoun"
+  }[prefix];
+}
+
 // src/main.mjs
 var BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {
 };
@@ -32713,6 +33045,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       loading: null,
       invalid: [],
       highlight: true,
+      lookupAnyWord: true,
+      lookupNoticeShown: false,
       levelSettings: DEFAULT_LEVEL_SETTINGS,
       recommendations: null,
       recommendationLoading: null
@@ -32772,7 +33106,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
         speechSynthesis.speak(utterance);
       },
       onHighlightChange: (value) => this.setHighlight(value),
+      onLookupAnyWordChange: (value) => this.setLookupAnyWord(value),
       onLevelSettingsChange: (settings) => this.setLevelSettings(settings),
+      lookupDictionary: (word) => this.lookupDictionary(word),
+      suggestDictionary: (prefix, n) => this.suggestDictionary(prefix, n),
+      onCollectDictionaryWord: (result, context) => this.collectDictionaryWord(result, context),
       refreshRecommendations: () => this.refreshRecommendations(),
       openReadingDocument: (path) => this.app.workspace?.openDocument?.(path) ?? false,
       canOpenReadingDocument: () => Boolean(this.app.workspace?.openDocument)
@@ -32782,11 +33120,28 @@ var EnglishVocabPlugin = class extends BasePlugin {
     try {
       const data = await this.loadData?.();
       this.state.highlight = data?.highlight !== false;
+      this.state.lookupAnyWord = data?.lookupAnyWord !== false;
+      this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
       this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
+      this.state.lookupAnyWord = true;
+      this.state.lookupNoticeShown = false;
       this.state.levelSettings = DEFAULT_LEVEL_SETTINGS;
     }
+  }
+  async savePreferences(patch = {}) {
+    const existing = await this.loadData?.().catch(() => ({})) ?? {};
+    const next = {
+      ...existing,
+      highlight: this.state.highlight,
+      lookupAnyWord: this.state.lookupAnyWord,
+      levelSettings: this.state.levelSettings,
+      lookupNoticeShown: this.state.lookupNoticeShown,
+      ...patch
+    };
+    await this.saveData?.(next);
+    return next;
   }
   async initializeState() {
     this.reviewStore = new ReviewStore(this.app, { locale: this.locale, notify: (message) => this.notice(message) });
@@ -32931,7 +33286,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     return Boolean(this.app?.readingDecorations?.register);
   }
   syncReadingDecorations() {
-    if (!this.readingSupported() || this.state.highlight === false) {
+    if (!this.readingSupported() || this.state.highlight === false && this.state.lookupAnyWord === false) {
       this.disposeReadingDecorations();
       return;
     }
@@ -32942,9 +33297,20 @@ var EnglishVocabPlugin = class extends BasePlugin {
         onReview: (word, rating, mode) => this.rateWord(word, rating, mode),
         onUndo: (word) => this.undoReadingRating(word),
         onTermsChanged: () => this.updateReadingTerms(),
-        speak: (word) => this.panelState().speak(word)
+        speak: (word) => this.panelState().speak(word),
+        lookupDictionary: (word) => this.lookupDictionary(word),
+        onCollectWord: (result, context) => this.collectDictionaryWord(result, context),
+        onExplainWord: (word, context) => this.explainDictionaryWord(word, context)
       });
       this.readingHandle = this.addReadingDecoration ? this.addReadingDecoration(spec) : this.register(this.app.readingDecorations.register(spec));
+    }
+    if (typeof this.readingHandle.setLookupAnyWord === "function") {
+      const enabled = this.readingHandle.setLookupAnyWord(this.state.lookupAnyWord !== false);
+      if (enabled && this.state.lookupAnyWord !== false && !this.state.lookupNoticeShown) {
+        this.state.lookupNoticeShown = true;
+        this.notice(this.t.lookupNotice);
+        this.savePreferences({ lookupNoticeShown: true }).catch(() => void 0);
+      }
     }
     this.updateReadingTerms();
   }
@@ -32953,13 +33319,22 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.readingHandle = null;
   }
   updateReadingTerms() {
-    if (!this.readingHandle || this.state.highlight === false) return false;
-    return this.readingHandle.setTerms(buildReadingTerms(this.state));
+    if (!this.readingHandle) return false;
+    return this.readingHandle.setTerms(this.state.highlight === false ? [] : buildReadingTerms(this.state));
   }
   async setHighlight(value) {
     this.state.highlight = Boolean(value);
     try {
-      await this.saveData?.({ highlight: this.state.highlight });
+      await this.savePreferences();
+    } catch {
+    }
+    this.syncReadingDecorations();
+    this.emitState();
+  }
+  async setLookupAnyWord(value) {
+    this.state.lookupAnyWord = Boolean(value);
+    try {
+      await this.savePreferences();
     } catch {
     }
     this.syncReadingDecorations();
@@ -32993,7 +33368,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.state.levelSettings = settings;
     if (this.recommender) this.recommender.settings = settings;
     try {
-      await this.saveData?.({ highlight: this.state.highlight, levelSettings: settings });
+      await this.savePreferences({ levelSettings: settings });
     } catch {
       this.notice(this.t.levelSettingsSaveFailed);
       return false;
@@ -33073,6 +33448,46 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   notice(message) {
     this.showNotice?.({ message, title: this.t.panelTitle, kind: "info", timeoutMs: 6e3 });
+  }
+  lookupDictionary(word) {
+    return lookup(word);
+  }
+  suggestDictionary(prefix, n) {
+    return suggest(prefix, n);
+  }
+  async collectDictionaryWord(result, context = {}) {
+    const lemma = result?.lemma;
+    const entry = result?.entry;
+    if (!lemma || !entry) return { outcome: "aborted", summary: "missing dictionary entry" };
+    if (this.index?.get(lemma)) return { outcome: "aborted", summary: this.t.collectedWord };
+    const path = `wiki/vocab/${slugFor(lemma)}.md`;
+    const existing = await this.app.knowledge.readDocument({ path }).catch(() => null);
+    if (existing && existing._tag !== "Err") return { outcome: "aborted", summary: this.t.collectedWord };
+    const chinese = String(entry.t ?? "").split("\n").filter(Boolean).slice(0, 2);
+    const english = String(entry.d ?? "").split("\n").filter(Boolean).slice(0, 1);
+    const definition = [...chinese, ...english].join("\n") || dictionaryDefinition(entry, this.locale);
+    const newContent = buildNote({
+      word: lemma,
+      definition,
+      phonetic: entry.p,
+      pos: inferPos(entry),
+      example: context.sentence,
+      source: context.source
+    });
+    const receipt = await this.app.knowledge.propose({
+      description: this.t.proposalDescription(++this.submission, lemma),
+      changes: [{ path, newContent }]
+    });
+    if (receipt?._tag === "Err") return { outcome: "aborted", summary: String(receipt.error ?? "proposal failed") };
+    if (receipt?.outcome === "applied") await this.refreshIndex();
+    return receipt;
+  }
+  explainDictionaryWord(word, context = {}) {
+    const text = this.t.request.short(word);
+    const sentence = context.sentence ? `
+
+${this.t.request.sentence}: ${context.sentence}` : "";
+    this.app.chat?.appendToComposer?.(`${text}${sentence}`);
   }
 };
 export {

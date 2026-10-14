@@ -12,4 +12,8 @@ describe('styles.css', () => {
     expect(css).not.toMatch(/var\(--agent-border-hairline[^)]*\)\s+solid/u);
     expect(css).toMatch(/var\(--agent-border-hairline, 1px solid /u);
   });
+
+  it('should avoid literal color fallbacks in plugin styles', () => {
+    expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}|rgba\(|\bgray\b/u);
+  });
 });

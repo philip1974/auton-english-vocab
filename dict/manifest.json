@@ -1,0 +1,141 @@
+{
+  "chunks": {
+    "a": {
+      "bytes": 675315,
+      "count": 3928,
+      "sha256": "1c33abfed4c37522c0c91abb896bd4569d16ff0819fc180972985892f4ebfe35"
+    },
+    "b": {
+      "bytes": 640824,
+      "count": 3962,
+      "sha256": "0947bfe2f5c4816a5be9db149e3cc763be5658ac8e3a28d76c17293a1e566e9e"
+    },
+    "c": {
+      "bytes": 1095675,
+      "count": 6115,
+      "sha256": "f6f57150d2471d03d32b9ad5ca366b6fad1b309e8231fcaac09f5740822de32c"
+    },
+    "d": {
+      "bytes": 649670,
+      "count": 3768,
+      "sha256": "823837d911103f9eaa869b4df103f83a1c016282e4be542ec9cb2cc53a98899a"
+    },
+    "e": {
+      "bytes": 464918,
+      "count": 2647,
+      "sha256": "84cd14ff05b61e61e1bec3bec01c85ee97a6edff42bd08bf8cb2069291c14a9a"
+    },
+    "f": {
+      "bytes": 457375,
+      "count": 2618,
+      "sha256": "3f7785dad5c1c4e35917bead60fa0c5efe552b762f950246a59055a2f08dd97e"
+    },
+    "g": {
+      "bytes": 361544,
+      "count": 2215,
+      "sha256": "6e911661b8d49df5c931ada59fa09d3b6f126708dfd0cf15c2dcab20f7c9cdd6"
+    },
+    "h": {
+      "bytes": 419844,
+      "count": 2591,
+      "sha256": "13cffb09f00aaab92a921b983b15b2b2a7c2e86fd8af34c4d6ec83d89f51745d"
+    },
+    "i": {
+      "bytes": 456665,
+      "count": 2581,
+      "sha256": "24829ad53ac8f00dfd1d1c81b2ef5df4e91eaddfacc997597af21390ddea08d0"
+    },
+    "j": {
+      "bytes": 109584,
+      "count": 698,
+      "sha256": "82e3a5a3d92d516406a19b03f7cbd5b8785324ec370d6b916b6779a75cd5a619"
+    },
+    "k": {
+      "bytes": 107659,
+      "count": 779,
+      "sha256": "ddf75a9807ac00daec1e6999b8b0959d2b54fadc4a73eab6189af4adb7bbef8b"
+    },
+    "l": {
+      "bytes": 359555,
+      "count": 2206,
+      "sha256": "92e21d69d23aaa69c7fed2667b73f2995f836ce55fe930159ce06b697bd3271b"
+    },
+    "m": {
+      "bytes": 629619,
+      "count": 3897,
+      "sha256": "91157e06c34e84e8f561e21b066eff63ebc87a6507110ee2051881033e90dd05"
+    },
+    "n": {
+      "bytes": 227859,
+      "count": 1443,
+      "sha256": "96e2becb10347c80a4809ca17b0f39fe4354905c341633bbee0f45f105a23837"
+    },
+    "o": {
+      "bytes": 261421,
+      "count": 1512,
+      "sha256": "88d8b5e67f1c4740eb8def1ba2a597f4f93bc1e8eb9e26e1729a4ad91be50b77"
+    },
+    "p": {
+      "bytes": 896419,
+      "count": 4871,
+      "sha256": "7c0e97cab930aff1a7667ab45b370fe39dfdcf629fdde20c4b123c2177653cf7"
+    },
+    "q": {
+      "bytes": 50106,
+      "count": 277,
+      "sha256": "c2eca136478737db4069fe000b136791eb2cfa89af3ec1757d389dca6692e98b"
+    },
+    "r": {
+      "bytes": 621891,
+      "count": 3456,
+      "sha256": "4e5e42e0e9a7d218eb11c493e4cf27ee3119abb2cb0aaffc0b3e28387bf978ea"
+    },
+    "s": {
+      "bytes": 1237905,
+      "count": 6880,
+      "sha256": "a11de2fb9bd168228084b3568cbdfb4c1b522bdebb51a378fa8118708e63cfd9"
+    },
+    "t": {
+      "bytes": 563184,
+      "count": 3154,
+      "sha256": "f6c9692de012e71cf060774a4fb534f4ad08bf2d1414bb75cbd910074a5891e2"
+    },
+    "u": {
+      "bytes": 278799,
+      "count": 1829,
+      "sha256": "c2f60ca5fe36e17d93473d3eb44234ca4ddb38a07a43ef00aef657b2aad74b9c"
+    },
+    "v": {
+      "bytes": 172521,
+      "count": 993,
+      "sha256": "f32ceee4839c6f642b61dabb10349bdf348d128d21f14be874add38a643c75aa"
+    },
+    "w": {
+      "bytes": 277822,
+      "count": 1703,
+      "sha256": "6bef8c7c582d178f0636cedd491fd37d91c5e492b45b96f50b4306efd460e5ea"
+    },
+    "x": {
+      "bytes": 6650,
+      "count": 49,
+      "sha256": "9e09e4562d694481d319366f054c0ed183b50103d38712a61c83dc2de2398de1"
+    },
+    "y": {
+      "bytes": 33319,
+      "count": 224,
+      "sha256": "b77dc9012343af00545ff5ea9a20aa19f6bd4f7108da3c9ada6611c56d8c49c5"
+    },
+    "z": {
+      "bytes": 24332,
+      "count": 162,
+      "sha256": "22f44da130b32f8df4796fd9c6a2b9fe7d2c5e2fe2a3c01678d2fe3e03988a03"
+    }
+  },
+  "maxChunkBytes": 1237905,
+  "source": {
+    "commit": "bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b",
+    "url": "https://github.com/skywind3000/ECDICT"
+  },
+  "total": 64558,
+  "totalBytes": 11080475
+}

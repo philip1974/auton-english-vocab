@@ -10,10 +10,21 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
 - 三种复习形式：翻卡、反向拼写、听音拼写。听音拼写会先调用 `speechSynthesis.cancel()`，因此会打断正在进行的朗读；没有英语声音时会禁用。
 - 选区动作「收为生词」支持 reading 和 web 两个 surface，会把请求追加到 Auton Knowledge 对话框，由 Agent 调用 `vocab_add`。网页里的右键收词需要开启了选区共享的网页面板，例如 Browser Panel 0.7.0 或更新。
 - 正文标色与点词卡片：在阅读正文里标出已收的词；点击后显示释义、例句、熟悉度、朗读按钮，并可直接标记「认识 / 不认识」。
+- 离线词典：点正文里任意英文词即可查 ECDICT 释义，支持 `ran → run` 这类变形还原，并可通过审阅提案一键收进生词本。
 - 生词率与推荐阅读：按设定词汇量估算英文文章生词率，在阅读区显示状态签，并按「适合、偏易、偏难」推荐下一篇文章。
 - Agent 工具：
   - `vocab_lookup { word }`
   - `vocab_add { entries }`
+
+## 离线词典 / Offline dictionary
+
+0.4.0 随插件目录提交 `dict/a.mjs` 到 `dict/z.mjs`，运行时按首字母用 `import(new URL("./dict/<letter>.mjs", import.meta.url).href)` 懒加载，不联网，也不把词典打进 `main.mjs`。`dict/manifest.json` 只用于测试和审阅，运行时不读取。当前 `dict/` 约 11 MB，`main.mjs` 约 508 KB；安装插件时需要宿主把 `dict/` 文件夹连同 `main.mjs` 一起复制。
+
+阅读宿主若支持 `ReadingDecorationHandle.setLookupAnyWord(enabled)`，面板里的「点任意词查词典」默认开启。首次启用时会提示：现在点正文里任意英文词即可查词典，可在生词本面板关闭。旧宿主没有这个 API 时会自动降级：不会接管未装饰词点击，但已收录词卡片下方的词典区和面板查词框仍可用。
+
+未收录词卡片显示音标、中文/英文释义、朗读与「收词」。卡片和面板里的「收词」都会发起 `knowledge.propose` 审阅提案，生成 `wiki/vocab/<slug>.md`；不会绕过审阅直接写知识库。目标词已由 frontmatter `word` 收录，或同 slug 路径已存在时，会显示「已在生词本」并跳过提案。词典没有命中时会显示「词典中没有这个词」，并可把解释请求追加到 Agent 对话框。
+
+The offline dictionary is shipped as separate lazy-loaded `dict/*.mjs` chunks. Clicking any English word in reading text works on hosts that implement `setLookupAnyWord`; older hosts degrade gracefully to collected-word cards and the panel lookup box. The card/panel “Add word” action always submits a `knowledge.propose` review proposal and never writes notes directly.
 
 ## 正文标色与点词卡片 / Reading highlights and word cards
 
@@ -82,6 +93,7 @@ wiki/vocab/<slug>.md
 - `this.app.chat`
 - `knowledge.root-changed`
 - 可选：`readingDecorations`、`readingStatus`、`learningSuggestions`、`workspace.scope()`、`workspace.openDocument(path)`
+- 可选：`ReadingDecorationHandle.setLookupAnyWord(enabled)`，用于点未装饰英文词查离线词典。
 
 如果这些能力缺失，插件只显示「需要 Auton Knowledge 0.3.0 或更新」，不会抛错，也不会注册依赖这些能力的入口。
 
@@ -97,7 +109,11 @@ Reading highlights are optional. Older Auton Knowledge builds that do not expose
 
 `data/` 下的词频派生数据按 CC BY-SA 4.0 发布，署名与上游来源见 `data/LICENSE.md`。构建产物 `main.mjs` 内嵌了同一份词表，该内嵌部分同样按 CC BY-SA 4.0。该数据来自 `wordfreq` 3.1.1（Robyn Speer）并经过过滤、截取与只保留顺序的改编。
 
+`dict/` 下的离线词典数据来自 ECDICT（MIT），来源为 <https://github.com/skywind3000/ECDICT>，固定提交 `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`。随包附带 `dict/LICENSE-ECDICT.md`，其中包含 MIT 原文、来源 URL、提交 SHA 和筛选改动说明。中文释义来自 ECDICT 汇编（早期词表、整理与贡献），插件仅做离线查词用途，不额外保证释义完整性或准确性。
+
 The plugin code is MIT licensed. Derived word frequency data under `data/` is licensed separately under CC BY-SA 4.0; see `data/LICENSE.md` for attribution and source notes. The word list embedded in the built `main.mjs` is covered by the same CC BY-SA 4.0 terms.
+
+Offline dictionary chunks under `dict/` are derived from ECDICT under the MIT License. See `dict/LICENSE-ECDICT.md` for the original license text, source URL, pinned commit, and filtering notes.
 
 ## 开发 / Development
 

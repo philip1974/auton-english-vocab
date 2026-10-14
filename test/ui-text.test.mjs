@@ -40,6 +40,10 @@ describe('ui text', () => {
         text.request.short('alpha'),
         text.request.long,
         text.request.instruction,
+        text.lookupNotice,
+        text.dictionaryTitle,
+        text.dictionaryNotReviewed('reason'),
+        text.dictionaryNotReviewed(''),
       ];
       expect(rendered.every(Boolean)).toBe(true);
     }

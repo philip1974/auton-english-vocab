@@ -7,6 +7,8 @@ import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tool
 import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
 import { DEFAULT_LEVEL_SETTINGS, detectEnglish } from './reading-level.mjs';
 import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
+import { inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
+import { buildNote, slugFor } from './note-format.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
 const emptyReview = () => ({ version: 1, cards: {}, flags: {} });
@@ -22,6 +24,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       loading: null,
       invalid: [],
       highlight: true,
+      lookupAnyWord: true,
+      lookupNoticeShown: false,
       levelSettings: DEFAULT_LEVEL_SETTINGS,
       recommendations: null,
       recommendationLoading: null,
@@ -80,7 +84,11 @@ export default class EnglishVocabPlugin extends BasePlugin {
         speechSynthesis.speak(utterance);
       },
       onHighlightChange: (value) => this.setHighlight(value),
+      onLookupAnyWordChange: (value) => this.setLookupAnyWord(value),
       onLevelSettingsChange: (settings) => this.setLevelSettings(settings),
+      lookupDictionary: (word) => this.lookupDictionary(word),
+      suggestDictionary: (prefix, n) => this.suggestDictionary(prefix, n),
+      onCollectDictionaryWord: (result, context) => this.collectDictionaryWord(result, context),
       refreshRecommendations: () => this.refreshRecommendations(),
       openReadingDocument: (path) => this.app.workspace?.openDocument?.(path) ?? false,
       canOpenReadingDocument: () => Boolean(this.app.workspace?.openDocument),
@@ -91,11 +99,29 @@ export default class EnglishVocabPlugin extends BasePlugin {
     try {
       const data = await this.loadData?.();
       this.state.highlight = data?.highlight !== false;
+      this.state.lookupAnyWord = data?.lookupAnyWord !== false;
+      this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
       this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
+      this.state.lookupAnyWord = true;
+      this.state.lookupNoticeShown = false;
       this.state.levelSettings = DEFAULT_LEVEL_SETTINGS;
     }
+  }
+
+  async savePreferences(patch = {}) {
+    const existing = await this.loadData?.().catch(() => ({})) ?? {};
+    const next = {
+      ...existing,
+      highlight: this.state.highlight,
+      lookupAnyWord: this.state.lookupAnyWord,
+      levelSettings: this.state.levelSettings,
+      lookupNoticeShown: this.state.lookupNoticeShown,
+      ...patch,
+    };
+    await this.saveData?.(next);
+    return next;
   }
 
   async initializeState() {
@@ -245,7 +271,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   syncReadingDecorations() {
-    if (!this.readingSupported() || this.state.highlight === false) {
+    if (!this.readingSupported() || (this.state.highlight === false && this.state.lookupAnyWord === false)) {
       this.disposeReadingDecorations();
       return;
     }
@@ -257,10 +283,21 @@ export default class EnglishVocabPlugin extends BasePlugin {
         onUndo: (word) => this.undoReadingRating(word),
         onTermsChanged: () => this.updateReadingTerms(),
         speak: (word) => this.panelState().speak(word),
+        lookupDictionary: (word) => this.lookupDictionary(word),
+        onCollectWord: (result, context) => this.collectDictionaryWord(result, context),
+        onExplainWord: (word, context) => this.explainDictionaryWord(word, context),
       });
       this.readingHandle = this.addReadingDecoration
         ? this.addReadingDecoration(spec)
         : this.register(this.app.readingDecorations.register(spec));
+    }
+    if (typeof this.readingHandle.setLookupAnyWord === 'function') {
+      const enabled = this.readingHandle.setLookupAnyWord(this.state.lookupAnyWord !== false);
+      if (enabled && this.state.lookupAnyWord !== false && !this.state.lookupNoticeShown) {
+        this.state.lookupNoticeShown = true;
+        this.notice(this.t.lookupNotice);
+        this.savePreferences({ lookupNoticeShown: true }).catch(() => undefined);
+      }
     }
     this.updateReadingTerms();
   }
@@ -271,14 +308,25 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   updateReadingTerms() {
-    if (!this.readingHandle || this.state.highlight === false) return false;
-    return this.readingHandle.setTerms(buildReadingTerms(this.state));
+    if (!this.readingHandle) return false;
+    return this.readingHandle.setTerms(this.state.highlight === false ? [] : buildReadingTerms(this.state));
   }
 
   async setHighlight(value) {
     this.state.highlight = Boolean(value);
     try {
-      await this.saveData?.({ highlight: this.state.highlight });
+      await this.savePreferences();
+    } catch {
+      // Preference persistence is best-effort; the visible state still follows the toggle.
+    }
+    this.syncReadingDecorations();
+    this.emitState();
+  }
+
+  async setLookupAnyWord(value) {
+    this.state.lookupAnyWord = Boolean(value);
+    try {
+      await this.savePreferences();
     } catch {
       // Preference persistence is best-effort; the visible state still follows the toggle.
     }
@@ -316,7 +364,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.state.levelSettings = settings;
     if (this.recommender) this.recommender.settings = settings;
     try {
-      await this.saveData?.({ highlight: this.state.highlight, levelSettings: settings });
+      await this.savePreferences({ levelSettings: settings });
     } catch {
       this.notice(this.t.levelSettingsSaveFailed);
       return false;
@@ -402,5 +450,47 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   notice(message) {
     this.showNotice?.({ message, title: this.t.panelTitle, kind: 'info', timeoutMs: 6000 });
+  }
+
+  lookupDictionary(word) {
+    return lookup(word);
+  }
+
+  suggestDictionary(prefix, n) {
+    return suggest(prefix, n);
+  }
+
+  async collectDictionaryWord(result, context = {}) {
+    const lemma = result?.lemma;
+    const entry = result?.entry;
+    if (!lemma || !entry) return { outcome: 'aborted', summary: 'missing dictionary entry' };
+    if (this.index?.get(lemma)) return { outcome: 'aborted', summary: this.t.collectedWord };
+    const path = `wiki/vocab/${slugFor(lemma)}.md`;
+    const existing = await this.app.knowledge.readDocument({ path }).catch(() => null);
+    if (existing && existing._tag !== 'Err') return { outcome: 'aborted', summary: this.t.collectedWord };
+    const chinese = String(entry.t ?? '').split('\n').filter(Boolean).slice(0, 2);
+    const english = String(entry.d ?? '').split('\n').filter(Boolean).slice(0, 1);
+    const definition = [...chinese, ...english].join('\n') || dictionaryDefinition(entry, this.locale);
+    const newContent = buildNote({
+      word: lemma,
+      definition,
+      phonetic: entry.p,
+      pos: inferPos(entry),
+      example: context.sentence,
+      source: context.source,
+    });
+    const receipt = await this.app.knowledge.propose({
+      description: this.t.proposalDescription(++this.submission, lemma),
+      changes: [{ path, newContent }],
+    });
+    if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: String(receipt.error ?? 'proposal failed') };
+    if (receipt?.outcome === 'applied') await this.refreshIndex();
+    return receipt;
+  }
+
+  explainDictionaryWord(word, context = {}) {
+    const text = this.t.request.short(word);
+    const sentence = context.sentence ? `\n\n${this.t.request.sentence}: ${context.sentence}` : '';
+    this.app.chat?.appendToComposer?.(`${text}${sentence}`);
   }
 }

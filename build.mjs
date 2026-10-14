@@ -13,7 +13,7 @@ await build({
   target: 'es2022',
   charset: 'utf8',
   legalComments: 'none',
-  banner: { js: '// English Vocab — code: MIT (see LICENSE). The bundled English word list is adapted from wordfreq 3.1.1\n// (Robyn Speer) and licensed CC BY-SA 4.0; attribution and source notes: data/LICENSE.md.' },
+  banner: { js: '// English Vocab — code: MIT (see LICENSE). The bundled English word list is adapted from wordfreq 3.1.1\n// (Robyn Speer) and licensed CC BY-SA 4.0; attribution and source notes: data/LICENSE.md.\n// Offline dictionary chunks are derived from ECDICT (MIT); attribution and source notes: dict/LICENSE-ECDICT.md.' },
   sourcemap: false,
   minify: false,
   logLevel: 'silent',

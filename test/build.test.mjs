@@ -27,6 +27,15 @@ describe('build output', () => {
     expect(readme).toContain('data/LICENSE.md');
   });
 
+  it('should keep offline dictionary chunks outside the bundled runtime', async () => {
+    await exec('node', ['build.mjs']);
+    const bundle = await readFile('main.mjs', 'utf8');
+    const chunk = await readFile('dict/s.mjs', 'utf8');
+    expect(bundle).toContain('./dict/${letter}.mjs');
+    expect(bundle).not.toContain('serendipity');
+    expect(bundle.length).toBeLessThan(chunk.length);
+  });
+
   it('should scope every style to the plugin panel and use Auton Knowledge theme tokens', async () => {
     const css = await readFile('styles.css', 'utf8');
     expect(css).toContain('[data-plugin-panel="dev.auton.english-vocab:english-vocab"]');

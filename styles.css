@@ -30,7 +30,7 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
@@ -49,7 +49,7 @@
   width: auto;
   min-width: 0;
   min-height: 28px;
-  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, currentColor));
   border-radius: var(--agent-radius-sm, 4px);
   padding: 4px 9px;
   color: var(--agent-color-text-primary, inherit);
@@ -60,19 +60,19 @@
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-button:hover:not(:disabled) {
-  background: var(--agent-state-hover-bg, rgba(127, 127, 127, 0.12));
+  background: var(--agent-state-hover-bg, var(--agent-color-bg-elevated, transparent));
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-button:disabled {
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   cursor: default;
   opacity: 0.65;
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-button[aria-pressed="true"] {
-  border-color: var(--agent-color-accent, #3b82f6);
-  color: var(--agent-color-accent, #3b82f6);
-  background: var(--agent-color-accent-subtle, rgba(59, 130, 246, 0.12));
+  border-color: var(--agent-color-accent, currentColor);
+  color: var(--agent-color-accent, currentColor);
+  background: var(--agent-color-accent-subtle, var(--agent-color-bg-elevated, transparent));
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-add {
@@ -86,12 +86,103 @@
   gap: 8px;
 }
 
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-section-title {
+  color: var(--agent-color-text-muted, var(--agent-color-text-secondary, currentColor));
+  font-size: var(--agent-typography-size-xs, 12px);
+  font-weight: 600;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-lookup,
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-notebook-tools {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-lookup {
+  border-bottom: var(--agent-border-hairline, 1px solid var(--agent-color-border));
+  padding-bottom: 12px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-suggestions {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 6px;
+  overflow: visible;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-chip {
+  min-height: 24px;
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border));
+  border-radius: var(--agent-radius-sm, 4px);
+  padding: 2px 8px;
+  color: var(--agent-color-text-primary, inherit);
+  background: var(--agent-color-bg-elevated, transparent);
+  font-size: var(--agent-typography-size-xs, 12px);
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-chip:hover:not(:disabled) {
+  background: var(--agent-state-hover-bg, var(--agent-color-bg-elevated, transparent));
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-result {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border));
+  border-radius: var(--agent-radius-sm, 4px);
+  padding: 10px;
+  background: var(--agent-color-bg-elevated, transparent);
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-result:empty {
+  display: none;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-reading-phonetic {
+  flex: none;
+  color: var(--agent-color-text-secondary, var(--agent-color-text-muted, currentColor));
+  font-size: var(--agent-typography-size-sm, 13px);
+  font-weight: 400;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-definition {
+  display: flex;
+  min-width: 0;
+  max-height: calc(8 * 1.45em);
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  color: var(--agent-color-text-primary, inherit);
+  font-size: var(--agent-typography-size-sm, 13px);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-lines {
+  display: grid;
+  gap: 2px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-dict-lines-en {
+  color: var(--agent-color-text-secondary, var(--agent-color-text-muted, currentColor));
+}
+
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-setting-line {
   display: grid;
   grid-template-columns: auto minmax(74px, 1fr) auto minmax(56px, 0.7fr) minmax(56px, 0.7fr);
   gap: 6px;
   align-items: center;
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
@@ -100,7 +191,7 @@
   width: 100%;
   min-width: 0;
   min-height: 30px;
-  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, currentColor));
   border-radius: var(--agent-radius-sm, 4px);
   padding: 4px 8px;
   color: var(--agent-color-text-primary, inherit);
@@ -119,7 +210,7 @@
   min-width: 0;
   flex-direction: column;
   gap: 12px;
-  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, currentColor));
   border-radius: var(--agent-radius-sm, 4px);
   padding: 14px;
   background: var(--agent-color-bg-elevated, transparent);
@@ -135,7 +226,7 @@
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-note,
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-empty,
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-warning {
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
@@ -157,13 +248,13 @@
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-rating-again {
-  border-color: var(--agent-color-danger, #c0392b);
-  color: var(--agent-color-danger, #c0392b);
+  border-color: var(--agent-color-danger, currentColor);
+  color: var(--agent-color-danger, currentColor);
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-rating-easy {
-  border-color: var(--agent-color-accent, #3b82f6);
-  color: var(--agent-color-accent, #3b82f6);
+  border-color: var(--agent-color-accent, currentColor);
+  color: var(--agent-color-accent, currentColor);
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-list {
@@ -178,7 +269,7 @@
   display: grid;
   min-width: 0;
   gap: 5px;
-  border-bottom: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border-bottom: var(--agent-border-hairline, 1px solid var(--agent-color-border, currentColor));
   padding: 10px 0;
 }
 
@@ -199,14 +290,14 @@
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-badge {
   flex: none;
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-xs, 12px);
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-row-definition {
   min-width: 0;
   overflow: hidden;
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -236,7 +327,7 @@
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-skipped {
-  color: var(--agent-color-text-muted, gray);
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
@@ -278,8 +369,9 @@
 
 .ev-reading-card .ev-reading-badge,
 .ev-reading-card .ev-reading-example,
-.ev-reading-card .ev-reading-note {
-  color: var(--agent-color-text-muted, gray);
+.ev-reading-card .ev-reading-note,
+.ev-reading-card .ev-dict-relation {
+  color: var(--agent-color-text-muted, currentColor);
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
@@ -287,11 +379,54 @@
   font-weight: 600;
 }
 
+.ev-reading-card .ev-dict {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ev-reading-card .ev-dict-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ev-reading-card .ev-reading-phonetic {
+  flex: none;
+  color: var(--agent-color-text-secondary, var(--agent-color-text-muted, currentColor));
+  font-size: var(--agent-typography-size-sm, 13px);
+  font-weight: 400;
+}
+
+.ev-reading-card .ev-dict-definition {
+  display: flex;
+  min-width: 0;
+  max-height: calc(8 * 1.45em);
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  color: var(--agent-color-text-primary, inherit);
+  font-size: var(--agent-typography-size-sm, 13px);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.ev-reading-card .ev-dict-lines {
+  display: grid;
+  gap: 2px;
+}
+
+.ev-reading-card .ev-dict-lines-en {
+  color: var(--agent-color-text-secondary, var(--agent-color-text-muted, currentColor));
+}
+
 .ev-reading-card .ev-reading-button {
   flex: none;
   min-width: 0;
   min-height: 26px;
-  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, currentColor));
   border-radius: var(--agent-radius-sm, 4px);
   padding: 3px 8px;
   color: var(--agent-color-text-primary, inherit);
@@ -302,15 +437,15 @@
 }
 
 .ev-reading-card .ev-reading-button:hover {
-  background: var(--agent-state-hover-bg, rgba(127, 127, 127, 0.12));
+  background: var(--agent-state-hover-bg, var(--agent-color-bg-elevated, transparent));
 }
 
 .ev-reading-card .ev-reading-again {
-  border-color: var(--agent-color-danger, #c0392b);
-  color: var(--agent-color-danger, #c0392b);
+  border-color: var(--agent-color-danger, currentColor);
+  color: var(--agent-color-danger, currentColor);
 }
 
 .ev-reading-card .ev-reading-good {
-  border-color: var(--agent-color-accent, #3b82f6);
-  color: var(--agent-color-accent, #3b82f6);
+  border-color: var(--agent-color-accent, currentColor);
+  color: var(--agent-color-accent, currentColor);
 }

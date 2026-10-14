@@ -33,7 +33,7 @@ function fullApp() {
     storage: {
       writes: [],
       setRoot(next) { rootGeneration = next; },
-      async scope() { return { rootGeneration: 'root' }; },
+      async scope() { return { rootGeneration }; },
       async read(root, name) {
         assertRoot(root);
         if (name === 'review.json' && storedReview) return { found: true, text: storedReview, revision: 'r' };
@@ -348,6 +348,88 @@ describe('panel', () => {
     expect(app.chat.text).toContain('vocab_add');
   });
 
+  it('should look up dictionary suggestions in the notebook and collect a selected word', async () => {
+    const container = document.createElement('div');
+    const collected = [];
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      lookupDictionary: async (word) => ({ surface: word, lemma: 'ephemeral', entry: { p: 'iˈfemərəl', t: 'adj. 短暂的', d: 'lasting briefly' } }),
+      suggestDictionary: async () => [{ word: 'ephemeral', entry: {} }],
+      onCollectDictionaryWord: (result) => collected.push(result.lemma),
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'eph';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+    expect(container.textContent).toContain('词典');
+    expect(container.querySelector('.ev-dict-chip')?.textContent).toBe('ephemeral');
+    container.querySelector('.ev-dict-chip').click();
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-result')).toBeTruthy();
+    expect(container.querySelector('.ev-dict-result .ev-dict-head .ev-row-word')?.textContent).toBe('ephemeral');
+    expect(container.querySelector('.ev-dict-result .ev-reading-phonetic')?.textContent).toBe('/iˈfemərəl/');
+    expect(container.querySelectorAll('.ev-dict-result .ev-dict-line')).toHaveLength(2);
+    expect(container.textContent).toContain('adj. 短暂的');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '收词').click();
+    expect(collected).toEqual(['ephemeral']);
+  });
+
+  it('should show dictionary empty and collected states in the notebook', async () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'known', definition: '已知' }],
+      review: { version: 1, cards: {}, flags: {} },
+      lookupDictionary: async (word) => (word === 'known' ? { surface: 'known', lemma: 'known', entry: { t: 'adj. 已知的', d: 'known' } } : null),
+      suggestDictionary: async () => [],
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'q';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-chip')).toBeNull();
+    input.value = 'qz';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+    expect(container.textContent).toContain('词典中没有这个词');
+    input.value = 'known';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    expect(container.textContent).toContain('已在生词本');
+    input.value = 'missing';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    expect(container.textContent).toContain('词典中没有这个词');
+  });
+
+  it('should render panel dictionary definitions in English order when locale is English', async () => {
+    document.documentElement.lang = 'en';
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      lookupDictionary: async () => ({ surface: 'run', lemma: 'run', entry: { t: 'v. 跑', d: 'move fast' } }),
+      suggestDictionary: async () => [{ word: 'run', entry: {} }],
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === 'Notebook').click();
+    expect(container.textContent).toContain('Dictionary');
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'ru';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+    container.querySelector('.ev-dict-chip').click();
+    await Promise.resolve();
+    expect([...container.querySelectorAll('.ev-dict-result .ev-dict-lines')].map((node) => node.className)).toEqual(['ev-dict-lines ev-dict-lines-en', 'ev-dict-lines ev-dict-lines-zh']);
+  });
+
   it('should redraw from subscribed live state and unsubscribe during cleanup', () => {
     const container = document.createElement('div');
     let current = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [], loading: { done: 0, total: 1 } };
@@ -365,23 +447,30 @@ describe('panel', () => {
   it('should show a reading highlight switch only when the host supports decorations', () => {
     const container = document.createElement('div');
     const seen = [];
+    const lookupSeen = [];
     renderPanel(container, {
       app: { ...fullApp(), readingDecorations: { register() {} } },
       entries: [],
       review: { version: 1, cards: {}, flags: {} },
       highlight: true,
       onHighlightChange: (value) => seen.push(value),
+      onLookupAnyWordChange: (value) => lookupSeen.push(value),
       hasEnglishVoice: () => true,
     });
     const input = container.querySelector('[data-role="highlight-reading"]');
+    const lookup = container.querySelector('[data-role="lookup-any-word"]');
     expect(container.textContent).toContain('在正文里标出已收的词');
     expect(input.checked).toBe(true);
+    expect(lookup.checked).toBe(true);
     input.click();
     expect(seen).toEqual([false]);
+    lookup.click();
+    expect(lookupSeen).toEqual([false]);
 
     const oldHost = document.createElement('div');
     renderPanel(oldHost, { app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true });
     expect(oldHost.textContent).not.toContain('在正文里标出已收的词');
+    expect(oldHost.textContent).not.toContain('点任意词查词典');
   });
 
   it('should append selection request to chat when collecting from selection', () => {
@@ -416,6 +505,8 @@ describe('main plugin', () => {
     expect(rendered.textContent).toContain('今日复习');
     expect(rendered.querySelector('h2')).toBeNull();
     const state = plugin.panelState();
+    expect(state.canOpenReadingDocument()).toBe(false);
+    expect(state.openReadingDocument('wiki/read.md')).toBe(false);
     globalThis.speechSynthesis = { getVoices: () => [{ lang: 'en-US' }], cancel: vi.fn(), speak: vi.fn() };
     globalThis.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; };
     expect(state.hasEnglishVoice()).toBe(true);
@@ -489,12 +580,43 @@ describe('main plugin', () => {
     container.querySelector('[data-role="speak"]').click();
     expect(spoken).toEqual(['alpha']);
     container.querySelector('[data-rating="Good"]').click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(plugin.readingUndoSnapshots.has('alpha')).toBe(true);
     container.querySelector('[data-role="undo"]').click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(plugin.readingUndoSnapshots.has('alpha')).toBe(false);
   });
+
+  it('should wire registered uncollected reading cards to plugin dictionary callbacks', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const registrations = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register(spec) {
+        registrations.push(spec);
+        return { setTerms: vi.fn(() => true), setLookupAnyWord: vi.fn(() => true), dispose: vi.fn() };
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.lookupDictionary = async (word) => (word === 'missing' ? null : { surface: word, lemma: 'run', entry: { t: 'v. 跑', d: 'move fast' } });
+    plugin.collectDictionaryWord = vi.fn(async () => ({ outcome: 'timeout', summary: 'slow', reason: 'slow' }));
+    const container = document.createElement('div');
+    registrations[0].renderCard(container, { word: 'ran', key: 'ran', tone: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    container.querySelector('[data-role="collect-dictionary-word"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(plugin.collectDictionaryWord).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain('未审阅：slow');
+
+    const missing = document.createElement('div');
+    registrations[0].renderCard(missing, { word: 'missing', key: 'missing', tone: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    [...missing.querySelectorAll('button')].find((node) => node.textContent === '让 Agent 解释').click();
+    expect(app.chat.text).toContain('missing');
+  });
+
 
   it('should persist highlight preference and dispose or recreate decorations when toggled', async () => {
     vi.resetModules();
@@ -514,11 +636,57 @@ describe('main plugin', () => {
     plugin.saveData = async (data) => saved.push(data);
     await plugin.onload();
     await plugin.setHighlight(false);
-    expect(saved.at(-1)).toEqual({ highlight: false });
-    expect(registrations[0].disposed).toBe(true);
+    expect(saved.at(-1)).toMatchObject({ highlight: false, lookupAnyWord: true, levelSettings: expect.any(Object), lookupNoticeShown: expect.any(Boolean) });
+    expect(registrations[0].disposed).toBe(false);
     await plugin.setHighlight(true);
-    expect(saved.at(-1)).toEqual({ highlight: true });
-    expect(registrations).toHaveLength(2);
+    expect(saved.at(-1)).toMatchObject({ highlight: true, lookupAnyWord: true });
+    expect(registrations).toHaveLength(1);
+  });
+
+  it('should enable lookup-any-word when supported, persist preferences by merging fields, and show the first notice once', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const saved = [];
+    const registrations = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register() {
+        const handle = { setTerms: vi.fn(() => true), setLookupAnyWord: vi.fn(() => true), dispose: vi.fn() };
+        registrations.push(handle);
+        return handle;
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = async () => ({ highlight: true, lookupAnyWord: true, levelSettings: { vocabularySize: 5000, easyMax: 2, goodMax: 5 }, custom: 'kept' });
+    plugin.saveData = async (data) => saved.push(data);
+    await plugin.onload();
+    expect(registrations[0].setLookupAnyWord).toHaveBeenCalledWith(true);
+    expect(app.notices.some((item) => item.message.includes('任意英文词'))).toBe(true);
+    expect(saved.at(-1)).toMatchObject({ custom: 'kept', highlight: true, lookupAnyWord: true, lookupNoticeShown: true });
+    await plugin.setLookupAnyWord(false);
+    expect(saved.at(-1)).toMatchObject({ custom: 'kept', lookupAnyWord: false, highlight: true });
+  });
+
+  it('should dispose reading decorations when both highlighting and lookup-any-word are off', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const handles = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register() {
+        const handle = { setTerms: vi.fn(() => true), setLookupAnyWord: vi.fn(() => true), dispose: vi.fn() };
+        handles.push(handle);
+        return handle;
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = async () => ({ highlight: false, lookupAnyWord: false, lookupNoticeShown: true });
+    await plugin.onload();
+    expect(handles).toHaveLength(0);
+    await plugin.setLookupAnyWord(true);
+    expect(handles).toHaveLength(1);
+    await plugin.setLookupAnyWord(false);
+    expect(handles[0].dispose).toHaveBeenCalledOnce();
   });
 
   it('should load disabled highlight preference and tolerate preference save failures', async () => {
@@ -531,7 +699,7 @@ describe('main plugin', () => {
     plugin.saveData = async () => { throw new Error('nope'); };
     await plugin.onload();
     expect(plugin.state.highlight).toBe(false);
-    expect(app.readingDecorations.register).not.toHaveBeenCalled();
+    expect(app.readingDecorations.register).toHaveBeenCalledOnce();
     await plugin.setHighlight(true);
     expect(plugin.state.highlight).toBe(true);
     expect(app.readingDecorations.register).toHaveBeenCalledOnce();
@@ -623,6 +791,45 @@ describe('main plugin', () => {
     await plugin.onload();
     await expect(app.tools.get('vocab_lookup').run({ word: 'alpha' })).resolves.toContain('"collected":true');
     await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '测试' }] })).resolves.toContain('Submitted for review');
+  });
+
+  it('should submit dictionary collection as a knowledge proposal with note metadata and skip existing words', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const proposals = [];
+    const app = fullApp();
+    app.knowledge.propose = async (proposal) => {
+      proposals.push(proposal);
+      return { outcome: 'applied', summary: 'accepted', paths: proposal.changes.map((change) => change.path) };
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const receipt = await plugin.collectDictionaryWord(
+      { surface: 'ran', lemma: 'run', entry: { p: 'rʌn', t: 'v. 跑\nn. 路程', d: 'move fast', x: '0:run' } },
+      { sentence: 'I ran home.', source: { kind: 'document', path: 'wiki/read.md', title: 'Read' } },
+    );
+    expect(receipt).toMatchObject({ outcome: 'applied' });
+    expect(proposals[0].changes[0].path).toBe('wiki/vocab/run.md');
+    expect(proposals[0].changes[0].newContent).toContain('word: "run"');
+    expect(proposals[0].changes[0].newContent).toContain('phonetic: "rʌn"');
+    expect(proposals[0].changes[0].newContent).toContain('pos: "verb"');
+    expect(proposals[0].changes[0].newContent).toContain('I ran home.');
+    expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
+    expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });
+    expect(proposals).toHaveLength(1);
+  });
+
+  it('should handle dictionary proposal errors and explain words without a sentence', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.knowledge.propose = async () => ({ _tag: 'Err', error: 'denied' });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.collectDictionaryWord(null)).resolves.toMatchObject({ outcome: 'aborted' });
+    await expect(plugin.collectDictionaryWord({ surface: 'void', lemma: 'void', entry: { d: 'empty' } })).resolves.toMatchObject({ outcome: 'aborted', summary: 'denied' });
+    plugin.explainDictionaryWord('void');
+    expect(app.chat.text).toContain('void');
   });
 
   it('should persist ratings and flags, append rating logs, and notify without losing a saved card when log writing fails', async () => {
