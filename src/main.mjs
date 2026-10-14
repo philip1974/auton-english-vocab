@@ -4,6 +4,7 @@ import { VocabIndex } from './vocab-index.mjs';
 import { rateCard, newSerializedCard } from './scheduler.mjs';
 import { renderPanel, hasRequiredHost, appendSelectionRequest } from './panel.mjs';
 import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tools.mjs';
+import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
 const emptyReview = () => ({ version: 1, cards: {}, flags: {} });
@@ -12,11 +13,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async onload() {
     this.locale = currentLocale();
     this.t = uiText(this.locale);
-    this.state = { entries: [], review: emptyReview(), log: [], loading: null, invalid: [] };
+    this.state = { entries: [], review: emptyReview(), log: [], loading: null, invalid: [], highlight: true };
     this.listeners = new Set();
     this.submission = 0;
     this.reviewStore = null;
     this.index = null;
+    this.readingHandle = null;
+    this.readingUndoSnapshots = new Map();
     this.addPanel({
       id: 'english-vocab',
       title: this.t.panelTitle,
@@ -31,7 +34,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
       callback: () => this.openPanel('english-vocab'),
     });
     if (!hasRequiredHost(this.app)) return;
+    await this.loadPreferences();
     await this.initializeState();
+    this.syncReadingDecorations();
     this.registerSelectionAction();
     await this.registerTools();
     this.onEvent?.('knowledge.index-changed', () => this.refreshIndex());
@@ -58,7 +63,17 @@ export default class EnglishVocabPlugin extends BasePlugin {
         utterance.lang = 'en-US';
         speechSynthesis.speak(utterance);
       },
+      onHighlightChange: (value) => this.setHighlight(value),
     };
+  }
+
+  async loadPreferences() {
+    try {
+      const data = await this.loadData?.();
+      this.state.highlight = data?.highlight !== false;
+    } catch {
+      this.state.highlight = true;
+    }
   }
 
   async initializeState() {
@@ -84,6 +99,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const result = await this.index.refresh();
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
+      this.updateReadingTerms();
     } finally {
       this.state.loading = null;
       this.emitState();
@@ -103,6 +119,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     if (!this.reviewStore) return;
     this.state.review = await this.reviewStore.reloadForRootChange();
     this.state.log = this.reviewStore.log;
+    this.updateReadingTerms();
     this.emitState();
     await this.refreshIndex();
   }
@@ -123,6 +140,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
     }
     this.state.review = result.review;
     this.state.log = this.reviewStore.log;
+    if (mode === 'reading-card') this.readingUndoSnapshots.set(word, previous ?? null);
+    this.updateReadingTerms();
     this.emitState();
     if (result.rootChanged) {
       this.notice(this.t.rootChangedDuringReview);
@@ -138,6 +157,31 @@ export default class EnglishVocabPlugin extends BasePlugin {
     return true;
   }
 
+  async undoReadingRating(word) {
+    if (!this.reviewStore || !this.readingUndoSnapshots.has(word)) return false;
+    const previous = this.readingUndoSnapshots.get(word);
+    const cards = { ...this.state.review.cards };
+    if (previous) cards[word] = previous;
+    else delete cards[word];
+    try {
+      const result = await this.reviewStore.saveReview({ ...this.state.review, cards });
+      this.state.review = result.review;
+      this.state.log = this.reviewStore.log;
+      if (result.rootChanged) {
+        this.notice(this.t.rootChangedDuringReview);
+        return false;
+      }
+      this.state.log = await this.reviewStore.appendLog({ word, undo: true, reviewedAt: new Date().toISOString(), mode: 'reading-card' });
+      this.readingUndoSnapshots.delete(word);
+      this.updateReadingTerms();
+      this.emitState();
+      return true;
+    } catch {
+      this.notice(this.t.reviewSaveFailed);
+      return false;
+    }
+  }
+
   async setFlag(word, flag) {
     const flags = { ...this.state.review.flags };
     if (flag) flags[word] = flag;
@@ -146,6 +190,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const result = await this.reviewStore.saveReview({ ...this.state.review, flags });
       this.state.review = result.review;
       this.state.log = this.reviewStore.log;
+      this.updateReadingTerms();
       this.emitState();
       if (result.rootChanged) this.notice(this.t.rootChangedDuringReview);
       return !result.rootChanged;
@@ -164,6 +209,52 @@ export default class EnglishVocabPlugin extends BasePlugin {
       surfaces: ['reading', 'web'],
       onSelect: (context) => appendSelectionRequest(this.app, context, (message) => this.notice(message), this.locale),
     });
+  }
+
+  readingSupported() {
+    return Boolean(this.app?.readingDecorations?.register);
+  }
+
+  syncReadingDecorations() {
+    if (!this.readingSupported() || this.state.highlight === false) {
+      this.disposeReadingDecorations();
+      return;
+    }
+    if (!this.readingHandle) {
+      const spec = createReadingDecorationSpec({
+        locale: this.locale,
+        getState: () => this.state,
+        onReview: (word, rating, mode) => this.rateWord(word, rating, mode),
+        onUndo: (word) => this.undoReadingRating(word),
+        onTermsChanged: () => this.updateReadingTerms(),
+        speak: (word) => this.panelState().speak(word),
+      });
+      this.readingHandle = this.addReadingDecoration
+        ? this.addReadingDecoration(spec)
+        : this.register(this.app.readingDecorations.register(spec));
+    }
+    this.updateReadingTerms();
+  }
+
+  disposeReadingDecorations() {
+    this.readingHandle?.dispose?.();
+    this.readingHandle = null;
+  }
+
+  updateReadingTerms() {
+    if (!this.readingHandle || this.state.highlight === false) return false;
+    return this.readingHandle.setTerms(buildReadingTerms(this.state));
+  }
+
+  async setHighlight(value) {
+    this.state.highlight = Boolean(value);
+    try {
+      await this.saveData?.({ highlight: this.state.highlight });
+    } catch {
+      // Preference persistence is best-effort; the visible state still follows the toggle.
+    }
+    this.syncReadingDecorations();
+    this.emitState();
   }
 
   async registerTools() {

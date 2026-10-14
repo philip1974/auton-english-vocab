@@ -18,10 +18,20 @@
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-tabs,
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-mode {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-mode,
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-toggle {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--agent-color-text-muted, gray);
+  font-size: var(--agent-typography-size-sm, 13px);
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-body {
@@ -199,4 +209,79 @@
   min-height: 24px;
   padding: 2px 7px;
   font-size: var(--agent-typography-size-xs, 12px);
+}
+
+.ev-reading-card {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 10px;
+  /* The host's card frame already draws the border and background. */
+  border: 0;
+  padding: 0;
+  color: var(--agent-color-text-primary, inherit);
+  background: transparent;
+}
+
+.ev-reading-card p {
+  margin: 0;
+}
+
+.ev-reading-card .ev-reading-heading,
+.ev-reading-card .ev-reading-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.ev-reading-card .ev-reading-heading {
+  justify-content: space-between;
+}
+
+.ev-reading-card .ev-reading-word {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--agent-typography-size-md, 15px);
+}
+
+.ev-reading-card .ev-reading-badge,
+.ev-reading-card .ev-reading-example,
+.ev-reading-card .ev-reading-note {
+  color: var(--agent-color-text-muted, gray);
+  font-size: var(--agent-typography-size-sm, 13px);
+}
+
+.ev-reading-card .ev-reading-definition {
+  font-weight: 600;
+}
+
+.ev-reading-card .ev-reading-button {
+  flex: none;
+  min-width: 0;
+  min-height: 26px;
+  border: var(--agent-border-hairline, 1px solid var(--agent-color-border, rgba(127, 127, 127, 0.3)));
+  border-radius: var(--agent-radius-sm, 4px);
+  padding: 3px 8px;
+  color: var(--agent-color-text-primary, inherit);
+  background: var(--agent-color-bg, transparent);
+  font: inherit;
+  font-size: var(--agent-typography-size-sm, 13px);
+  cursor: pointer;
+}
+
+.ev-reading-card .ev-reading-button:hover {
+  background: var(--agent-state-hover-bg, rgba(127, 127, 127, 0.12));
+}
+
+.ev-reading-card .ev-reading-again {
+  border-color: var(--agent-color-danger, #c0392b);
+  color: var(--agent-color-danger, #c0392b);
+}
+
+.ev-reading-card .ev-reading-good {
+  border-color: var(--agent-color-accent, #3b82f6);
+  color: var(--agent-color-accent, #3b82f6);
 }

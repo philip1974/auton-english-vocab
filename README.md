@@ -9,9 +9,25 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
 - 右侧面板 `English Vocab`：今日复习、生词本搜索、熟悉度标记、忽略与恢复。
 - 三种复习形式：翻卡、反向拼写、听音拼写。听音拼写会先调用 `speechSynthesis.cancel()`，因此会打断正在进行的朗读；没有英语声音时会禁用。
 - 选区动作「收为生词」支持 reading 和 web 两个 surface，会把请求追加到 Auton Knowledge 对话框，由 Agent 调用 `vocab_add`。网页里的右键收词需要开启了选区共享的网页面板，例如 Browser Panel 0.7.0 或更新。
+- 正文标色与点词卡片：在阅读正文里标出已收的词；点击后显示释义、例句、熟悉度、朗读按钮，并可直接标记「认识 / 不认识」。
 - Agent 工具：
   - `vocab_lookup { word }`
   - `vocab_add { entries }`
+
+## 正文标色与点词卡片 / Reading highlights and word cards
+
+插件会把生词本里的词条和常见变形提交给宿主的 `readingDecorations` API。宿主负责正文匹配和高亮颜色；插件只提供词表，并在用户点击已标出的词时渲染卡片。
+
+面板顶部的「在正文里标出已收的词」开关默认开启，偏好保存在插件数据中，不随知识库根目录切换。关闭后会释放已注册的正文标色；再次开启会按当前生词本和复习状态重建词表。
+
+点词卡片会显示：
+
+- 原词与词条，例如 `running → run`。
+- 熟悉度徽标、释义和前两条例句。
+- 「Good / Again」评分按钮；评分后会更新复习进度、重建正文词表，并显示「撤销」。
+- 朗读按钮，使用浏览器的 `speechSynthesis` 读词条。
+
+Reading highlights require an Auton Knowledge host that supports `readingDecorations`. On supported hosts, collected words and common inflections are highlighted in reading text, and clicking a highlighted word opens a compact vocabulary card with the definition, examples, familiarity, speech, rating actions, and undo.
 
 ## 权限 / Permissions
 
@@ -54,6 +70,10 @@ wiki/vocab/<slug>.md
 如果这些能力缺失，插件只显示「需要 Auton Knowledge 0.3.0 或更新」，不会抛错，也不会注册依赖这些能力的入口。
 
 Requires Auton Knowledge 0.3.0 or newer. Older hosts show a compatibility message without crashing.
+
+正文标色是可选增强能力：需要支持 `readingDecorations` 的 Auton Knowledge。旧版宿主不会显示「在正文里标出已收的词」开关，也不会在正文里标色；收词、复习、Agent 工具和生词本列表仍照常工作。
+
+Reading highlights are optional. Older Auton Knowledge builds that do not expose `readingDecorations` simply omit highlights and the highlight toggle; the rest of the plugin continues to work.
 
 ## 已知未做 / Known limitation
 

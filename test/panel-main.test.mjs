@@ -99,14 +99,14 @@ describe('panel', () => {
   });
 
   it('should score with rating buttons and ignore non review keys when card is flipped', () => {
-    for (const label of ['Again', 'Hard', 'Good', 'Easy']) {
+    for (const [label, rating] of [['重来', 'Again'], ['困难', 'Hard'], ['良好', 'Good'], ['简单', 'Easy']]) {
       const container = document.createElement('div');
       const seen = [];
       renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, onReview: (word, rating) => seen.push(rating), hasEnglishVoice: () => true });
       container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
       container.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
       [...container.querySelectorAll('button')].find((node) => node.textContent.endsWith(label)).click();
-      expect(seen[0]).toBe(label);
+      expect(seen[0]).toBe(rating);
     }
   });
 
@@ -117,7 +117,7 @@ describe('panel', () => {
     expect(container.querySelector('.ev-example')?.textContent).toContain('_____');
     container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
     const ratings = [...container.querySelectorAll('.ev-rating .ev-button')];
-    expect(ratings.map((node) => node.textContent)).toEqual(['1 Again', '2 Hard', '3 Good', '4 Easy']);
+    expect(ratings.map((node) => node.textContent)).toEqual(['1 重来', '2 困难', '3 良好', '4 简单']);
     expect(ratings[0].classList.contains('ev-rating-again')).toBe(true);
     expect(ratings[3].classList.contains('ev-rating-easy')).toBe(true);
   });
@@ -290,6 +290,28 @@ describe('panel', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it('should show a reading highlight switch only when the host supports decorations', () => {
+    const container = document.createElement('div');
+    const seen = [];
+    renderPanel(container, {
+      app: { ...fullApp(), readingDecorations: { register() {} } },
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      highlight: true,
+      onHighlightChange: (value) => seen.push(value),
+      hasEnglishVoice: () => true,
+    });
+    const input = container.querySelector('[data-role="highlight-reading"]');
+    expect(container.textContent).toContain('在正文里标出已收的词');
+    expect(input.checked).toBe(true);
+    input.click();
+    expect(seen).toEqual([false]);
+
+    const oldHost = document.createElement('div');
+    renderPanel(oldHost, { app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true });
+    expect(oldHost.textContent).not.toContain('在正文里标出已收的词');
+  });
+
   it('should append selection request to chat when collecting from selection', () => {
     const app = fullApp();
     expect(appendSelectionRequest(app, { text: 'alpha', source: { kind: 'web', title: 'Page', url: 'https://example.com' } })).toBe(true);
@@ -339,6 +361,186 @@ describe('main plugin', () => {
     expect(app.notices.at(-1).message).toBe('hello');
     app.selectionActions.items[0].onSelect({ text: 'alpha', source: { kind: 'document', title: 'Doc', path: 'wiki/a.md' } });
     expect(app.chat.text).toContain('alpha');
+  });
+
+  it('should register reading decorations by default and refresh terms after review index and root changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const registrations = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register(spec) {
+        const item = { spec, terms: [], disposed: false };
+        registrations.push(item);
+        return {
+          setTerms(terms) { item.terms = terms; return true; },
+          dispose() { item.disposed = true; },
+        };
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(plugin.state.highlight).toBe(true);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0].terms.some((term) => term.surface === 'alpha' && term.tone === 'learning')).toBe(true);
+    await plugin.rateWord('alpha', 'Good', 'flip');
+    expect(registrations[0].terms.some((term) => term.surface === 'alpha')).toBe(true);
+    await app.events.find((event) => event.name === 'knowledge.index-changed').listener();
+    expect(registrations[0].terms.some((term) => term.surface === 'alpha')).toBe(true);
+    await app.events.find((event) => event.name === 'knowledge.root-changed').listener();
+    expect(registrations[0].terms.some((term) => term.surface === 'alpha')).toBe(true);
+  });
+
+  it('should wire registered reading cards to plugin rating undo terms and speech callbacks', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const registrations = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register(spec) {
+        registrations.push(spec);
+        return { setTerms: vi.fn(() => true), dispose: vi.fn() };
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const spoken = [];
+    plugin.panelState = () => ({ speak: (word) => spoken.push(word) });
+    const container = document.createElement('div');
+    registrations[0].renderCard(container, {
+      word: 'alpha',
+      key: 'alpha',
+      tone: 'learning',
+      source: { kind: 'document', path: 'wiki/page.md', title: 'Page' },
+      close: vi.fn(),
+    });
+    container.querySelector('[data-role="speak"]').click();
+    expect(spoken).toEqual(['alpha']);
+    container.querySelector('[data-rating="Good"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(plugin.readingUndoSnapshots.has('alpha')).toBe(true);
+    container.querySelector('[data-role="undo"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(plugin.readingUndoSnapshots.has('alpha')).toBe(false);
+  });
+
+  it('should persist highlight preference and dispose or recreate decorations when toggled', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const saved = [];
+    const registrations = [];
+    const app = fullApp();
+    app.readingDecorations = {
+      register() {
+        const item = { disposed: false };
+        registrations.push(item);
+        return { setTerms: () => true, dispose: () => { item.disposed = true; } };
+      },
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = async () => ({ highlight: true });
+    plugin.saveData = async (data) => saved.push(data);
+    await plugin.onload();
+    await plugin.setHighlight(false);
+    expect(saved.at(-1)).toEqual({ highlight: false });
+    expect(registrations[0].disposed).toBe(true);
+    await plugin.setHighlight(true);
+    expect(saved.at(-1)).toEqual({ highlight: true });
+    expect(registrations).toHaveLength(2);
+  });
+
+  it('should load disabled highlight preference and tolerate preference save failures', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: vi.fn(() => ({ setTerms: vi.fn(), dispose: vi.fn() })) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = async () => ({ highlight: false });
+    plugin.saveData = async () => { throw new Error('nope'); };
+    await plugin.onload();
+    expect(plugin.state.highlight).toBe(false);
+    expect(app.readingDecorations.register).not.toHaveBeenCalled();
+    await plugin.setHighlight(true);
+    expect(plugin.state.highlight).toBe(true);
+    expect(app.readingDecorations.register).toHaveBeenCalledOnce();
+  });
+
+  it('should default highlight on when preference loading fails and use the host helper when present', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: vi.fn() };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    const handle = { setTerms: vi.fn(() => true), dispose: vi.fn() };
+    plugin.loadData = async () => { throw new Error('bad prefs'); };
+    plugin.addReadingDecoration = vi.fn(() => handle);
+    await plugin.onload();
+    expect(plugin.state.highlight).toBe(true);
+    expect(plugin.addReadingDecoration).toHaveBeenCalledOnce();
+    expect(plugin.updateReadingTerms()).toBe(true);
+  });
+
+  it('should hide reading controls and skip registration on older hosts without decorations', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(plugin.readingHandle).toBeNull();
+    const rendered = document.createElement('div');
+    app.panels[0].render(rendered);
+    expect(rendered.textContent).not.toContain('在正文里标出已收的词');
+    await plugin.setHighlight(false);
+    expect(plugin.state.highlight).toBe(false);
+    app.storage.scope = async () => { throw new Error('gone'); };
+    await expect(plugin.rootMoved()).resolves.toBe(false);
+  });
+
+  it('should undo the latest reading-card rating and append an undo log', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(await plugin.undoReadingRating('alpha')).toBe(false);
+    await plugin.rateWord('alpha', 'Good', 'reading-card');
+    expect(plugin.state.review.cards.alpha).toBeTruthy();
+    expect(await plugin.undoReadingRating('alpha')).toBe(true);
+    expect(plugin.state.review.cards.alpha).toBeUndefined();
+    const log = JSON.parse(app.storage.writes.filter((item) => item.name === 'log.json').at(-1).text);
+    expect(log.at(-1)).toMatchObject({ word: 'alpha', undo: true, mode: 'reading-card' });
+  });
+
+  it('should restore the previous card when undoing a reading-card rating on a reviewed word', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const previous = { state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' };
+    plugin.state.review = { version: 1, cards: { alpha: previous }, flags: {} };
+    await plugin.rateWord('alpha', 'Again', 'reading-card');
+    await plugin.undoReadingRating('alpha');
+    expect(plugin.state.review.cards.alpha).toEqual(previous);
+  });
+
+  it('should notify when undoing a reading-card rating fails or races a root change', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await plugin.rateWord('alpha', 'Good', 'reading-card');
+    plugin.reviewStore.saveReview = async () => { throw new Error('bad'); };
+    expect(await plugin.undoReadingRating('alpha')).toBe(false);
+    expect(app.notices.some((item) => item.message.includes('保存失败'))).toBe(true);
+
+    plugin.reviewStore.saveReview = async () => ({ review: { version: 1, cards: {}, flags: {} }, rootChanged: true });
+    expect(await plugin.undoReadingRating('alpha')).toBe(false);
+    expect(app.notices.some((item) => item.message.includes('知识库已切换'))).toBe(true);
   });
 
   it('should register tools that can run against plugin state', async () => {

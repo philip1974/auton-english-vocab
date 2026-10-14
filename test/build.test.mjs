@@ -34,8 +34,12 @@ describe('build output', () => {
     expect(css).toContain('var(--agent-color-danger');
     expect(css).not.toMatch(/--background-|--text-normal|--interactive-accent/);
     const scope = '[data-plugin-panel="dev.auton.english-vocab:english-vocab"]';
+    const cardScope = '.ev-reading-card';
     for (const match of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(?:^|})([^{}]+)\{/g)) {
-      for (const selector of match[1].split(',')) expect(selector.trim().startsWith(scope)).toBe(true);
+      for (const selector of match[1].split(',')) {
+        const trimmed = selector.trim();
+        expect(trimmed.startsWith(scope) || trimmed.startsWith(cardScope)).toBe(true);
+      }
     }
   });
 });

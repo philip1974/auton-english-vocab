@@ -13,6 +13,12 @@ describe('ui text', () => {
     expect(uiText('ko-KR').loading(1, 2)).toBe('단어 읽는 중 1 / 2');
   });
 
+  it('should localize every review rating outside English', () => {
+    expect(uiText('zh')).toMatchObject({ again: '重来', hard: '困难', good: '良好', easy: '简单' });
+    expect(uiText('ja')).toMatchObject({ again: 'もう一度', hard: '難しい', good: '正解', easy: '簡単' });
+    expect(uiText('ko')).toMatchObject({ again: '다시', hard: '어려움', good: '좋음', easy: '쉬움' });
+  });
+
   it('should expose callable proposal and request text for every supported locale', () => {
     for (const locale of ['en', 'zh', 'ja', 'ko']) {
       const text = uiText(locale);

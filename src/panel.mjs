@@ -38,6 +38,7 @@ export function renderPanel(container, controls) {
   }
   const tabs = el('div', 'ev-tabs');
   const body = el('div', 'ev-body');
+  const toolbar = el('div', 'ev-toolbar');
   let mode = 'flip';
   let tab = 'today';
   let flipped = false;
@@ -154,6 +155,17 @@ export function renderPanel(container, controls) {
 
   const rerender = () => {
     const state = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [], loading: null, ...read() };
+    toolbar.textContent = '';
+    if (controls.app?.readingDecorations) {
+      const label = el('label', 'ev-toggle');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = state.highlight !== false;
+      input.dataset.role = 'highlight-reading';
+      input.addEventListener('click', () => controls.onHighlightChange?.(input.checked));
+      label.append(input, el('span', '', t.highlightReading));
+      toolbar.append(label);
+    }
     tabs.textContent = '';
     tabs.append(button(t.today, () => { tab = 'today'; rerender(); }), button(t.notebook, () => { tab = 'notebook'; rerender(); }));
     body.textContent = '';
@@ -168,7 +180,7 @@ export function renderPanel(container, controls) {
     if (flipped && ['1', '2', '3', '4'].includes(event.key)) review(['Again', 'Hard', 'Good', 'Easy'][Number(event.key) - 1]);
   };
   container.addEventListener('keydown', onKeydown);
-  container.append(tabs, body);
+  container.append(toolbar, tabs, body);
   const unsubscribe = controls.subscribe?.(rerender) ?? (() => undefined);
   rerender();
   return () => {
