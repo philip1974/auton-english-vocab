@@ -20,9 +20,11 @@ describe('build output', () => {
     expect(await readFile('main.mjs', 'utf8')).toBe(before);
   });
 
-  it('should document the missing host open document capability as a known limitation', async () => {
+  it('should document optional reading level host capabilities and data license boundaries', async () => {
     const readme = await readFile('README.md', 'utf8');
-    expect(readme).toContain('宿主目前没有向运行时插件开放“打开知识库文档”API');
+    expect(readme).toContain('readingStatus');
+    expect(readme).toContain('workspace.openDocument(path)');
+    expect(readme).toContain('data/LICENSE.md');
   });
 
   it('should scope every style to the plugin panel and use Auton Knowledge theme tokens', async () => {

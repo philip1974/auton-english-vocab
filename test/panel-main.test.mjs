@@ -19,6 +19,10 @@ class FakePlugin {
 
 function fullApp() {
   let storedReview = null;
+  let rootGeneration = 'root';
+  const assertRoot = (root) => {
+    if (root !== rootGeneration) throw Object.assign(new Error('root changed'), { code: 'ROOT_CHANGED' });
+  };
   const result = {
     panels: [],
     commands: [],
@@ -28,14 +32,16 @@ function fullApp() {
     tools: new Map(),
     storage: {
       writes: [],
+      setRoot(next) { rootGeneration = next; },
       async scope() { return { rootGeneration: 'root' }; },
       async read(root, name) {
+        assertRoot(root);
         if (name === 'review.json' && storedReview) return { found: true, text: storedReview, revision: 'r' };
         return { found: false };
       },
-      async write(root, name, text) { this.writes.push({ root, name, text }); if (name === 'review.json') storedReview = text; return { revision: `r${this.writes.length + 1}` }; },
-      async list() { return []; },
-      async remove() {},
+      async write(root, name, text) { assertRoot(root); this.writes.push({ root, name, text }); if (name === 'review.json') storedReview = text; return { revision: `r${this.writes.length + 1}` }; },
+      async list(root) { assertRoot(root); return []; },
+      async remove(root) { assertRoot(root); },
     },
     selectionActions: { items: [], register(spec) { this.items.push(spec); return { dispose() {} }; } },
     chat: { text: '', appendToComposer(text) { this.text += text; return Boolean(text); } },
@@ -212,6 +218,72 @@ describe('panel', () => {
     renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true });
     [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
     expect([...container.querySelectorAll('button')].some((node) => node.textContent === '打开')).toBe(false);
+  });
+
+  it('should render recommended readings, open documents through the host and save level settings when changed', () => {
+    const container = document.createElement('div');
+    const opened = [];
+    const saved = [];
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }), openDocument: (path) => { opened.push(path); return true; } } },
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendations: { items: [{ title: 'Readable', path: 'wiki/read.md', bandLabel: '适合', rate: 4, topWords: ['rare'] }], skipped: { 'not-english': 1, 'too-short': 2 } },
+      onLevelSettingsChange: (settings) => saved.push(settings),
+      openReadingDocument: (path) => { opened.push(path); return true; },
+      canOpenReadingDocument: () => true,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    expect(container.textContent).toContain('Readable');
+    expect(container.textContent).toContain('生词率: rare');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === 'Readable').click();
+    expect(opened).toEqual(['wiki/read.md']);
+    const select = container.querySelector('select');
+    select.value = '5000';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(saved.at(-1)).toMatchObject({ vocabularySize: 5000 });
+  });
+
+  it('should show recommendation progress, empty state and validation notice when settings are invalid', () => {
+    const container = document.createElement('div');
+    const notices = [];
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }) } },
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendationLoading: { done: 1, total: 4 },
+      recommendations: { items: [], skipped: {} },
+      notify: (message) => notices.push(message),
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    expect(container.textContent).toContain('统计中 1 / 4');
+    expect(container.textContent).toContain('没有可推荐的英文文章');
+    const inputs = container.querySelectorAll('input');
+    inputs[0].value = '6';
+    inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+    expect(notices.at(-1)).toContain('生词率设置保存失败');
+  });
+
+  it('should render disabled recommendation titles and default skipped counts when opening is unavailable', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }) } },
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendations: { items: [{ title: 'No Open', path: 'wiki/no.md', bandLabel: '偏易', rate: 0, topWords: [] }] },
+      canOpenReadingDocument: () => false,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    const title = [...container.querySelectorAll('button')].find((node) => node.textContent === 'No Open');
+    expect(title.disabled).toBe(true);
+    expect(container.textContent).toContain('生词率: -');
+    expect(container.textContent).toContain('已跳过：中文为主 0 / 太短 0');
   });
 
   it('should persist notebook flag actions and filter by familiarity', async () => {
@@ -658,6 +730,175 @@ describe('main plugin', () => {
     await app.events.find((event) => event.name === 'knowledge.index-changed').listener({ status: null });
 
     expect(plugin.state.review.cards).toEqual({});
+  });
+
+  it('should register reading status with a pure open-panel action and learning suggestions when host ports exist', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }), openDocument: vi.fn(() => true) };
+    const statusSets = [];
+    const suggestionSets = [];
+    app.readingStatus = { register: () => ({ set: (...args) => { statusSets.push(args); return true; }, dispose() {} }) };
+    app.learningSuggestions = { register: () => ({ set: (...args) => { suggestionSets.push(args); return true; }, dispose() {} }) };
+    app.knowledge.listDocuments = async () => [{ path: 'wiki/read.md', title: 'Read', revision: { contentHash: 'h' } }];
+    app.knowledge.readDocument = async () => ({ content: `${Array.from({ length: 80 }, () => 'the').join(' ')} rarewordx rarewordy rarewordz rarewordq`, meta: { title: 'Read' } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx', 'rarewordy', 'rarewordz', 'rarewordq'];
+    plugin.recommender.settings = { vocabularySize: 1000, easyMax: 2, goodMax: 8 };
+    await app.events.find((event) => event.name === 'knowledge.document-opened').listener({ path: 'wiki/read.md', contentHash: 'h2' });
+    expect(statusSets.at(-1)[2]).toMatchObject({ text: '生词 5%·适合学习', action: { kind: 'open-panel', panelId: 'english-vocab' } });
+    await plugin.refreshRecommendations();
+    expect(suggestionSets.at(-1)[0]).toBe('epoch-1');
+    expect(suggestionSets.at(-1)[1][0]).toMatchObject({ id: 'reading:wiki/read.md', documentPath: 'wiki/read.md' });
+  });
+
+  it('should calculate initial recommendations and learning suggestions during onload after the index refresh has completed', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }), openDocument: vi.fn(() => true) };
+    const suggestionSets = [];
+    app.learningSuggestions = { register: () => ({ set: (...args) => { suggestionSets.push(args); return true; }, dispose() {} }) };
+    app.knowledge.listDocuments = async () => [{ path: 'wiki/read.md', title: 'Read', revision: { contentHash: 'h' } }];
+    app.knowledge.readDocument = async () => ({ content: Array.from({ length: 80 }, () => 'the').join(' '), meta: { title: 'Read' }, revision: { contentHash: 'h' } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(plugin.state.recommendations.items[0]).toMatchObject({ path: 'wiki/read.md', title: 'Read' });
+    expect(suggestionSets).toHaveLength(1);
+    expect(suggestionSets[0][0]).toBe('epoch-1');
+    expect(suggestionSets[0][1][0]).toMatchObject({ id: 'reading:wiki/read.md', documentPath: 'wiki/read.md' });
+  });
+
+  it('should recalculate recommendations and learning suggestions after knowledge root changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-1';
+    app.workspace = { scope: () => ({ epoch }), openDocument: vi.fn(() => true) };
+    const suggestionSets = [];
+    app.learningSuggestions = { register: () => ({ set: (...args) => { suggestionSets.push(args); return true; }, dispose() {} }) };
+    app.knowledge.listDocuments = async () => [{ path: 'wiki/read.md', title: `Read ${epoch}`, revision: { contentHash: epoch } }];
+    app.knowledge.readDocument = async () => ({ content: Array.from({ length: 80 }, () => 'the').join(' '), meta: { title: `Read ${epoch}` }, revision: { contentHash: epoch } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    epoch = 'epoch-2';
+    await app.events.find((event) => event.name === 'knowledge.root-changed').listener();
+    expect(suggestionSets.map(([seenEpoch]) => seenEpoch)).toEqual(['epoch-1', 'epoch-2']);
+    expect(plugin.state.recommendations.items[0].title).toBe('Read epoch-2');
+  });
+
+  it('should refresh recommendations and recalculate the latest reading status after review state or level settings changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }), openDocument: vi.fn(() => true) };
+    const statusSets = [];
+    const suggestionSets = [];
+    app.readingStatus = { register: () => ({ set: (...args) => { statusSets.push(args); return true; }, dispose() {} }) };
+    app.learningSuggestions = { register: () => ({ set: (...args) => { suggestionSets.push(args); return true; }, dispose() {} }) };
+    app.knowledge.listDocuments = async () => [
+      { path: 'wiki/read.md', title: 'Read', revision: { contentHash: 'h' } },
+      { path: 'wiki/vocab/rarewordx.md', title: 'Rare', revision: { contentHash: 'v' } },
+    ];
+    app.knowledge.readDocument = async ({ path }) => {
+      if (path === 'wiki/vocab/rarewordx.md') return { content: buildNote({ word: 'rarewordx', definition: 'rare' }), meta: { title: 'Rare' } };
+      return { content: `${Array.from({ length: 80 }, () => 'the').join(' ')} rarewordx`, meta: { title: 'Read' }, revision: { contentHash: 'h' } };
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
+    plugin.recommender.settings = { vocabularySize: 1000, easyMax: 0, goodMax: 2 };
+    await plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'h' });
+    const before = statusSets.length;
+    await plugin.rateWord('rarewordx', 'Good', 'flip');
+    expect(statusSets.length).toBeGreaterThan(before);
+    const beforeFlag = statusSets.length;
+    await plugin.setFlag('rarewordx', 'ignored');
+    expect(statusSets.length).toBeGreaterThan(beforeFlag);
+    const beforeSettings = statusSets.length;
+    await plugin.setLevelSettings({ vocabularySize: 2000, easyMax: 1, goodMax: 4 });
+    expect(statusSets.length).toBeGreaterThan(beforeSettings);
+    expect(suggestionSets.length).toBeGreaterThan(0);
+  });
+
+  it('should remember an early document-opened event and calculate it after reading level support is ready', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const statusSets = [];
+    app.readingStatus = { register: () => ({ set: (...args) => { statusSets.push(args); return true; }, dispose() {} }) };
+    app.knowledge.readDocument = async () => ({ content: `${Array.from({ length: 80 }, () => 'the').join(' ')} rarewordx`, meta: { title: 'Read' }, revision: { contentHash: 'h' } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.locale = 'zh';
+    plugin.t = { ...module.default.prototype.t, readingStatus: (rate) => `生词 ${Math.round(rate)}%`, readingStatusTitle: () => 'title', recommendations: '推荐阅读' };
+    plugin.state = { entries: [], review: { version: 1, cards: {}, flags: {} }, levelSettings: { vocabularySize: 1000, easyMax: 0, goodMax: 5 } };
+    plugin.readingStatusHandle = app.readingStatus.register();
+    await expect(plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'h' })).resolves.toBe(false);
+    plugin.initializeReadingLevel();
+    plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(statusSets.length).toBeGreaterThan(0);
+  });
+
+  it('should handle reading level degraded and stale branches without leaking results', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(await plugin.refreshRecommendations()).toBeNull();
+    expect(await plugin.updateReadingStatus({ path: 'wiki/a.md' })).toBe(false);
+
+    app.workspace = { epoch: 'e1', scope() { return { epoch: this.epoch }; } };
+    app.readingStatus = { register: () => ({ set: vi.fn(() => true), dispose() {} }) };
+    plugin.initializeReadingLevel();
+    app.knowledge.readDocument = async () => ({ content: 'short text', meta: {} });
+    await expect(plugin.updateReadingStatus({ documentPath: 'wiki/short.md' })).resolves.toBe(true);
+    app.knowledge.readDocument = async () => ({ _tag: 'Err', error: 'missing' });
+    await expect(plugin.updateReadingStatus({ path: 'wiki/missing.md' })).resolves.toBe(false);
+    app.knowledge.readDocument = async () => { throw new Error('boom'); };
+    await expect(plugin.updateReadingStatus({ path: 'wiki/boom.md' })).resolves.toBe(false);
+    await expect(plugin.updateReadingStatus({})).resolves.toBe(false);
+  });
+
+  it('should save level settings and report save failures from plugin data storage', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    const saved = [];
+    plugin.saveData = async (value) => saved.push(value);
+    await plugin.onload();
+    plugin.recommender.recommend = async () => ({ stale: false, items: [], skipped: {} });
+    await expect(plugin.setLevelSettings({ vocabularySize: 5000, easyMax: 1, goodMax: 6 })).resolves.toBe(true);
+    expect(saved.at(-1).levelSettings).toMatchObject({ vocabularySize: 5000 });
+    plugin.saveData = async () => { throw new Error('nope'); };
+    await expect(plugin.setLevelSettings({ vocabularySize: 3000, easyMax: 2, goodMax: 5 })).resolves.toBe(false);
+    expect(app.notices.some((item) => item.message.includes('生词率设置保存失败'))).toBe(true);
+  });
+
+  it('should expose panel controls for flags notices highlights and reading document opening', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }), openDocument: vi.fn(() => true) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.recommend = async () => ({ stale: false, items: [], skipped: {} });
+    const controls = plugin.panelState();
+    await controls.onFlag('alpha', 'ignored');
+    controls.notify('hello');
+    await controls.onHighlightChange(false);
+    await controls.onLevelSettingsChange({ vocabularySize: 5000, easyMax: 1, goodMax: 6 });
+    await controls.refreshRecommendations();
+    expect(controls.openReadingDocument('wiki/a.md')).toBe(true);
+    expect(controls.canOpenReadingDocument()).toBe(true);
+    expect(app.notices.some((item) => item.message === 'hello')).toBe(true);
+    expect(plugin.state.highlight).toBe(false);
   });
 
   it('should not register dependent capabilities when host APIs are missing', async () => {

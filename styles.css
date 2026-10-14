@@ -81,6 +81,20 @@
   gap: 8px;
 }
 
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-settings {
+  display: grid;
+  gap: 8px;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-setting-line {
+  display: grid;
+  grid-template-columns: auto minmax(74px, 1fr) auto minmax(56px, 0.7fr) minmax(56px, 0.7fr);
+  gap: 6px;
+  align-items: center;
+  color: var(--agent-color-text-muted, gray);
+  font-size: var(--agent-typography-size-sm, 13px);
+}
+
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-input {
   box-sizing: border-box;
   width: 100%;
@@ -209,6 +223,21 @@
   min-height: 24px;
   padding: 2px 7px;
   font-size: var(--agent-typography-size-xs, 12px);
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-link-button {
+  min-width: 0;
+  overflow: hidden;
+  border-color: transparent;
+  padding-inline: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-skipped {
+  color: var(--agent-color-text-muted, gray);
+  font-size: var(--agent-typography-size-sm, 13px);
 }
 
 .ev-reading-card {

@@ -5,6 +5,8 @@ import { rateCard, newSerializedCard } from './scheduler.mjs';
 import { renderPanel, hasRequiredHost, appendSelectionRequest } from './panel.mjs';
 import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tools.mjs';
 import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
+import { DEFAULT_LEVEL_SETTINGS, detectEnglish } from './reading-level.mjs';
+import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
 const emptyReview = () => ({ version: 1, cards: {}, flags: {} });
@@ -13,12 +15,26 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async onload() {
     this.locale = currentLocale();
     this.t = uiText(this.locale);
-    this.state = { entries: [], review: emptyReview(), log: [], loading: null, invalid: [], highlight: true };
+    this.state = {
+      entries: [],
+      review: emptyReview(),
+      log: [],
+      loading: null,
+      invalid: [],
+      highlight: true,
+      levelSettings: DEFAULT_LEVEL_SETTINGS,
+      recommendations: null,
+      recommendationLoading: null,
+    };
     this.listeners = new Set();
     this.submission = 0;
     this.reviewStore = null;
     this.index = null;
     this.readingHandle = null;
+    this.readingStatusHandle = null;
+    this.learningSuggestionsHandle = null;
+    this.recommender = null;
+    this.latestReadingEvent = null;
     this.readingUndoSnapshots = new Map();
     this.addPanel({
       id: 'english-vocab',
@@ -44,7 +60,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   emitState() {
-    for (const listener of this.listeners) listener();
+    for (const listener of this.listeners ?? []) listener();
   }
 
   panelState() {
@@ -64,6 +80,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
         speechSynthesis.speak(utterance);
       },
       onHighlightChange: (value) => this.setHighlight(value),
+      onLevelSettingsChange: (settings) => this.setLevelSettings(settings),
+      refreshRecommendations: () => this.refreshRecommendations(),
+      openReadingDocument: (path) => this.app.workspace?.openDocument?.(path) ?? false,
+      canOpenReadingDocument: () => Boolean(this.app.workspace?.openDocument),
     };
   }
 
@@ -71,8 +91,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
     try {
       const data = await this.loadData?.();
       this.state.highlight = data?.highlight !== false;
+      this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
+      this.state.levelSettings = DEFAULT_LEVEL_SETTINGS;
     }
   }
 
@@ -85,6 +107,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
     });
     await this.refreshIndex();
+    await this.initializeReadingLevel();
   }
 
   async refreshIndex() {
@@ -100,6 +123,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
+      await this.refreshRecommendations({ silent: true });
+      await this.refreshLatestReadingStatus();
     } finally {
       this.state.loading = null;
       this.emitState();
@@ -121,6 +146,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.state.log = this.reviewStore.log;
     this.updateReadingTerms();
     this.emitState();
+    await this.recommender?.reload();
     await this.refreshIndex();
   }
 
@@ -154,6 +180,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } catch {
       this.notice(this.t.logSaveFailed);
     }
+    await this.refreshReadingLevelSurfaces();
     return true;
   }
 
@@ -175,6 +202,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.readingUndoSnapshots.delete(word);
       this.updateReadingTerms();
       this.emitState();
+      await this.refreshReadingLevelSurfaces();
       return true;
     } catch {
       this.notice(this.t.reviewSaveFailed);
@@ -192,6 +220,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.state.log = this.reviewStore.log;
       this.updateReadingTerms();
       this.emitState();
+      await this.refreshReadingLevelSurfaces();
       if (result.rootChanged) this.notice(this.t.rootChangedDuringReview);
       return !result.rootChanged;
     } catch {
@@ -255,6 +284,98 @@ export default class EnglishVocabPlugin extends BasePlugin {
     }
     this.syncReadingDecorations();
     this.emitState();
+  }
+
+  readingLevelSupported() {
+    return Boolean(this.app?.workspace?.scope && this.app?.knowledge?.listDocuments && this.app?.knowledge?.readDocument);
+  }
+
+  async initializeReadingLevel() {
+    if (!this.readingLevelSupported()) return;
+    this.recommender = new ReadingRecommender(this.app, {
+      settings: this.state.levelSettings,
+      locale: this.locale,
+      onProgress: (done, total) => {
+        this.state.recommendationLoading = { done, total };
+        this.emitState();
+      },
+    });
+    if (this.app.readingStatus?.register) {
+      this.readingStatusHandle = this.register(this.app.readingStatus.register({ id: 'reading-level' }));
+      this.onEvent?.('knowledge.document-opened', (event) => this.updateReadingStatus(event));
+    }
+    if (this.app.learningSuggestions?.register) {
+      this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: 'reading-recommendations', heading: this.t.recommendations }));
+    }
+    await this.recommender.reload();
+    await this.refreshRecommendations({ silent: true });
+    await this.refreshLatestReadingStatus();
+  }
+
+  async setLevelSettings(settings) {
+    this.state.levelSettings = settings;
+    if (this.recommender) this.recommender.settings = settings;
+    try {
+      await this.saveData?.({ highlight: this.state.highlight, levelSettings: settings });
+    } catch {
+      this.notice(this.t.levelSettingsSaveFailed);
+      return false;
+    }
+    this.emitState();
+    await this.refreshReadingLevelSurfaces();
+    return true;
+  }
+
+  async refreshReadingLevelSurfaces() {
+    await this.refreshRecommendations();
+    await this.refreshLatestReadingStatus();
+  }
+
+  async refreshLatestReadingStatus() {
+    if (!this.latestReadingEvent) return false;
+    return this.updateReadingStatus(this.latestReadingEvent);
+  }
+
+  async refreshRecommendations({ silent = false } = {}) {
+    if (!this.recommender) return null;
+    const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
+    if (!silent) {
+      this.state.recommendationLoading = { done: 0, total: 0 };
+      this.emitState();
+    }
+    const result = await this.recommender.recommend({ review: this.state.review, entries: this.state.entries });
+    if (result.stale || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return null;
+    this.state.recommendations = result;
+    this.state.recommendationLoading = null;
+    this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items));
+    this.emitState();
+    return result;
+  }
+
+  async updateReadingStatus(event) {
+    const path = event?.path ?? event?.documentPath;
+    if (!path) return false;
+    this.latestReadingEvent = { ...event, path };
+    if (!this.readingStatusHandle || !this.recommender) return false;
+    const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
+    let doc;
+    try {
+      doc = await this.app.knowledge.readDocument({ path });
+    } catch {
+      return false;
+    }
+    if (doc?._tag === 'Err') return false;
+    const detected = detectEnglish(doc.content);
+    if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
+    const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? '' } };
+    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries);
+    if ((this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return false;
+    return this.readingStatusHandle.set(epoch, path, {
+      text: this.t.readingStatus(item.rate, item.band),
+      tone: item.tone,
+      title: this.t.readingStatusTitle(item.rate, item.counted),
+      action: { kind: 'open-panel', panelId: 'english-vocab' },
+    });
   }
 
   async registerTools() {

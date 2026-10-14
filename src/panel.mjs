@@ -3,6 +3,7 @@ import { familiarityFor } from './familiarity.mjs';
 import { assertEnglishWord } from './note-format.mjs';
 import { uiText, currentLocale } from './ui-text.mjs';
 import { requestTextForWord, requestTextFromSelection } from './request-text.mjs';
+import { validateLevelSettings } from './reading-level.mjs';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -153,6 +154,67 @@ export function renderPanel(container, controls) {
     draw();
   };
 
+  const renderRecommendations = (state) => {
+    const settings = state.levelSettings;
+    const settingsBox = el('section', 'ev-settings');
+    settingsBox.append(el('h3', '', t.readingSettings));
+    const vocab = el('select', 'ev-input');
+    for (const value of [1000, 2000, 3000, 5000, 8000, 12000, 20000]) {
+      const option = el('option', '', String(value));
+      option.value = String(value);
+      option.selected = value === settings.vocabularySize;
+      vocab.append(option);
+    }
+    const easy = el('input', 'ev-input');
+    easy.type = 'number';
+    easy.min = '0';
+    easy.max = '20';
+    easy.step = '0.5';
+    easy.value = String(settings.easyMax);
+    const hard = el('input', 'ev-input');
+    hard.type = 'number';
+    hard.min = '0';
+    hard.max = '20';
+    hard.step = '0.5';
+    hard.value = String(settings.goodMax);
+    const save = () => {
+      const result = validateLevelSettings({ vocabularySize: Number(vocab.value), easyMax: Number(easy.value), goodMax: Number(hard.value) });
+      if (!result.ok) {
+        controls.notify?.(t.levelSettingsSaveFailed);
+        return;
+      }
+      controls.onLevelSettingsChange?.(result.settings);
+    };
+    for (const input of [vocab, easy, hard]) input.addEventListener('change', save);
+    const line = el('div', 'ev-setting-line');
+    line.append(el('label', '', t.vocabularySize), vocab, el('label', '', t.goodRange), easy, hard);
+    settingsBox.append(line, el('p', 'ev-note', t.defaultRangeNote));
+    body.append(settingsBox);
+
+    body.append(button(t.refresh, () => controls.refreshRecommendations?.()));
+    if (state.recommendationLoading) body.append(el('p', 'ev-note', t.recommendationProgress(state.recommendationLoading.done, state.recommendationLoading.total)));
+    const result = state.recommendations;
+    if (!result?.items?.length) {
+      body.append(el('p', 'ev-empty', t.noRecommendations));
+      return;
+    }
+    const list = el('div', 'ev-list');
+    for (const item of result.items) {
+      const row = el('article', 'ev-row');
+      const head = el('div', 'ev-row-head');
+      const title = button(item.title, () => controls.openReadingDocument?.(item.path), 'ev-link-button');
+      title.disabled = !controls.canOpenReadingDocument?.();
+      head.append(title, el('small', 'ev-badge', `${item.bandLabel} · ${item.rate.toFixed(1)}%`));
+      const detail = el('div', 'ev-row-definition', `${t.novelRate}: ${item.topWords.join(', ') || '-'}`);
+      row.append(head, detail);
+      list.append(row);
+    }
+    body.append(list);
+    const skipped = result.skipped ?? {};
+    body.append(el('details', 'ev-skipped'));
+    body.lastElementChild.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0)));
+  };
+
   const rerender = () => {
     const state = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [], loading: null, ...read() };
     toolbar.textContent = '';
@@ -168,10 +230,12 @@ export function renderPanel(container, controls) {
     }
     tabs.textContent = '';
     tabs.append(button(t.today, () => { tab = 'today'; rerender(); }), button(t.notebook, () => { tab = 'notebook'; rerender(); }));
+    if (controls.app?.workspace?.scope) tabs.append(button(t.recommendations, () => { tab = 'recommendations'; rerender(); }));
     body.textContent = '';
     if (state.loading) body.append(el('p', '', t.loading(state.loading.done, state.loading.total)));
     if (tab === 'today') renderToday(state);
-    else renderNotebook(state);
+    else if (tab === 'notebook') renderNotebook(state);
+    else renderRecommendations(state);
   };
 
   const onKeydown = (event) => {
