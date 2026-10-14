@@ -72,6 +72,7 @@ describe('panel', () => {
     const seen = [];
     renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母', examples: ['Alpha test.'] }], review, onReview: (word, rating) => seen.push([word, rating]), hasEnglishVoice: () => false });
     expect(container.textContent).toContain('今日复习');
+    expect(container.querySelector('h2')).toBeNull();
     container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
     container.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true }));
     expect(seen[0]).toEqual(['alpha', 'Good']);
@@ -104,9 +105,21 @@ describe('panel', () => {
       renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, onReview: (word, rating) => seen.push(rating), hasEnglishVoice: () => true });
       container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
       container.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-      [...container.querySelectorAll('button')].find((node) => node.textContent === label).click();
+      [...container.querySelectorAll('button')].find((node) => node.textContent.endsWith(label)).click();
       expect(seen[0]).toBe(label);
     }
+  });
+
+  it('should render a structured review card with equal rating actions and shortcut labels', () => {
+    const container = document.createElement('div');
+    renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母', examples: ['Alpha test.'] }], review: { version: 1, cards: {}, flags: {} }, log: [], hasEnglishVoice: () => true });
+    expect(container.querySelector('.ev-review-word')?.textContent).toBe('alpha');
+    expect(container.querySelector('.ev-example')?.textContent).toContain('_____');
+    container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    const ratings = [...container.querySelectorAll('.ev-rating .ev-button')];
+    expect(ratings.map((node) => node.textContent)).toEqual(['1 Again', '2 Hard', '3 Good', '4 Easy']);
+    expect(ratings[0].classList.contains('ev-rating-again')).toBe(true);
+    expect(ratings[3].classList.contains('ev-rating-easy')).toBe(true);
   });
 
   it('should show empty state and cleanup when there are no due cards', () => {
@@ -221,6 +234,29 @@ describe('panel', () => {
     expect(flags).toEqual([['beta', undefined]]);
   });
 
+  it('should render compact notebook rows and show only contextually valid flag actions', () => {
+    const container = document.createElement('div');
+    const review = { version: 1, cards: {}, flags: { mastered: 'mastered', ignored: 'ignored' } };
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [
+        { word: 'plain', definition: 'no manual flag' },
+        { word: 'mastered', definition: 'manually mastered' },
+        { word: 'ignored', definition: 'manually ignored' },
+      ],
+      review,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const rows = [...container.querySelectorAll('.ev-row')];
+    expect(rows.every((row) => row.querySelector('.ev-row-head') && row.querySelector('.ev-row-definition') && row.querySelector('.ev-row-actions'))).toBe(true);
+    expect(rows.every((row) => row.querySelector('.ev-badge'))).toBe(true);
+    const labels = (row) => [...row.querySelectorAll('button')].map((node) => node.textContent);
+    expect(labels(rows[0])).toEqual(['已掌握', '忽略']);
+    expect(labels(rows[1])).toEqual(['忽略', '恢复']);
+    expect(labels(rows[2])).toEqual(['已掌握', '恢复']);
+  });
+
   it('should append a manual add request and reject empty or non English words', () => {
     const container = document.createElement('div');
     const app = fullApp();
@@ -283,7 +319,8 @@ describe('main plugin', () => {
     expect(app.events.map((event) => event.name)).toEqual(['knowledge.index-changed', 'knowledge.root-changed']);
     const rendered = document.createElement('div');
     app.panels[0].render(rendered);
-    expect(rendered.textContent).toContain('英语生词本');
+    expect(rendered.textContent).toContain('今日复习');
+    expect(rendered.querySelector('h2')).toBeNull();
     const state = plugin.panelState();
     globalThis.speechSynthesis = { getVoices: () => [{ lang: 'en-US' }], cancel: vi.fn(), speak: vi.fn() };
     globalThis.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; };

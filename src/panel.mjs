@@ -11,8 +11,8 @@ function el(tag, className, text) {
   return node;
 }
 
-function button(text, onClick) {
-  const node = el('button', 'ev-button', text);
+function button(text, onClick, className = '') {
+  const node = el('button', `ev-button${className ? ` ${className}` : ''}`, text);
   node.type = 'button';
   node.addEventListener('click', onClick);
   return node;
@@ -36,7 +36,6 @@ export function renderPanel(container, controls) {
     container.append(el('p', 'ev-warning', t.needsHost));
     return () => { container.textContent = ''; };
   }
-  const title = el('h2', '', t.panelTitle);
   const tabs = el('div', 'ev-tabs');
   const body = el('div', 'ev-body');
   let mode = 'flip';
@@ -55,7 +54,12 @@ export function renderPanel(container, controls) {
 
   const ratingRow = () => {
     const row = el('div', 'ev-rating');
-    row.append(button(t.again, () => review('Again')), button(t.hard, () => review('Hard')), button(t.good, () => review('Good')), button(t.easy, () => review('Easy')));
+    row.append(
+      button(`1 ${t.again}`, () => review('Again'), 'ev-rating-again'),
+      button(`2 ${t.hard}`, () => review('Hard')),
+      button(`3 ${t.good}`, () => review('Good')),
+      button(`4 ${t.easy}`, () => review('Easy'), 'ev-rating-easy'),
+    );
     return row;
   };
 
@@ -83,7 +87,7 @@ export function renderPanel(container, controls) {
     const card = el('section', 'ev-card');
     const example = item.examples?.[0] || item.example || '';
     if (mode === 'flip') {
-      card.append(el('h3', '', item.word), el('p', '', cloze(example, item.word)));
+      card.append(el('h3', 'ev-review-word', item.word), el('p', 'ev-example', cloze(example, item.word)));
       if (flipped) card.append(el('p', 'ev-definition', item.definition), ratingRow());
       else card.append(button(t.answer, () => { flipped = true; rerender(); }));
     } else {
@@ -125,8 +129,14 @@ export function renderPanel(container, controls) {
         const fam = familiarityFor(current.review.cards[entry.word], current.review.flags[entry.word]);
         if ((q && !entry.word.includes(q)) || (filter.value !== 'all' && fam !== filter.value)) continue;
         const row = el('div', 'ev-row');
-        row.append(el('strong', '', entry.word), el('span', '', entry.definition), el('small', '', t[fam] || fam));
-        row.append(button(t.markMastered, () => setFlag(entry.word, 'mastered')), button(t.ignore, () => setFlag(entry.word, 'ignored')), button(t.restore, () => setFlag(entry.word, undefined)));
+        const head = el('div', 'ev-row-head');
+        head.append(el('strong', 'ev-row-word', entry.word), el('small', 'ev-badge', t[fam] || fam));
+        const actions = el('div', 'ev-row-actions');
+        const flag = current.review.flags[entry.word];
+        if (flag !== 'mastered') actions.append(button(t.markMastered, () => setFlag(entry.word, 'mastered')));
+        if (flag !== 'ignored') actions.append(button(t.ignore, () => setFlag(entry.word, 'ignored')));
+        if (flag === 'mastered' || flag === 'ignored') actions.append(button(t.restore, () => setFlag(entry.word, undefined)));
+        row.append(head, el('div', 'ev-row-definition', entry.definition), actions);
         list.append(row);
       }
     };
@@ -158,7 +168,7 @@ export function renderPanel(container, controls) {
     if (flipped && ['1', '2', '3', '4'].includes(event.key)) review(['Again', 'Hard', 'Good', 'Easy'][Number(event.key) - 1]);
   };
   container.addEventListener('keydown', onKeydown);
-  container.append(title, tabs, body);
+  container.append(tabs, body);
   const unsubscribe = controls.subscribe?.(rerender) ?? (() => undefined);
   rerender();
   return () => {
