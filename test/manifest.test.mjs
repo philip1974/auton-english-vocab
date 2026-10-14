@@ -16,6 +16,6 @@ describe('plugin.json', () => {
     expect(manifest.runtime).toEqual({ target: 'auton-knowledge', apiVersion: 1, entry: 'main.mjs' });
     expect(manifest.permissions).toEqual(['knowledge.read', 'knowledge.propose', 'agent.tools']);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe('0.6.0');
+    expect(manifest.version).toBe('0.6.1');
   });
 });
