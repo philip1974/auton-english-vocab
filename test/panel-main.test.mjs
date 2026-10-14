@@ -48,10 +48,16 @@ function fullApp() {
     knowledge: {
       async listDocuments() { return [{ path: 'wiki/vocab/alpha.md', title: 'Alpha', revision: { contentHash: 'h' } }]; },
       async readDocument({ path } = {}) {
-        if (path?.startsWith('wiki/vocab/') && path !== 'wiki/vocab/alpha.md') return { _tag: 'Err', error: 'not found' };
-        return { content: buildNote({ word: 'alpha', definition: '字母', example: 'Alpha test.' }), meta: { title: 'Alpha' } };
+        if (path?.startsWith('wiki/vocab/') && path !== 'wiki/vocab/alpha.md') return { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
+        return {
+          meta: { path, title: 'Alpha', revision: { contentHash: 'h', mtimeMs: 1 } },
+          content: buildNote({ word: 'alpha', definition: '字母', example: 'Alpha test.' }),
+          headings: [],
+          links: [],
+          citations: [],
+        };
       },
-      propose() { return Promise.resolve({ outcome: 'applied' }); },
+      propose() { return Promise.resolve({ outcome: 'applied', summary: 'applied', paths: ['wiki/vocab/alpha.md'] }); },
     },
   };
   return result;
@@ -118,7 +124,7 @@ describe('panel', () => {
 
   it('should render a structured review card with equal rating actions and shortcut labels', () => {
     const container = document.createElement('div');
-    renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母', examples: ['Alpha test.'] }], review: { version: 1, cards: {}, flags: {} }, log: [], hasEnglishVoice: () => true });
+    renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母', examples: ['Alpha test.'] }], review: { version: 1, cards: {}, flags: {} }, log: [], reviewMode: 'flip', hasEnglishVoice: () => true });
     expect(container.querySelector('.ev-review-word')?.textContent).toBe('alpha');
     expect(container.querySelector('.ev-example')?.textContent).toContain('_____');
     container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
@@ -126,6 +132,149 @@ describe('panel', () => {
     expect(ratings.map((node) => node.textContent)).toEqual(['1 重来', '2 困难', '3 良好', '4 简单']);
     expect(ratings[0].classList.contains('ev-rating-again')).toBe(true);
     expect(ratings[3].classList.contains('ev-rating-easy')).toBe(true);
+  });
+
+  it('should hide every target surface on the context front and reveal highlighted sentence when answered', () => {
+    const container = document.createElement('div');
+    const opened = vi.fn();
+    const reviewed = vi.fn();
+    const cancelSpeech = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      openReadingDocument: opened,
+      canOpenReadingDocument: () => true,
+      onReview: reviewed,
+      cancelSpeech,
+      hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
+    expect(container.querySelector('.ev-context-sentence')?.textContent).toBe('She was _____ late.');
+    expect(container.querySelector('.ev-card')?.textContent).not.toMatch(/\b(?:run|runs|ran|running)\b/i);
+    [...container.querySelectorAll('button')].find((node) => node.textContent === 'Daily').click();
+    expect(opened).toHaveBeenCalledWith('wiki/reading/daily.md');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '答案').click();
+    expect(container.querySelector('mark.ev-context-hit')?.textContent).toBe('running');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '3 良好').click();
+    expect(reviewed).toHaveBeenCalledWith('run', 'Good', 'context');
+    expect(cancelSpeech).toHaveBeenCalled();
+  });
+
+  it('should show definition without leaking the word when selected context mode has no usable example', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '快速移动', examples: ['Nothing useful here.'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      reviewMode: 'context',
+      hasEnglishVoice: () => false,
+    });
+    expect(container.querySelector('.ev-card')?.textContent).toContain('这个词还没有例句');
+    expect(container.querySelector('.ev-card')?.textContent).not.toMatch(/\brun\b/i);
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '答案').click();
+    expect(container.querySelector('.ev-review-word')?.textContent).toBe('run');
+  });
+
+  it('should show url sources and load dictionary phonetics on the context answer', async () => {
+    const container = document.createElement('div');
+    const speakSentence = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', examples: ['Run today. — <https://example.com/run>'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      lookupDictionary: vi.fn(async () => ({ entry: { p: 'rʌn' } })),
+      speakSentence,
+      hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('.ev-source')?.textContent).toBe('https://example.com/run');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '答案').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('.ev-reading-phonetic')?.textContent).toBe('/rʌn/');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '朗读整句').click();
+    expect(speakSentence).toHaveBeenCalledWith('Run today.');
+  });
+
+  it('should show an unsafe source title as plain text without offering to open it', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['Run today. — [Outside](../../secret.md)'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      openReadingDocument: vi.fn(),
+      canOpenReadingDocument: () => true,
+      hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('.ev-source')?.textContent).toBe('Outside');
+    expect([...container.querySelectorAll('button')].some((node) => node.textContent === 'Outside')).toBe(false);
+  });
+
+  it('should persist mode changes and cancel speech when switching modes', () => {
+    const container = document.createElement('div');
+    const onReviewModeChange = vi.fn();
+    const cancelSpeech = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', examples: ['They ran home.'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      reviewMode: 'flip',
+      onReviewModeChange,
+      cancelSpeech,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '反向拼写').click();
+    expect(onReviewModeChange).toHaveBeenCalledWith('reverse');
+    expect(cancelSpeech).toHaveBeenCalledOnce();
+  });
+
+  it('should choose the default mode again and cancel speech when an unconfigured user changes cards', () => {
+    const container = document.createElement('div');
+    let listener;
+    let current = {
+      entries: [{ word: 'run', definition: '跑', examples: ['They ran home.'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      reviewMode: null,
+    };
+    const cancelSpeech = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      getState: () => current,
+      subscribe: (next) => { listener = next; return () => undefined; },
+      cancelSpeech,
+      hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
+    current = {
+      ...current,
+      entries: [{ word: 'alpha', definition: '字母', examples: [] }],
+    };
+    listener();
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('翻卡');
+    expect(cancelSpeech).toHaveBeenCalledOnce();
+  });
+
+  it('should cloze whole inflections and remove source markdown in legacy review modes', () => {
+    for (const modeLabel of ['翻卡', '反向拼写', '听音拼写']) {
+      const container = document.createElement('div');
+      renderPanel(container, {
+        app: fullApp(),
+        entries: [{ word: 'run', definition: '跑', examples: ['She was running and ran. — [Daily](wiki/daily.md)'] }],
+        review: { version: 1, cards: {}, flags: {} },
+        log: [],
+        reviewMode: 'flip',
+        hasEnglishVoice: () => true,
+        speak: vi.fn(),
+      });
+      if (modeLabel !== '翻卡') [...container.querySelectorAll('button')].find((node) => node.textContent === modeLabel).click();
+      expect(container.querySelector('.ev-example')?.textContent).toBe('She was _____ and _____.');
+      expect(container.querySelector('.ev-card')?.textContent).not.toContain('[Daily]');
+    }
   });
 
   it('should show empty state and cleanup when there are no due cards', () => {
@@ -489,6 +638,118 @@ describe('panel', () => {
 });
 
 describe('main plugin', () => {
+  it('should load and merge review mode preferences without erasing unrelated data', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = vi.fn(async () => ({ reviewMode: 'reverse', custom: 'keep-me' }));
+    plugin.saveData = vi.fn(async () => undefined);
+    await plugin.onload();
+    expect(plugin.state.reviewMode).toBe('reverse');
+    await plugin.panelState().onReviewModeChange('context');
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ reviewMode: 'context', custom: 'keep-me' }));
+  });
+
+  it('should speak sentences with an English voice and expose speech cancellation', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const englishVoice = { lang: 'en-GB', name: 'English' };
+    globalThis.speechSynthesis = { getVoices: () => [{ lang: 'ko-KR' }, englishVoice], cancel: vi.fn(), speak: vi.fn() };
+    globalThis.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; };
+    const controls = plugin.panelState();
+    controls.speakSentence('She was running late.');
+    const utterance = globalThis.speechSynthesis.speak.mock.calls[0][0];
+    expect(utterance).toMatchObject({ text: 'She was running late.', lang: 'en-GB', voice: englishVoice });
+    controls.cancelSpeech();
+    expect(globalThis.speechSynthesis.cancel).toHaveBeenCalledTimes(2);
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+    expect(controls.speakSentence('No runtime voice.')).toBe(false);
+    controls.cancelSpeech();
+  });
+
+  it('should reject invalid review modes and keep visible state when preference saving fails', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    plugin.loadData = vi.fn(async () => ({}));
+    plugin.saveData = vi.fn(async () => { throw new Error('disk full'); });
+    await plugin.onload();
+    await expect(plugin.setReviewMode('unknown')).resolves.toBe(false);
+    await expect(plugin.setReviewMode('context')).resolves.toBe(false);
+    expect(plugin.state.reviewMode).toBe('context');
+    globalThis.speechSynthesis = { getVoices: () => [{ lang: 'ko-KR' }], cancel: vi.fn(), speak: vi.fn() };
+    globalThis.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; };
+    expect(plugin.speakEnglish('Run.')).toBe(false);
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  });
+
+  it('should reread the latest note and propose only path and appended content when adding an example', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const proposals = [];
+    app.knowledge.propose = vi.fn(async (proposal) => {
+      proposals.push(proposal);
+      return { outcome: 'applied', summary: 'added', paths: ['wiki/vocab/alpha.md'] };
+    });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const receipt = await plugin.addExampleSentence('alpha', {
+      sentence: 'Alpha appears here.',
+      source: { kind: 'document', path: 'wiki/read.md', title: 'Read' },
+    });
+    expect(receipt).toMatchObject({ outcome: 'applied' });
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].changes[0]).toEqual({
+      path: 'wiki/vocab/alpha.md',
+      newContent: expect.stringContaining('- Alpha appears here. — [Read](wiki/read.md)'),
+    });
+    expect(proposals[0].changes[0]).not.toHaveProperty('expectedRevision');
+  });
+
+  it('should skip proposals when the latest note already contains the normalized example sentence', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const content = buildNote({ word: 'alpha', definition: '字母', example: 'Alpha appears here.' }).replace('Alpha appears here.', 'Alpha   appears here.');
+    app.knowledge.readDocument = vi.fn(async (request) => ({
+      meta: { path: request.path, title: 'Alpha', revision: { contentHash: 'new', mtimeMs: 2 } },
+      content,
+      headings: [],
+      links: [],
+      citations: [],
+    }));
+    app.knowledge.propose = vi.fn();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.addExampleSentence('alpha', { sentence: ' Alpha appears   here. ' })).resolves.toMatchObject({ outcome: 'exists' });
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
+  });
+
+  it('should return controlled receipts when adding an example cannot read parse or submit', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.addExampleSentence('missing', { sentence: 'Missing.' })).resolves.toMatchObject({ outcome: 'aborted' });
+    app.knowledge.readDocument = async () => { throw new Error('read failed'); };
+    await expect(plugin.addExampleSentence('alpha', { sentence: 'Alpha new.' })).resolves.toMatchObject({ outcome: 'aborted', summary: 'read failed' });
+    app.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'DENIED', message: 'denied' } });
+    await expect(plugin.addExampleSentence('alpha', { sentence: 'Alpha new.' })).resolves.toMatchObject({ outcome: 'aborted', summary: 'denied' });
+    app.knowledge.readDocument = async () => ({ meta: { path: 'wiki/vocab/alpha.md', title: 'Alpha', revision: { contentHash: 'x', mtimeMs: 1 } }, content: 'broken', headings: [], links: [], citations: [] });
+    await expect(plugin.addExampleSentence('alpha', { sentence: 'Alpha new.' })).resolves.toMatchObject({ outcome: 'aborted', summary: 'missing frontmatter' });
+    app.knowledge.readDocument = async () => ({ meta: { path: 'wiki/vocab/alpha.md', title: 'Alpha', revision: { contentHash: 'x', mtimeMs: 1 } }, content: buildNote({ word: 'alpha', definition: '字母' }), headings: [], links: [], citations: [] });
+    app.knowledge.propose = async () => ({ _tag: 'Err', error: { code: 'BUSY', message: 'busy' } });
+    await expect(plugin.addExampleSentence('alpha', { sentence: 'Alpha new.', source: { url: 'https://example.com/a' } })).resolves.toMatchObject({ outcome: 'aborted', summary: 'busy' });
+    await expect(plugin.addExampleSentence('alpha', { sentence: '   ' })).resolves.toMatchObject({ outcome: 'exists' });
+  });
+
   it('should register panel command selection action tools and events when host is new enough', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');

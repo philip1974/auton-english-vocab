@@ -92,6 +92,77 @@ describe('reading decorations', () => {
     expect(container.textContent).toBe('');
   });
 
+  it('should add a new reading sentence through review and show applied status when the word is collected', async () => {
+    const container = document.createElement('div');
+    const onAddExample = vi.fn(async () => ({ outcome: 'applied', summary: 'ok', paths: ['wiki/vocab/run.md'] }));
+    const spec = createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run')], review: review() }),
+      onAddExample,
+    });
+    const context = {
+      word: 'running',
+      key: 'run',
+      tone: 'learning',
+      sentence: 'Running helps every day.',
+      source: { kind: 'document', path: 'wiki/read.md', title: 'Read' },
+    };
+    spec.renderCard(container, context);
+    container.querySelector('[data-role="add-example"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onAddExample).toHaveBeenCalledWith('run', context);
+    expect(container.textContent).toContain('已加入');
+  });
+
+  it('should hide add example action when normalized reading sentence already exists', () => {
+    const container = document.createElement('div');
+    const spec = createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run', { examples: ['Running   helps every day. — [Read](wiki/read.md)'] })], review: review() }),
+      onAddExample: vi.fn(),
+    });
+    spec.renderCard(container, {
+      word: 'running',
+      key: 'run',
+      tone: 'learning',
+      sentence: ' Running helps every day. ',
+      source: { kind: 'document', path: 'wiki/read.md', title: 'Read' },
+    });
+    expect(container.querySelector('[data-role="add-example"]')).toBeNull();
+  });
+
+  it('should show cancelled duplicate and unreviewed statuses for add example receipts', async () => {
+    for (const [receipt, expected] of [
+      [{ outcome: 'rejected', summary: 'no' }, '已取消'],
+      [{ outcome: 'exists', summary: 'duplicate' }, '已在例句中'],
+      [{ outcome: 'not-reviewed', summary: 'later', reason: 'busy' }, '未审阅：busy'],
+    ]) {
+      const container = document.createElement('div');
+      const spec = createReadingDecorationSpec({
+        locale: 'zh',
+        getState: () => ({ entries: [entry('run')], review: review() }),
+        onAddExample: vi.fn(async () => receipt),
+      });
+      spec.renderCard(container, { word: 'run', key: 'run', tone: 'learning', sentence: 'Run today.' });
+      container.querySelector('[data-role="add-example"]').click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(container.textContent).toContain(expected);
+    }
+  });
+
+  it('should show unreviewed status when add example callback fails without a receipt', async () => {
+    const container = document.createElement('div');
+    const spec = createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [entry('run')], review: review() }),
+      onAddExample: vi.fn(async () => { throw new Error('offline'); }),
+    });
+    spec.renderCard(container, { word: 'run', key: 'run', tone: 'learning', sentence: 'Run today.' });
+    container.querySelector('[data-role="add-example"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain('Not reviewed');
+  });
+
   it('should keep rating and speech actions interactive after undo', async () => {
     const container = document.createElement('div');
     const onReview = vi.fn(async () => true);

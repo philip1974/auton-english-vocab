@@ -37,6 +37,16 @@ var TEXT = {
     levelSettingsSaveFailed: "Could not save reading level settings.",
     readingStatus: (rate, band) => `New ${Math.round(rate)}%·${band === "good" ? "good for study" : band === "easy" ? "easy" : "hard"}`,
     readingStatusTitle: (rate, counted) => `${rate.toFixed(1)}% new words across ${counted} counted words`,
+    context: "Context",
+    noExampleYet: "This word does not have an example yet.",
+    openSource: "Open source",
+    speakSentence: "Read sentence aloud",
+    addAsExample: "Add as example",
+    exampleAdded: "Added.",
+    exampleExists: "Already in examples.",
+    exampleCancelled: "Cancelled.",
+    exampleNotReviewed: (reason) => `Not reviewed${reason ? `: ${reason}` : ""}`,
+    addExampleDescription: (word) => `Add a reading sentence to the examples for ${word}`,
     flip: "Flashcard",
     reverse: "Reverse spelling",
     listening: "Listening spelling",
@@ -131,6 +141,16 @@ var TEXT = {
     levelSettingsSaveFailed: "生词率设置保存失败。",
     readingStatus: (rate, band) => `生词 ${Math.round(rate)}%·${band === "good" ? "适合学习" : band === "easy" ? "偏易" : "偏难"}`,
     readingStatusTitle: (rate, counted) => `${counted} 个计数词，生词率 ${rate.toFixed(1)}%`,
+    context: "语境",
+    noExampleYet: "这个词还没有例句",
+    openSource: "打开来源",
+    speakSentence: "朗读整句",
+    addAsExample: "加为例句",
+    exampleAdded: "已加入",
+    exampleExists: "已在例句中",
+    exampleCancelled: "已取消",
+    exampleNotReviewed: (reason) => `未审阅${reason ? `：${reason}` : ""}`,
+    addExampleDescription: (word) => `为 ${word} 添加阅读例句`,
     flip: "翻卡",
     reverse: "反向拼写",
     listening: "听音拼写",
@@ -225,6 +245,16 @@ var TEXT = {
     levelSettingsSaveFailed: "読書レベル設定を保存できませんでした。",
     readingStatus: (rate, band) => `新出語 ${Math.round(rate)}%·${band === "good" ? "学習向き" : band === "easy" ? "易しめ" : "難しめ"}`,
     readingStatusTitle: (rate, counted) => `${counted} 語中、新出語率 ${rate.toFixed(1)}%`,
+    context: "文脈",
+    noExampleYet: "この単語にはまだ例文がありません。",
+    openSource: "出典を開く",
+    speakSentence: "文を読み上げる",
+    addAsExample: "例文に追加",
+    exampleAdded: "追加しました。",
+    exampleExists: "例文に登録済みです。",
+    exampleCancelled: "キャンセルしました。",
+    exampleNotReviewed: (reason) => `未レビュー${reason ? `：${reason}` : ""}`,
+    addExampleDescription: (word) => `${word} の例文に読書中の文を追加`,
     flip: "カード",
     reverse: "逆スペル",
     listening: "リスニング",
@@ -319,6 +349,16 @@ var TEXT = {
     levelSettingsSaveFailed: "읽기 수준 설정을 저장할 수 없습니다.",
     readingStatus: (rate, band) => `새 단어 ${Math.round(rate)}%·${band === "good" ? "학습 적합" : band === "easy" ? "쉬움" : "어려움"}`,
     readingStatusTitle: (rate, counted) => `${counted}개 단어 기준 새 단어율 ${rate.toFixed(1)}%`,
+    context: "문맥",
+    noExampleYet: "이 단어에는 아직 예문이 없습니다.",
+    openSource: "출처 열기",
+    speakSentence: "문장 읽기",
+    addAsExample: "예문으로 추가",
+    exampleAdded: "추가했습니다.",
+    exampleExists: "이미 예문에 있습니다.",
+    exampleCancelled: "취소되었습니다.",
+    exampleNotReviewed: (reason) => `검토되지 않음${reason ? `: ${reason}` : ""}`,
+    addExampleDescription: (word) => `${word} 예문에 읽기 문장 추가`,
     flip: "카드",
     reverse: "역방향 철자",
     listening: "듣고 쓰기",
@@ -1446,6 +1486,457 @@ function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
   return { band: "hard", tone: "warning" };
 }
 
+// src/inflections.mjs
+var SURFACE_RE = /^[a-z][a-z'’-]{0,63}$/u;
+var VOWELS = /* @__PURE__ */ new Set(["a", "e", "i", "o", "u"]);
+var DENYLIST = /* @__PURE__ */ new Set([
+  "us",
+  "as",
+  "is",
+  "was",
+  "has",
+  "its",
+  "bus",
+  "gas",
+  "yes",
+  "this",
+  "thus",
+  "plus",
+  "his",
+  "hers",
+  "ours",
+  "news",
+  "series",
+  "species",
+  "basis",
+  "analysis"
+]);
+var IRREGULAR_VERBS = {
+  abide: ["abode", "abode"],
+  alight: ["alit", "alit"],
+  arise: ["arose", "arisen"],
+  awake: ["awoke", "awoken"],
+  be: ["was", "been"],
+  bear: ["bore", "borne"],
+  beat: ["beat", "beaten"],
+  become: ["became", "become"],
+  behold: ["beheld", "beheld"],
+  bend: ["bent", "bent"],
+  beset: ["beset", "beset"],
+  bet: ["bet", "bet"],
+  bid: ["bid", "bid"],
+  bind: ["bound", "bound"],
+  bite: ["bit", "bitten"],
+  bleed: ["bled", "bled"],
+  blow: ["blew", "blown"],
+  break: ["broke", "broken"],
+  breed: ["bred", "bred"],
+  bring: ["brought", "brought"],
+  broadcast: ["broadcast", "broadcast"],
+  build: ["built", "built"],
+  burn: ["burnt", "burnt"],
+  burst: ["burst", "burst"],
+  buy: ["bought", "bought"],
+  cast: ["cast", "cast"],
+  catch: ["caught", "caught"],
+  choose: ["chose", "chosen"],
+  cling: ["clung", "clung"],
+  clothe: ["clothed", "clad"],
+  come: ["came", "come"],
+  cost: ["cost", "cost"],
+  creep: ["crept", "crept"],
+  cut: ["cut", "cut"],
+  deal: ["dealt", "dealt"],
+  dig: ["dug", "dug"],
+  dive: ["dove", "dived"],
+  do: ["did", "done"],
+  draw: ["drew", "drawn"],
+  dream: ["dreamt", "dreamt"],
+  drink: ["drank", "drunk"],
+  drive: ["drove", "driven"],
+  dwell: ["dwelt", "dwelt"],
+  eat: ["ate", "eaten"],
+  fall: ["fell", "fallen"],
+  feed: ["fed", "fed"],
+  feel: ["felt", "felt"],
+  fight: ["fought", "fought"],
+  find: ["found", "found"],
+  fit: ["fit", "fit"],
+  flee: ["fled", "fled"],
+  fling: ["flung", "flung"],
+  fly: ["flew", "flown"],
+  forbid: ["forbade", "forbidden"],
+  forecast: ["forecast", "forecast"],
+  foretell: ["foretold", "foretold"],
+  forget: ["forgot", "forgotten"],
+  forgive: ["forgave", "forgiven"],
+  freeze: ["froze", "frozen"],
+  get: ["got", "gotten"],
+  give: ["gave", "given"],
+  go: ["went", "gone"],
+  grind: ["ground", "ground"],
+  grow: ["grew", "grown"],
+  hang: ["hung", "hung"],
+  have: ["had", "had"],
+  hear: ["heard", "heard"],
+  hide: ["hid", "hidden"],
+  hit: ["hit", "hit"],
+  hold: ["held", "held"],
+  hurt: ["hurt", "hurt"],
+  input: ["input", "input"],
+  keep: ["kept", "kept"],
+  kneel: ["knelt", "knelt"],
+  know: ["knew", "known"],
+  lay: ["laid", "laid"],
+  lead: ["led", "led"],
+  lean: ["leant", "leant"],
+  leap: ["leapt", "leapt"],
+  learn: ["learnt", "learnt"],
+  leave: ["left", "left"],
+  lend: ["lent", "lent"],
+  let: ["let", "let"],
+  lie: ["lay", "lain"],
+  light: ["lit", "lit"],
+  lose: ["lost", "lost"],
+  make: ["made", "made"],
+  mean: ["meant", "meant"],
+  meet: ["met", "met"],
+  mislead: ["misled", "misled"],
+  mistake: ["mistook", "mistaken"],
+  mow: ["mowed", "mown"],
+  offset: ["offset", "offset"],
+  outgrow: ["outgrew", "outgrown"],
+  outrun: ["outran", "outrun"],
+  overcome: ["overcame", "overcome"],
+  oversleep: ["overslept", "overslept"],
+  overtake: ["overtook", "overtaken"],
+  pay: ["paid", "paid"],
+  prove: ["proved", "proven"],
+  put: ["put", "put"],
+  quit: ["quit", "quit"],
+  read: ["read", "read"],
+  redo: ["redid", "redone"],
+  repay: ["repaid", "repaid"],
+  reset: ["reset", "reset"],
+  retake: ["retook", "retaken"],
+  rewrite: ["rewrote", "rewritten"],
+  ride: ["rode", "ridden"],
+  ring: ["rang", "rung"],
+  rise: ["rose", "risen"],
+  run: ["ran", "run"],
+  saw: ["sawed", "sawn"],
+  say: ["said", "said"],
+  see: ["saw", "seen"],
+  seek: ["sought", "sought"],
+  sell: ["sold", "sold"],
+  send: ["sent", "sent"],
+  set: ["set", "set"],
+  sew: ["sewed", "sewn"],
+  shake: ["shook", "shaken"],
+  shed: ["shed", "shed"],
+  shine: ["shone", "shone"],
+  shoot: ["shot", "shot"],
+  show: ["showed", "shown"],
+  shrink: ["shrank", "shrunk"],
+  shut: ["shut", "shut"],
+  sing: ["sang", "sung"],
+  sink: ["sank", "sunk"],
+  sit: ["sat", "sat"],
+  slay: ["slew", "slain"],
+  sleep: ["slept", "slept"],
+  slide: ["slid", "slid"],
+  sling: ["slung", "slung"],
+  slit: ["slit", "slit"],
+  smell: ["smelt", "smelt"],
+  sneak: ["snuck", "snuck"],
+  sow: ["sowed", "sown"],
+  speak: ["spoke", "spoken"],
+  speed: ["sped", "sped"],
+  spell: ["spelt", "spelt"],
+  spend: ["spent", "spent"],
+  spill: ["spilt", "spilt"],
+  spin: ["spun", "spun"],
+  spit: ["spat", "spat"],
+  split: ["split", "split"],
+  spoil: ["spoilt", "spoilt"],
+  spread: ["spread", "spread"],
+  spring: ["sprang", "sprung"],
+  stand: ["stood", "stood"],
+  stave: ["stove", "stove"],
+  steal: ["stole", "stolen"],
+  stick: ["stuck", "stuck"],
+  sting: ["stung", "stung"],
+  stink: ["stank", "stunk"],
+  stride: ["strode", "stridden"],
+  strike: ["struck", "struck"],
+  string: ["strung", "strung"],
+  strive: ["strove", "striven"],
+  swear: ["swore", "sworn"],
+  sweep: ["swept", "swept"],
+  swell: ["swelled", "swollen"],
+  swim: ["swam", "swum"],
+  swing: ["swung", "swung"],
+  take: ["took", "taken"],
+  teach: ["taught", "taught"],
+  tear: ["tore", "torn"],
+  tell: ["told", "told"],
+  think: ["thought", "thought"],
+  throw: ["threw", "thrown"],
+  thrust: ["thrust", "thrust"],
+  tread: ["trod", "trodden"],
+  understand: ["understood", "understood"],
+  undergo: ["underwent", "undergone"],
+  undertake: ["undertook", "undertaken"],
+  upset: ["upset", "upset"],
+  wake: ["woke", "woken"],
+  wear: ["wore", "worn"],
+  weave: ["wove", "woven"],
+  wed: ["wed", "wed"],
+  weep: ["wept", "wept"],
+  wet: ["wet", "wet"],
+  win: ["won", "won"],
+  wind: ["wound", "wound"],
+  withdraw: ["withdrew", "withdrawn"],
+  withstand: ["withstood", "withstood"],
+  wring: ["wrung", "wrung"],
+  write: ["wrote", "written"]
+};
+var IRREGULAR = new Map(Object.entries({
+  ...IRREGULAR_VERBS,
+  be: ["am", "are", "is", "was", "were", "been", "being"],
+  child: ["children"],
+  man: ["men"],
+  woman: ["women"],
+  person: ["people"],
+  mouse: ["mice"],
+  tooth: ["teeth"],
+  foot: ["feet"],
+  goose: ["geese"],
+  ox: ["oxen"],
+  good: ["better", "best"],
+  well: ["better", "best"],
+  bad: ["worse", "worst"],
+  far: ["farther", "farthest", "further", "furthest"]
+}).map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
+function normalize(value) {
+  return String(value ?? "").normalize("NFC").trim().toLowerCase();
+}
+function isSurface(value) {
+  return SURFACE_RE.test(value);
+}
+function isConsonant(value) {
+  return /^[a-z]$/u.test(value) && !VOWELS.has(value);
+}
+function endsConsonantY(word) {
+  return word.length > 1 && word.endsWith("y") && isConsonant(word.at(-2));
+}
+function isCvc(word) {
+  if (word.length < 3) return false;
+  const [a, b2, c] = word.slice(-3);
+  return isConsonant(a) && VOWELS.has(b2) && isConsonant(c) && !["w", "x", "y"].includes(c);
+}
+function addCandidate(set, surface) {
+  if (isSurface(surface) && !DENYLIST.has(surface)) set.add(surface);
+}
+function isComparativePos(value) {
+  const pos = normalize(value);
+  return ["adj", "adjective", "adv", "adverb", "形容词", "副词"].includes(pos);
+}
+function generatedForms(lemma, comparative) {
+  const forms = /* @__PURE__ */ new Set();
+  for (const form of IRREGULAR.get(lemma) ?? []) addCandidate(forms, form);
+  if (lemma.length < 3) return forms;
+  if (endsConsonantY(lemma)) {
+    addCandidate(forms, `${lemma.slice(0, -1)}ies`);
+    addCandidate(forms, `${lemma.slice(0, -1)}ied`);
+    if (comparative) {
+      addCandidate(forms, `${lemma.slice(0, -1)}ier`);
+      addCandidate(forms, `${lemma.slice(0, -1)}iest`);
+    }
+  } else {
+    addCandidate(forms, `${lemma}s`);
+    addCandidate(forms, `${lemma}ed`);
+    if (comparative) {
+      addCandidate(forms, `${lemma}er`);
+      addCandidate(forms, `${lemma}est`);
+    }
+  }
+  if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+  if (lemma.endsWith("ie")) {
+    addCandidate(forms, `${lemma.slice(0, -2)}ying`);
+  } else if (lemma.endsWith("e")) {
+    addCandidate(forms, `${lemma}d`);
+    addCandidate(forms, `${lemma.slice(0, -1)}ing`);
+  } else {
+    addCandidate(forms, `${lemma}ing`);
+  }
+  if (isCvc(lemma)) {
+    addCandidate(forms, `${lemma}${lemma.at(-1)}ed`);
+    addCandidate(forms, `${lemma}${lemma.at(-1)}ing`);
+    if (comparative) {
+      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
+      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
+    }
+  }
+  return forms;
+}
+function chooseLemma(surface, current, next, collected) {
+  if (!current) return next;
+  if (surface === current) return current;
+  if (surface === next && collected.has(next)) return next;
+  return next.localeCompare(current) < 0 ? next : current;
+}
+function buildSurfaceMap(words) {
+  const collected = /* @__PURE__ */ new Set();
+  const comparative = /* @__PURE__ */ new Set();
+  for (const value of words) {
+    const word = normalize(typeof value === "object" && value !== null ? value.word : value);
+    if (!isSurface(word)) continue;
+    collected.add(word);
+    if (typeof value === "object" && value !== null && isComparativePos(value.pos)) comparative.add(word);
+  }
+  const candidates = /* @__PURE__ */ new Map();
+  for (const lemma of collected) {
+    const surfaces = /* @__PURE__ */ new Set([lemma, ...generatedForms(lemma, comparative.has(lemma))]);
+    for (const [base, forms] of IRREGULAR.entries()) {
+      if (forms.includes(lemma)) surfaces.add(base);
+    }
+    for (const surface of surfaces) {
+      if (!isSurface(surface) || surface !== lemma && DENYLIST.has(surface)) continue;
+      candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
+    }
+  }
+  return candidates;
+}
+
+// src/context-cloze.mjs
+var TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+var SOURCE_MARKDOWN_RE = /^(?<sentence>.+?)\s+—\s+\[(?<title>(?:\\.|[^\]])+)\]\((?<path>[^)]+)\)\s*$/u;
+var SOURCE_URL_RE = /^(?<sentence>.+?)\s+—\s+<(?<url>https?:\/\/[^>]+)>\s*$/u;
+var DEFAULT_MAX_LENGTH = 300;
+function stripBullet(text) {
+  return String(text ?? "").trim().replace(/^-\s+/, "");
+}
+function unescapeTitle(title) {
+  return String(title ?? "").replace(/\\([\[\]\\])/gu, "$1");
+}
+function parseExampleLine(text) {
+  const line = stripBullet(text);
+  const markdown = line.match(SOURCE_MARKDOWN_RE);
+  if (markdown?.groups) {
+    return {
+      sentence: markdown.groups.sentence.trim(),
+      source: { title: unescapeTitle(markdown.groups.title), path: markdown.groups.path.trim() }
+    };
+  }
+  const url = line.match(SOURCE_URL_RE);
+  if (url?.groups) {
+    return {
+      sentence: url.groups.sentence.trim(),
+      source: { url: url.groups.url.trim() }
+    };
+  }
+  return { sentence: line, source: null };
+}
+function normalizePath(parts) {
+  const normalized = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.join("/");
+}
+function readableMarkdownPath(value) {
+  const normalized = normalizePath(String(value ?? "").split("/"));
+  if (!normalized) return null;
+  if (!normalized.endsWith(".md")) return null;
+  if (!/^(wiki|docs)\//u.test(normalized)) return null;
+  return normalized;
+}
+function resolveExampleSourcePath(notePath, rawPath) {
+  const source = String(rawPath ?? "").trim();
+  if (!source) return null;
+  if (source.startsWith("/")) return null;
+  if (/^(wiki|docs)\//u.test(source)) return readableMarkdownPath(source);
+  const noteParts = String(notePath ?? "").split("/");
+  noteParts.pop();
+  return readableMarkdownPath([...noteParts, ...source.split("/")].join("/"));
+}
+function surfacesFor(entry) {
+  return [...buildSurfaceMap([entry]).keys()].sort();
+}
+function tokenMatches(sentence, surfaces) {
+  const hits = [];
+  for (const match of sentence.matchAll(TOKEN_RE)) {
+    const surface = match[0];
+    if (!surfaces.has(surface.toLowerCase())) continue;
+    hits.push({ start: match.index, end: match.index + surface.length, surface });
+  }
+  return hits;
+}
+function replaceHits(sentence, hits) {
+  let cursor = 0;
+  let text = "";
+  for (const hit of hits) {
+    text += sentence.slice(cursor, hit.start);
+    text += "_____";
+    cursor = hit.end;
+  }
+  return text + sentence.slice(cursor);
+}
+function findTokenWindow(text, hitStart, hitEnd, maxLength) {
+  if (text.length <= maxLength) return { start: 0, end: text.length };
+  const center = Math.floor((hitStart + hitEnd) / 2);
+  let start = Math.max(0, center - Math.floor(maxLength / 2));
+  let end = Math.min(text.length, start + maxLength);
+  start = Math.max(0, end - maxLength);
+  while (start > 0 && start < end && /\S/u.test(text[start - 1]) && /\S/u.test(text[start])) start += 1;
+  while (end < text.length && end > start && /\S/u.test(text[end - 1]) && /\S/u.test(text[end])) end -= 1;
+  if (start >= end) return { start: 0, end: text.length };
+  return { start, end };
+}
+function truncateCloze(text, hits, maxLength) {
+  if (text.length <= maxLength || hits.length === 0) return text;
+  const first = hits[0];
+  const last = hits.at(-1);
+  const clozedHitStart = first.start;
+  const deltaBeforeLast = hits.reduce((sum, hit) => hit.end <= last.start ? sum + (hit.end - hit.start - 5) : sum, 0);
+  const clozedHitEnd = last.end - deltaBeforeLast - (last.end - last.start) + 5;
+  let window = findTokenWindow(text, clozedHitStart, clozedHitEnd, maxLength);
+  const outsideHit = hits.some((hit) => {
+    const before = hits.filter((item) => item.end <= hit.start).reduce((sum, item) => sum + (item.end - item.start - 5), 0);
+    const start = hit.start - before;
+    const end = hit.end - before - (hit.end - hit.start) + 5;
+    return start < window.start || end > window.end;
+  });
+  if (outsideHit) return text;
+  return text.slice(window.start, window.end).trim();
+}
+function clozeSentence(sentence, entry, options = {}) {
+  const original = String(sentence ?? "");
+  const surfaces = new Set(surfacesFor(entry));
+  const hits = tokenMatches(original, surfaces);
+  const text = replaceHits(original, hits);
+  return { text: truncateCloze(text, hits, options.maxLength ?? DEFAULT_MAX_LENGTH), hits };
+}
+function pickExample(entry, count = 0) {
+  const candidates = [];
+  for (const line of entry?.examples ?? []) {
+    const parsed = parseExampleLine(line);
+    const cloze = clozeSentence(parsed.sentence, entry);
+    if (cloze.hits.length === 0) continue;
+    candidates.push({ ...parsed, cloze });
+  }
+  if (candidates.length === 0) return null;
+  const index = Math.abs(Number(count) || 0) % candidates.length;
+  return candidates[index];
+}
+
 // src/panel.mjs
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -1459,9 +1950,33 @@ function button(text, onClick, className = "") {
   node.addEventListener("click", onClick);
   return node;
 }
-function cloze(example, word) {
-  if (!example) return "";
-  return example.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "_____");
+function reviewCount(log, word) {
+  return (log ?? []).filter((item) => item?.word === word).length;
+}
+function visibleExample(entry) {
+  for (const line of entry?.examples ?? []) {
+    const parsed = parseExampleLine(line);
+    const clozed = clozeSentence(parsed.sentence, entry);
+    if (clozed.hits.length > 0) return { ...parsed, clozed };
+  }
+  return null;
+}
+function clozedExampleText(entry) {
+  const example = visibleExample(entry);
+  return example?.clozed.text ?? "";
+}
+function appendHighlightedSentence(parent, sentence, hits) {
+  let cursor = 0;
+  for (const hit of hits) {
+    parent.append(document.createTextNode(sentence.slice(cursor, hit.start)));
+    parent.append(el("mark", "ev-context-hit", sentence.slice(hit.start, hit.end)));
+    cursor = hit.end;
+  }
+  parent.append(document.createTextNode(sentence.slice(cursor)));
+}
+function defaultModeFor(state, item) {
+  if (state.reviewMode) return state.reviewMode;
+  return pickExample(item, reviewCount(state.log, item.word)) ? "context" : "flip";
 }
 function dictionaryLineGroups(entry, locale) {
   const zh = String(entry?.t ?? "").split("\n").filter(Boolean);
@@ -1495,15 +2010,20 @@ function renderPanel(container, controls) {
   const tabs = el("div", "ev-tabs");
   const body = el("div", "ev-body");
   const toolbar = el("div", "ev-toolbar");
-  let mode = "flip";
+  let mode = null;
+  let modeSelected = false;
+  let modeWord = null;
+  let renderedWord = null;
   let tab = "today";
   let flipped = false;
   let lastSpokenWord = null;
   let dictionaryResult = null;
+  const phonetics = /* @__PURE__ */ new Map();
   const review = (rating) => {
     const state = read();
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     if (!item) return;
+    controls.cancelSpeech?.();
     controls.onReview?.(item.word, rating, mode);
     flipped = false;
     rerender();
@@ -1519,22 +2039,36 @@ function renderPanel(container, controls) {
     return row;
   };
   const renderToday = (state) => {
+    const item = dueQueue(state.entries, state.review, { log: state.log })[0];
+    const validModes = ["context", "flip", "reverse", "listening"];
+    if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
+    renderedWord = item?.word ?? null;
+    if (validModes.includes(state.reviewMode)) {
+      mode = state.reviewMode;
+      modeSelected = true;
+    } else if (item && !modeSelected && (modeWord !== item.word || !validModes.includes(mode))) {
+      mode = defaultModeFor(state, item);
+      modeWord = item.word;
+    }
     const modeRow = el("div", "ev-mode");
-    for (const [id, label] of [["flip", t.flip], ["reverse", t.reverse], ["listening", t.listening]]) {
-      const item2 = button(label, () => {
+    for (const [id, label] of [["context", t.context], ["flip", t.flip], ["reverse", t.reverse], ["listening", t.listening]]) {
+      const modeButton = button(label, () => {
+        controls.cancelSpeech?.();
         mode = id;
+        modeSelected = true;
+        modeWord = item?.word ?? null;
         flipped = false;
+        controls.onReviewModeChange?.(id);
         rerender();
       });
-      item2.disabled = id === "listening" && !controls.hasEnglishVoice?.();
-      if (id === mode) item2.setAttribute("aria-pressed", "true");
-      modeRow.append(item2);
+      modeButton.disabled = id === "listening" && !controls.hasEnglishVoice?.();
+      if (id === mode) modeButton.setAttribute("aria-pressed", "true");
+      modeRow.append(modeButton);
     }
     body.append(modeRow);
     const hasProgress = Object.keys(state.review.cards).length > 0 || Object.keys(state.review.flags).length > 0 || state.log.length > 0;
     if (state.entries.length > 0 && !hasProgress) body.append(el("p", "ev-note", t.emptyProgress));
     if (mode === "listening") body.append(el("p", "ev-note", controls.hasEnglishVoice?.() ? t.listeningInterrupts : t.noEnglishVoice));
-    const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     if (!item) {
       body.append(el("p", "ev-empty", t.noCards));
       return;
@@ -1544,16 +2078,69 @@ function renderPanel(container, controls) {
       controls.speak?.(item.word);
     }
     const card = el("section", "ev-card");
-    const example = item.examples?.[0] || item.example || "";
-    if (mode === "flip") {
-      card.append(el("h3", "ev-review-word", item.word), el("p", "ev-example", cloze(example, item.word)));
+    if (mode === "context") {
+      const picked = pickExample(item, reviewCount(state.log, item.word));
+      if (picked) {
+        if (!flipped) {
+          card.append(el("p", "ev-context-sentence", picked.cloze.text));
+          const sourcePath = picked.source?.path ? resolveExampleSourcePath(item.path, picked.source.path) : null;
+          if (sourcePath) {
+            const source = button(picked.source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), "ev-link-button");
+            source.title = t.openSource;
+            source.disabled = !controls.canOpenReadingDocument?.();
+            card.append(source);
+          } else if (picked.source?.path) {
+            card.append(el("p", "ev-source", picked.source.title || picked.source.path));
+          } else if (picked.source?.url) {
+            card.append(el("p", "ev-source", picked.source.url));
+          }
+          card.append(button(t.answer, () => {
+            controls.cancelSpeech?.();
+            flipped = true;
+            rerender();
+          }));
+        } else {
+          card.append(el("h3", "ev-review-word", item.word));
+          const phonetic = item.phonetic || phonetics.get(item.word);
+          if (phonetic) card.append(el("p", "ev-reading-phonetic", `/${phonetic}/`));
+          if (!item.phonetic && !phonetics.has(item.word) && controls.lookupDictionary) {
+            phonetics.set(item.word, "");
+            Promise.resolve(controls.lookupDictionary(item.word)).then((result) => {
+              phonetics.set(item.word, result?.entry?.p ?? "");
+              rerender();
+            }).catch(() => void 0);
+          }
+          card.append(el("p", "ev-definition", item.definition));
+          const sentence = el("p", "ev-context-answer");
+          appendHighlightedSentence(sentence, picked.sentence, picked.cloze.hits);
+          card.append(sentence);
+          const speak = button(t.speakSentence, () => controls.speakSentence?.(picked.sentence));
+          speak.disabled = !controls.hasEnglishVoice?.();
+          card.append(speak, ratingRow());
+        }
+      } else if (!flipped) {
+        card.append(el("p", "ev-definition", item.definition), el("p", "ev-note", t.noExampleYet), button(t.answer, () => {
+          controls.cancelSpeech?.();
+          flipped = true;
+          rerender();
+        }));
+      } else {
+        card.append(el("h3", "ev-review-word", item.word), el("p", "ev-definition", item.definition), ratingRow());
+      }
+    } else if (mode === "flip") {
+      card.append(el("h3", "ev-review-word", item.word));
+      const example = clozedExampleText(item);
+      if (example) card.append(el("p", "ev-example", example));
       if (flipped) card.append(el("p", "ev-definition", item.definition), ratingRow());
       else card.append(button(t.answer, () => {
+        controls.cancelSpeech?.();
         flipped = true;
         rerender();
       }));
     } else {
-      card.append(el("p", "ev-definition", item.definition), el("p", "", cloze(example, item.word)));
+      const example = clozedExampleText(item);
+      card.append(el("p", "ev-definition", item.definition));
+      if (example) card.append(el("p", "ev-example", example));
       const input = el("input", "ev-input");
       input.placeholder = t.spellingPlaceholder;
       const submit = () => review(input.value.trim().toLowerCase() === item.word ? "Good" : "Again");
@@ -1981,329 +2568,6 @@ var ADD_SCHEMA = {
   additionalProperties: false
 };
 
-// src/inflections.mjs
-var SURFACE_RE = /^[a-z][a-z'’-]{0,63}$/u;
-var VOWELS = /* @__PURE__ */ new Set(["a", "e", "i", "o", "u"]);
-var DENYLIST = /* @__PURE__ */ new Set([
-  "us",
-  "as",
-  "is",
-  "was",
-  "has",
-  "its",
-  "bus",
-  "gas",
-  "yes",
-  "this",
-  "thus",
-  "plus",
-  "his",
-  "hers",
-  "ours",
-  "news",
-  "series",
-  "species",
-  "basis",
-  "analysis"
-]);
-var IRREGULAR_VERBS = {
-  abide: ["abode", "abode"],
-  alight: ["alit", "alit"],
-  arise: ["arose", "arisen"],
-  awake: ["awoke", "awoken"],
-  be: ["was", "been"],
-  bear: ["bore", "borne"],
-  beat: ["beat", "beaten"],
-  become: ["became", "become"],
-  behold: ["beheld", "beheld"],
-  bend: ["bent", "bent"],
-  beset: ["beset", "beset"],
-  bet: ["bet", "bet"],
-  bid: ["bid", "bid"],
-  bind: ["bound", "bound"],
-  bite: ["bit", "bitten"],
-  bleed: ["bled", "bled"],
-  blow: ["blew", "blown"],
-  break: ["broke", "broken"],
-  breed: ["bred", "bred"],
-  bring: ["brought", "brought"],
-  broadcast: ["broadcast", "broadcast"],
-  build: ["built", "built"],
-  burn: ["burnt", "burnt"],
-  burst: ["burst", "burst"],
-  buy: ["bought", "bought"],
-  cast: ["cast", "cast"],
-  catch: ["caught", "caught"],
-  choose: ["chose", "chosen"],
-  cling: ["clung", "clung"],
-  clothe: ["clothed", "clad"],
-  come: ["came", "come"],
-  cost: ["cost", "cost"],
-  creep: ["crept", "crept"],
-  cut: ["cut", "cut"],
-  deal: ["dealt", "dealt"],
-  dig: ["dug", "dug"],
-  dive: ["dove", "dived"],
-  do: ["did", "done"],
-  draw: ["drew", "drawn"],
-  dream: ["dreamt", "dreamt"],
-  drink: ["drank", "drunk"],
-  drive: ["drove", "driven"],
-  dwell: ["dwelt", "dwelt"],
-  eat: ["ate", "eaten"],
-  fall: ["fell", "fallen"],
-  feed: ["fed", "fed"],
-  feel: ["felt", "felt"],
-  fight: ["fought", "fought"],
-  find: ["found", "found"],
-  fit: ["fit", "fit"],
-  flee: ["fled", "fled"],
-  fling: ["flung", "flung"],
-  fly: ["flew", "flown"],
-  forbid: ["forbade", "forbidden"],
-  forecast: ["forecast", "forecast"],
-  foretell: ["foretold", "foretold"],
-  forget: ["forgot", "forgotten"],
-  forgive: ["forgave", "forgiven"],
-  freeze: ["froze", "frozen"],
-  get: ["got", "gotten"],
-  give: ["gave", "given"],
-  go: ["went", "gone"],
-  grind: ["ground", "ground"],
-  grow: ["grew", "grown"],
-  hang: ["hung", "hung"],
-  have: ["had", "had"],
-  hear: ["heard", "heard"],
-  hide: ["hid", "hidden"],
-  hit: ["hit", "hit"],
-  hold: ["held", "held"],
-  hurt: ["hurt", "hurt"],
-  input: ["input", "input"],
-  keep: ["kept", "kept"],
-  kneel: ["knelt", "knelt"],
-  know: ["knew", "known"],
-  lay: ["laid", "laid"],
-  lead: ["led", "led"],
-  lean: ["leant", "leant"],
-  leap: ["leapt", "leapt"],
-  learn: ["learnt", "learnt"],
-  leave: ["left", "left"],
-  lend: ["lent", "lent"],
-  let: ["let", "let"],
-  lie: ["lay", "lain"],
-  light: ["lit", "lit"],
-  lose: ["lost", "lost"],
-  make: ["made", "made"],
-  mean: ["meant", "meant"],
-  meet: ["met", "met"],
-  mislead: ["misled", "misled"],
-  mistake: ["mistook", "mistaken"],
-  mow: ["mowed", "mown"],
-  offset: ["offset", "offset"],
-  outgrow: ["outgrew", "outgrown"],
-  outrun: ["outran", "outrun"],
-  overcome: ["overcame", "overcome"],
-  oversleep: ["overslept", "overslept"],
-  overtake: ["overtook", "overtaken"],
-  pay: ["paid", "paid"],
-  prove: ["proved", "proven"],
-  put: ["put", "put"],
-  quit: ["quit", "quit"],
-  read: ["read", "read"],
-  redo: ["redid", "redone"],
-  repay: ["repaid", "repaid"],
-  reset: ["reset", "reset"],
-  retake: ["retook", "retaken"],
-  rewrite: ["rewrote", "rewritten"],
-  ride: ["rode", "ridden"],
-  ring: ["rang", "rung"],
-  rise: ["rose", "risen"],
-  run: ["ran", "run"],
-  saw: ["sawed", "sawn"],
-  say: ["said", "said"],
-  see: ["saw", "seen"],
-  seek: ["sought", "sought"],
-  sell: ["sold", "sold"],
-  send: ["sent", "sent"],
-  set: ["set", "set"],
-  sew: ["sewed", "sewn"],
-  shake: ["shook", "shaken"],
-  shed: ["shed", "shed"],
-  shine: ["shone", "shone"],
-  shoot: ["shot", "shot"],
-  show: ["showed", "shown"],
-  shrink: ["shrank", "shrunk"],
-  shut: ["shut", "shut"],
-  sing: ["sang", "sung"],
-  sink: ["sank", "sunk"],
-  sit: ["sat", "sat"],
-  slay: ["slew", "slain"],
-  sleep: ["slept", "slept"],
-  slide: ["slid", "slid"],
-  sling: ["slung", "slung"],
-  slit: ["slit", "slit"],
-  smell: ["smelt", "smelt"],
-  sneak: ["snuck", "snuck"],
-  sow: ["sowed", "sown"],
-  speak: ["spoke", "spoken"],
-  speed: ["sped", "sped"],
-  spell: ["spelt", "spelt"],
-  spend: ["spent", "spent"],
-  spill: ["spilt", "spilt"],
-  spin: ["spun", "spun"],
-  spit: ["spat", "spat"],
-  split: ["split", "split"],
-  spoil: ["spoilt", "spoilt"],
-  spread: ["spread", "spread"],
-  spring: ["sprang", "sprung"],
-  stand: ["stood", "stood"],
-  stave: ["stove", "stove"],
-  steal: ["stole", "stolen"],
-  stick: ["stuck", "stuck"],
-  sting: ["stung", "stung"],
-  stink: ["stank", "stunk"],
-  stride: ["strode", "stridden"],
-  strike: ["struck", "struck"],
-  string: ["strung", "strung"],
-  strive: ["strove", "striven"],
-  swear: ["swore", "sworn"],
-  sweep: ["swept", "swept"],
-  swell: ["swelled", "swollen"],
-  swim: ["swam", "swum"],
-  swing: ["swung", "swung"],
-  take: ["took", "taken"],
-  teach: ["taught", "taught"],
-  tear: ["tore", "torn"],
-  tell: ["told", "told"],
-  think: ["thought", "thought"],
-  throw: ["threw", "thrown"],
-  thrust: ["thrust", "thrust"],
-  tread: ["trod", "trodden"],
-  understand: ["understood", "understood"],
-  undergo: ["underwent", "undergone"],
-  undertake: ["undertook", "undertaken"],
-  upset: ["upset", "upset"],
-  wake: ["woke", "woken"],
-  wear: ["wore", "worn"],
-  weave: ["wove", "woven"],
-  wed: ["wed", "wed"],
-  weep: ["wept", "wept"],
-  wet: ["wet", "wet"],
-  win: ["won", "won"],
-  wind: ["wound", "wound"],
-  withdraw: ["withdrew", "withdrawn"],
-  withstand: ["withstood", "withstood"],
-  wring: ["wrung", "wrung"],
-  write: ["wrote", "written"]
-};
-var IRREGULAR = new Map(Object.entries({
-  ...IRREGULAR_VERBS,
-  be: ["am", "are", "is", "was", "were", "been", "being"],
-  child: ["children"],
-  man: ["men"],
-  woman: ["women"],
-  person: ["people"],
-  mouse: ["mice"],
-  tooth: ["teeth"],
-  foot: ["feet"],
-  goose: ["geese"],
-  ox: ["oxen"],
-  good: ["better", "best"],
-  well: ["better", "best"],
-  bad: ["worse", "worst"],
-  far: ["farther", "farthest", "further", "furthest"]
-}).map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
-function normalize(value) {
-  return String(value ?? "").normalize("NFC").trim().toLowerCase();
-}
-function isSurface(value) {
-  return SURFACE_RE.test(value);
-}
-function isConsonant(value) {
-  return /^[a-z]$/u.test(value) && !VOWELS.has(value);
-}
-function endsConsonantY(word) {
-  return word.length > 1 && word.endsWith("y") && isConsonant(word.at(-2));
-}
-function isCvc(word) {
-  if (word.length < 3) return false;
-  const [a, b2, c] = word.slice(-3);
-  return isConsonant(a) && VOWELS.has(b2) && isConsonant(c) && !["w", "x", "y"].includes(c);
-}
-function addCandidate(set, surface) {
-  if (isSurface(surface) && !DENYLIST.has(surface)) set.add(surface);
-}
-function isComparativePos(value) {
-  const pos = normalize(value);
-  return ["adj", "adjective", "adv", "adverb", "形容词", "副词"].includes(pos);
-}
-function generatedForms(lemma, comparative) {
-  const forms = /* @__PURE__ */ new Set();
-  for (const form of IRREGULAR.get(lemma) ?? []) addCandidate(forms, form);
-  if (lemma.length < 3) return forms;
-  if (endsConsonantY(lemma)) {
-    addCandidate(forms, `${lemma.slice(0, -1)}ies`);
-    addCandidate(forms, `${lemma.slice(0, -1)}ied`);
-    if (comparative) {
-      addCandidate(forms, `${lemma.slice(0, -1)}ier`);
-      addCandidate(forms, `${lemma.slice(0, -1)}iest`);
-    }
-  } else {
-    addCandidate(forms, `${lemma}s`);
-    addCandidate(forms, `${lemma}ed`);
-    if (comparative) {
-      addCandidate(forms, `${lemma}er`);
-      addCandidate(forms, `${lemma}est`);
-    }
-  }
-  if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
-  if (lemma.endsWith("ie")) {
-    addCandidate(forms, `${lemma.slice(0, -2)}ying`);
-  } else if (lemma.endsWith("e")) {
-    addCandidate(forms, `${lemma}d`);
-    addCandidate(forms, `${lemma.slice(0, -1)}ing`);
-  } else {
-    addCandidate(forms, `${lemma}ing`);
-  }
-  if (isCvc(lemma)) {
-    addCandidate(forms, `${lemma}${lemma.at(-1)}ed`);
-    addCandidate(forms, `${lemma}${lemma.at(-1)}ing`);
-    if (comparative) {
-      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
-      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
-    }
-  }
-  return forms;
-}
-function chooseLemma(surface, current, next, collected) {
-  if (!current) return next;
-  if (surface === current) return current;
-  if (surface === next && collected.has(next)) return next;
-  return next.localeCompare(current) < 0 ? next : current;
-}
-function buildSurfaceMap(words) {
-  const collected = /* @__PURE__ */ new Set();
-  const comparative = /* @__PURE__ */ new Set();
-  for (const value of words) {
-    const word = normalize(typeof value === "object" && value !== null ? value.word : value);
-    if (!isSurface(word)) continue;
-    collected.add(word);
-    if (typeof value === "object" && value !== null && isComparativePos(value.pos)) comparative.add(word);
-  }
-  const candidates = /* @__PURE__ */ new Map();
-  for (const lemma of collected) {
-    const surfaces = /* @__PURE__ */ new Set([lemma, ...generatedForms(lemma, comparative.has(lemma))]);
-    for (const [base, forms] of IRREGULAR.entries()) {
-      if (forms.includes(lemma)) surfaces.add(base);
-    }
-    for (const surface of surfaces) {
-      if (!isSurface(surface) || surface !== lemma && DENYLIST.has(surface)) continue;
-      candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
-    }
-  }
-  return candidates;
-}
-
 // src/decorations.mjs
 var TONE_BY_FAMILIARITY = {
   new: "learning",
@@ -2330,6 +2594,13 @@ function ratingButton(text, rating, onClick, className = "") {
 }
 function entryMap(entries) {
   return new Map((entries ?? []).map((entry) => [entry.word, entry]));
+}
+function normalizedSentence(value) {
+  return String(value ?? "").trim().replace(/\s+/gu, " ");
+}
+function hasExample(entry, sentence) {
+  const target = normalizedSentence(sentence);
+  return (entry?.examples ?? []).some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
 }
 function dictionaryLineGroups2(entry, locale) {
   const zh = String(entry?.t ?? "").split("\n").filter(Boolean);
@@ -2369,7 +2640,7 @@ function buildReadingTerms({ entries = [], review = { cards: {}, flags: {} } } =
   }
   return terms.sort((a, b2) => a.surface.localeCompare(b2.surface) || a.key.localeCompare(b2.key));
 }
-function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord }) {
+function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord, onAddExample }) {
   const t = uiText(locale);
   return {
     id: "english-vocab",
@@ -2415,6 +2686,20 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
           }, "ev-reading-again"),
           speakButton
         );
+        if (entry && context.sentence && onAddExample && !hasExample(entry, context.sentence)) {
+          const status = el2("p", "ev-reading-note");
+          const addExample = button2(t.addAsExample, async () => {
+            addExample.disabled = true;
+            const receipt = await onAddExample(context.key, context).catch(() => null);
+            if (receipt?.outcome === "applied") status.textContent = t.exampleAdded;
+            else if (receipt?.outcome === "exists") status.textContent = t.exampleExists;
+            else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.exampleCancelled;
+            else status.textContent = t.exampleNotReviewed(receipt?.reason);
+          });
+          addExample.dataset.role = "add-example";
+          actions.append(addExample);
+          card.append(status);
+        }
         card.append(actions);
         if (rated) {
           const note = el2("p", "ev-reading-note", rated === "good" ? t.readingMarkedKnown : t.readingMarkedLearning);
@@ -33034,6 +33319,18 @@ function inferPos(entry) {
 var BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {
 };
 var emptyReview = () => ({ version: 1, cards: {}, flags: {} });
+var REVIEW_MODES = /* @__PURE__ */ new Set(["context", "flip", "reverse", "listening"]);
+function normalizedSentence2(value) {
+  return String(value ?? "").trim().replace(/\s+/gu, " ");
+}
+function proposalError(error) {
+  return String(error?.message ?? error?.code ?? error ?? "proposal failed");
+}
+function readingSource(source) {
+  if (source?.path) return { path: source.path, title: source.title };
+  if (source?.url) return { url: source.url, title: source.title };
+  return null;
+}
 var EnglishVocabPlugin = class extends BasePlugin {
   async onload() {
     this.locale = currentLocale();
@@ -33047,6 +33344,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       highlight: true,
       lookupAnyWord: true,
       lookupNoticeShown: false,
+      reviewMode: null,
       levelSettings: DEFAULT_LEVEL_SETTINGS,
       recommendations: null,
       recommendationLoading: null
@@ -33098,13 +33396,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
       onFlag: (word, flag) => this.setFlag(word, flag),
       notify: (message) => this.notice(message),
       hasEnglishVoice: () => typeof speechSynthesis !== "undefined" && speechSynthesis.getVoices().some((voice) => /^en\b/i.test(voice.lang)),
-      speak: (word) => {
-        if (typeof speechSynthesis === "undefined") return;
-        speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(word);
-        utterance.lang = "en-US";
-        speechSynthesis.speak(utterance);
-      },
+      speak: (word) => this.speakEnglish(word),
+      speakSentence: (sentence) => this.speakEnglish(sentence),
+      cancelSpeech: () => this.cancelSpeech(),
+      onReviewModeChange: (mode) => this.setReviewMode(mode),
       onHighlightChange: (value) => this.setHighlight(value),
       onLookupAnyWordChange: (value) => this.setLookupAnyWord(value),
       onLevelSettingsChange: (settings) => this.setLevelSettings(settings),
@@ -33122,11 +33417,13 @@ var EnglishVocabPlugin = class extends BasePlugin {
       this.state.highlight = data?.highlight !== false;
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
+      this.state.reviewMode = REVIEW_MODES.has(data?.reviewMode) ? data.reviewMode : null;
       this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
       this.state.lookupNoticeShown = false;
+      this.state.reviewMode = null;
       this.state.levelSettings = DEFAULT_LEVEL_SETTINGS;
     }
   }
@@ -33138,6 +33435,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       lookupAnyWord: this.state.lookupAnyWord,
       levelSettings: this.state.levelSettings,
       lookupNoticeShown: this.state.lookupNoticeShown,
+      reviewMode: this.state.reviewMode,
       ...patch
     };
     await this.saveData?.(next);
@@ -33160,6 +33458,31 @@ var EnglishVocabPlugin = class extends BasePlugin {
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();
+  }
+  cancelSpeech() {
+    if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+  }
+  speakEnglish(text) {
+    if (typeof speechSynthesis === "undefined" || typeof SpeechSynthesisUtterance === "undefined") return false;
+    const voice = speechSynthesis.getVoices().find((item) => /^en\b/i.test(item.lang));
+    if (!voice) return false;
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = voice;
+    utterance.lang = voice.lang || "en-US";
+    speechSynthesis.speak(utterance);
+    return true;
+  }
+  async setReviewMode(mode) {
+    if (!REVIEW_MODES.has(mode)) return false;
+    this.state.reviewMode = mode;
+    try {
+      await this.savePreferences({ reviewMode: mode });
+    } catch {
+      return false;
+    }
+    this.emitState();
+    return true;
   }
   async refreshIndex() {
     if (!this.index) return;
@@ -33300,7 +33623,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
         speak: (word) => this.panelState().speak(word),
         lookupDictionary: (word) => this.lookupDictionary(word),
         onCollectWord: (result, context) => this.collectDictionaryWord(result, context),
-        onExplainWord: (word, context) => this.explainDictionaryWord(word, context)
+        onExplainWord: (word, context) => this.explainDictionaryWord(word, context),
+        onAddExample: (word, context) => this.addExampleSentence(word, context)
       });
       this.readingHandle = this.addReadingDecoration ? this.addReadingDecoration(spec) : this.register(this.app.readingDecorations.register(spec));
     }
@@ -33454,6 +33778,31 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   suggestDictionary(prefix, n) {
     return suggest(prefix, n);
+  }
+  async addExampleSentence(word, context = {}) {
+    const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
+    if (!entry?.path || !context.sentence) return { outcome: "aborted", summary: "missing vocabulary entry or sentence" };
+    let document2;
+    try {
+      document2 = await this.app.knowledge.readDocument({ path: entry.path });
+    } catch (error) {
+      return { outcome: "aborted", summary: proposalError(error) };
+    }
+    if (document2?._tag === "Err") return { outcome: "aborted", summary: proposalError(document2.error) };
+    const parsed = parseNote(document2.content);
+    if (!parsed.ok) return { outcome: "aborted", summary: parsed.error };
+    const target = normalizedSentence2(context.sentence);
+    const duplicate = parsed.entry.examples.some((line) => normalizedSentence2(parseExampleLine(line).sentence) === target);
+    if (duplicate) return { outcome: "exists", summary: this.t.exampleExists };
+    const newContent = appendExample(document2.content, context.sentence, readingSource(context.source));
+    if (newContent === document2.content) return { outcome: "exists", summary: this.t.exampleExists };
+    const receipt = await this.app.knowledge.propose({
+      description: this.t.addExampleDescription(word),
+      changes: [{ path: entry.path, newContent }]
+    });
+    if (receipt?._tag === "Err") return { outcome: "aborted", summary: proposalError(receipt.error) };
+    if (receipt?.outcome === "applied") await this.refreshIndex();
+    return receipt;
   }
   async collectDictionaryWord(result, context = {}) {
     const lemma = result?.lemma;

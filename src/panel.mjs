@@ -4,6 +4,7 @@ import { assertEnglishWord } from './note-format.mjs';
 import { uiText, currentLocale } from './ui-text.mjs';
 import { requestTextForWord, requestTextFromSelection } from './request-text.mjs';
 import { validateLevelSettings } from './reading-level.mjs';
+import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath } from './context-cloze.mjs';
 
 
 function el(tag, className, text) {
@@ -20,9 +21,37 @@ function button(text, onClick, className = '') {
   return node;
 }
 
-function cloze(example, word) {
-  if (!example) return '';
-  return example.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
+function reviewCount(log, word) {
+  return (log ?? []).filter((item) => item?.word === word).length;
+}
+
+function visibleExample(entry) {
+  for (const line of entry?.examples ?? []) {
+    const parsed = parseExampleLine(line);
+    const clozed = clozeSentence(parsed.sentence, entry);
+    if (clozed.hits.length > 0) return { ...parsed, clozed };
+  }
+  return null;
+}
+
+function clozedExampleText(entry) {
+  const example = visibleExample(entry);
+  return example?.clozed.text ?? '';
+}
+
+function appendHighlightedSentence(parent, sentence, hits) {
+  let cursor = 0;
+  for (const hit of hits) {
+    parent.append(document.createTextNode(sentence.slice(cursor, hit.start)));
+    parent.append(el('mark', 'ev-context-hit', sentence.slice(hit.start, hit.end)));
+    cursor = hit.end;
+  }
+  parent.append(document.createTextNode(sentence.slice(cursor)));
+}
+
+function defaultModeFor(state, item) {
+  if (state.reviewMode) return state.reviewMode;
+  return pickExample(item, reviewCount(state.log, item.word)) ? 'context' : 'flip';
 }
 
 function dictionaryLineGroups(entry, locale) {
@@ -60,16 +89,21 @@ export function renderPanel(container, controls) {
   const tabs = el('div', 'ev-tabs');
   const body = el('div', 'ev-body');
   const toolbar = el('div', 'ev-toolbar');
-  let mode = 'flip';
+  let mode = null;
+  let modeSelected = false;
+  let modeWord = null;
+  let renderedWord = null;
   let tab = 'today';
   let flipped = false;
   let lastSpokenWord = null;
   let dictionaryResult = null;
+  const phonetics = new Map();
 
   const review = (rating) => {
     const state = read();
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     if (!item) return;
+    controls.cancelSpeech?.();
     controls.onReview?.(item.word, rating, mode);
     flipped = false;
     rerender();
@@ -87,18 +121,36 @@ export function renderPanel(container, controls) {
   };
 
   const renderToday = (state) => {
+    const item = dueQueue(state.entries, state.review, { log: state.log })[0];
+    const validModes = ['context', 'flip', 'reverse', 'listening'];
+    if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
+    renderedWord = item?.word ?? null;
+    if (validModes.includes(state.reviewMode)) {
+      mode = state.reviewMode;
+      modeSelected = true;
+    } else if (item && !modeSelected && (modeWord !== item.word || !validModes.includes(mode))) {
+      mode = defaultModeFor(state, item);
+      modeWord = item.word;
+    }
     const modeRow = el('div', 'ev-mode');
-    for (const [id, label] of [['flip', t.flip], ['reverse', t.reverse], ['listening', t.listening]]) {
-      const item = button(label, () => { mode = id; flipped = false; rerender(); });
-      item.disabled = id === 'listening' && !controls.hasEnglishVoice?.();
-      if (id === mode) item.setAttribute('aria-pressed', 'true');
-      modeRow.append(item);
+    for (const [id, label] of [['context', t.context], ['flip', t.flip], ['reverse', t.reverse], ['listening', t.listening]]) {
+      const modeButton = button(label, () => {
+        controls.cancelSpeech?.();
+        mode = id;
+        modeSelected = true;
+        modeWord = item?.word ?? null;
+        flipped = false;
+        controls.onReviewModeChange?.(id);
+        rerender();
+      });
+      modeButton.disabled = id === 'listening' && !controls.hasEnglishVoice?.();
+      if (id === mode) modeButton.setAttribute('aria-pressed', 'true');
+      modeRow.append(modeButton);
     }
     body.append(modeRow);
     const hasProgress = Object.keys(state.review.cards).length > 0 || Object.keys(state.review.flags).length > 0 || state.log.length > 0;
     if (state.entries.length > 0 && !hasProgress) body.append(el('p', 'ev-note', t.emptyProgress));
     if (mode === 'listening') body.append(el('p', 'ev-note', controls.hasEnglishVoice?.() ? t.listeningInterrupts : t.noEnglishVoice));
-    const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     if (!item) {
       body.append(el('p', 'ev-empty', t.noCards));
       return;
@@ -108,13 +160,57 @@ export function renderPanel(container, controls) {
       controls.speak?.(item.word);
     }
     const card = el('section', 'ev-card');
-    const example = item.examples?.[0] || item.example || '';
-    if (mode === 'flip') {
-      card.append(el('h3', 'ev-review-word', item.word), el('p', 'ev-example', cloze(example, item.word)));
+    if (mode === 'context') {
+      const picked = pickExample(item, reviewCount(state.log, item.word));
+      if (picked) {
+        if (!flipped) {
+          card.append(el('p', 'ev-context-sentence', picked.cloze.text));
+          const sourcePath = picked.source?.path ? resolveExampleSourcePath(item.path, picked.source.path) : null;
+          if (sourcePath) {
+            const source = button(picked.source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), 'ev-link-button');
+            source.title = t.openSource;
+            source.disabled = !controls.canOpenReadingDocument?.();
+            card.append(source);
+          } else if (picked.source?.path) {
+            card.append(el('p', 'ev-source', picked.source.title || picked.source.path));
+          } else if (picked.source?.url) {
+            card.append(el('p', 'ev-source', picked.source.url));
+          }
+          card.append(button(t.answer, () => { controls.cancelSpeech?.(); flipped = true; rerender(); }));
+        } else {
+          card.append(el('h3', 'ev-review-word', item.word));
+          const phonetic = item.phonetic || phonetics.get(item.word);
+          if (phonetic) card.append(el('p', 'ev-reading-phonetic', `/${phonetic}/`));
+          if (!item.phonetic && !phonetics.has(item.word) && controls.lookupDictionary) {
+            phonetics.set(item.word, '');
+            Promise.resolve(controls.lookupDictionary(item.word)).then((result) => {
+              phonetics.set(item.word, result?.entry?.p ?? '');
+              rerender();
+            }).catch(() => undefined);
+          }
+          card.append(el('p', 'ev-definition', item.definition));
+          const sentence = el('p', 'ev-context-answer');
+          appendHighlightedSentence(sentence, picked.sentence, picked.cloze.hits);
+          card.append(sentence);
+          const speak = button(t.speakSentence, () => controls.speakSentence?.(picked.sentence));
+          speak.disabled = !controls.hasEnglishVoice?.();
+          card.append(speak, ratingRow());
+        }
+      } else if (!flipped) {
+        card.append(el('p', 'ev-definition', item.definition), el('p', 'ev-note', t.noExampleYet), button(t.answer, () => { controls.cancelSpeech?.(); flipped = true; rerender(); }));
+      } else {
+        card.append(el('h3', 'ev-review-word', item.word), el('p', 'ev-definition', item.definition), ratingRow());
+      }
+    } else if (mode === 'flip') {
+      card.append(el('h3', 'ev-review-word', item.word));
+      const example = clozedExampleText(item);
+      if (example) card.append(el('p', 'ev-example', example));
       if (flipped) card.append(el('p', 'ev-definition', item.definition), ratingRow());
-      else card.append(button(t.answer, () => { flipped = true; rerender(); }));
+      else card.append(button(t.answer, () => { controls.cancelSpeech?.(); flipped = true; rerender(); }));
     } else {
-      card.append(el('p', 'ev-definition', item.definition), el('p', '', cloze(example, item.word)));
+      const example = clozedExampleText(item);
+      card.append(el('p', 'ev-definition', item.definition));
+      if (example) card.append(el('p', 'ev-example', example));
       const input = el('input', 'ev-input');
       input.placeholder = t.spellingPlaceholder;
       const submit = () => review(input.value.trim().toLowerCase() === item.word ? 'Good' : 'Again');

@@ -44,6 +44,17 @@ describe('ui text', () => {
         text.dictionaryTitle,
         text.dictionaryNotReviewed('reason'),
         text.dictionaryNotReviewed(''),
+        text.context,
+        text.noExampleYet,
+        text.openSource,
+        text.speakSentence,
+        text.addAsExample,
+        text.exampleAdded,
+        text.exampleExists,
+        text.exampleCancelled,
+        text.exampleNotReviewed('reason'),
+        text.exampleNotReviewed(''),
+        text.addExampleDescription('alpha'),
       ];
       expect(rendered.every(Boolean)).toBe(true);
     }

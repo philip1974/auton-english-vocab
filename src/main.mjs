@@ -8,10 +8,26 @@ import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mj
 import { DEFAULT_LEVEL_SETTINGS, detectEnglish } from './reading-level.mjs';
 import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
 import { inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
-import { buildNote, slugFor } from './note-format.mjs';
+import { appendExample, buildNote, parseNote, slugFor } from './note-format.mjs';
+import { parseExampleLine } from './context-cloze.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
 const emptyReview = () => ({ version: 1, cards: {}, flags: {} });
+const REVIEW_MODES = new Set(['context', 'flip', 'reverse', 'listening']);
+
+function normalizedSentence(value) {
+  return String(value ?? '').trim().replace(/\s+/gu, ' ');
+}
+
+function proposalError(error) {
+  return String(error?.message ?? error?.code ?? error ?? 'proposal failed');
+}
+
+function readingSource(source) {
+  if (source?.path) return { path: source.path, title: source.title };
+  if (source?.url) return { url: source.url, title: source.title };
+  return null;
+}
 
 export default class EnglishVocabPlugin extends BasePlugin {
   async onload() {
@@ -26,6 +42,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       highlight: true,
       lookupAnyWord: true,
       lookupNoticeShown: false,
+      reviewMode: null,
       levelSettings: DEFAULT_LEVEL_SETTINGS,
       recommendations: null,
       recommendationLoading: null,
@@ -76,13 +93,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
       onFlag: (word, flag) => this.setFlag(word, flag),
       notify: (message) => this.notice(message),
       hasEnglishVoice: () => typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices().some((voice) => /^en\b/i.test(voice.lang)),
-      speak: (word) => {
-        if (typeof speechSynthesis === 'undefined') return;
-        speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(word);
-        utterance.lang = 'en-US';
-        speechSynthesis.speak(utterance);
-      },
+      speak: (word) => this.speakEnglish(word),
+      speakSentence: (sentence) => this.speakEnglish(sentence),
+      cancelSpeech: () => this.cancelSpeech(),
+      onReviewModeChange: (mode) => this.setReviewMode(mode),
       onHighlightChange: (value) => this.setHighlight(value),
       onLookupAnyWordChange: (value) => this.setLookupAnyWord(value),
       onLevelSettingsChange: (settings) => this.setLevelSettings(settings),
@@ -101,11 +115,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.state.highlight = data?.highlight !== false;
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
+      this.state.reviewMode = REVIEW_MODES.has(data?.reviewMode) ? data.reviewMode : null;
       this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
       this.state.lookupNoticeShown = false;
+      this.state.reviewMode = null;
       this.state.levelSettings = DEFAULT_LEVEL_SETTINGS;
     }
   }
@@ -118,6 +134,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       lookupAnyWord: this.state.lookupAnyWord,
       levelSettings: this.state.levelSettings,
       lookupNoticeShown: this.state.lookupNoticeShown,
+      reviewMode: this.state.reviewMode,
       ...patch,
     };
     await this.saveData?.(next);
@@ -134,6 +151,34 @@ export default class EnglishVocabPlugin extends BasePlugin {
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();
+  }
+
+  cancelSpeech() {
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+  }
+
+  speakEnglish(text) {
+    if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return false;
+    const voice = speechSynthesis.getVoices().find((item) => /^en\b/i.test(item.lang));
+    if (!voice) return false;
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = voice;
+    utterance.lang = voice.lang || 'en-US';
+    speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  async setReviewMode(mode) {
+    if (!REVIEW_MODES.has(mode)) return false;
+    this.state.reviewMode = mode;
+    try {
+      await this.savePreferences({ reviewMode: mode });
+    } catch {
+      return false;
+    }
+    this.emitState();
+    return true;
   }
 
   async refreshIndex() {
@@ -286,6 +331,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         lookupDictionary: (word) => this.lookupDictionary(word),
         onCollectWord: (result, context) => this.collectDictionaryWord(result, context),
         onExplainWord: (word, context) => this.explainDictionaryWord(word, context),
+        onAddExample: (word, context) => this.addExampleSentence(word, context),
       });
       this.readingHandle = this.addReadingDecoration
         ? this.addReadingDecoration(spec)
@@ -458,6 +504,32 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   suggestDictionary(prefix, n) {
     return suggest(prefix, n);
+  }
+
+  async addExampleSentence(word, context = {}) {
+    const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
+    if (!entry?.path || !context.sentence) return { outcome: 'aborted', summary: 'missing vocabulary entry or sentence' };
+    let document;
+    try {
+      document = await this.app.knowledge.readDocument({ path: entry.path });
+    } catch (error) {
+      return { outcome: 'aborted', summary: proposalError(error) };
+    }
+    if (document?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(document.error) };
+    const parsed = parseNote(document.content);
+    if (!parsed.ok) return { outcome: 'aborted', summary: parsed.error };
+    const target = normalizedSentence(context.sentence);
+    const duplicate = parsed.entry.examples.some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
+    if (duplicate) return { outcome: 'exists', summary: this.t.exampleExists };
+    const newContent = appendExample(document.content, context.sentence, readingSource(context.source));
+    if (newContent === document.content) return { outcome: 'exists', summary: this.t.exampleExists };
+    const receipt = await this.app.knowledge.propose({
+      description: this.t.addExampleDescription(word),
+      changes: [{ path: entry.path, newContent }],
+    });
+    if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(receipt.error) };
+    if (receipt?.outcome === 'applied') await this.refreshIndex();
+    return receipt;
   }
 
   async collectDictionaryWord(result, context = {}) {

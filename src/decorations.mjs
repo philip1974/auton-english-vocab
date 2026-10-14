@@ -1,6 +1,7 @@
 import { familiarityFor } from './familiarity.mjs';
 import { buildSurfaceMap } from './inflections.mjs';
 import { uiText } from './ui-text.mjs';
+import { parseExampleLine } from './context-cloze.mjs';
 
 const TONE_BY_FAMILIARITY = {
   new: 'learning',
@@ -31,6 +32,15 @@ function ratingButton(text, rating, onClick, className = '') {
 
 function entryMap(entries) {
   return new Map((entries ?? []).map((entry) => [entry.word, entry]));
+}
+
+function normalizedSentence(value) {
+  return String(value ?? '').trim().replace(/\s+/gu, ' ');
+}
+
+function hasExample(entry, sentence) {
+  const target = normalizedSentence(sentence);
+  return (entry?.examples ?? []).some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
 }
 
 function dictionaryLineGroups(entry, locale) {
@@ -77,7 +87,7 @@ export function buildReadingTerms({ entries = [], review = { cards: {}, flags: {
   return terms.sort((a, b) => a.surface.localeCompare(b.surface) || a.key.localeCompare(b.key));
 }
 
-export function createReadingDecorationSpec({ locale = 'en', getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord }) {
+export function createReadingDecorationSpec({ locale = 'en', getState, onReview, onUndo, onTermsChanged, speak, lookupDictionary, onCollectWord, onExplainWord, onAddExample }) {
   const t = uiText(locale);
   return {
     id: 'english-vocab',
@@ -123,6 +133,20 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
           }, 'ev-reading-again'),
           speakButton,
         );
+        if (entry && context.sentence && onAddExample && !hasExample(entry, context.sentence)) {
+          const status = el('p', 'ev-reading-note');
+          const addExample = button(t.addAsExample, async () => {
+            addExample.disabled = true;
+            const receipt = await onAddExample(context.key, context).catch(() => null);
+            if (receipt?.outcome === 'applied') status.textContent = t.exampleAdded;
+            else if (receipt?.outcome === 'exists') status.textContent = t.exampleExists;
+            else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.exampleCancelled;
+            else status.textContent = t.exampleNotReviewed(receipt?.reason);
+          });
+          addExample.dataset.role = 'add-example';
+          actions.append(addExample);
+          card.append(status);
+        }
         card.append(actions);
         if (rated) {
           const note = el('p', 'ev-reading-note', rated === 'good' ? t.readingMarkedKnown : t.readingMarkedLearning);

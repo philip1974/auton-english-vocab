@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest';
+import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath, surfacesFor } from '../src/context-cloze.mjs';
+
+describe('context cloze', () => {
+  it('should parse markdown source when example line has a path source', () => {
+    expect(parseExampleLine('She was running late. — [Daily\\[Run\\]](../sources/run.md)')).toEqual({
+      sentence: 'She was running late.',
+      source: { title: 'Daily[Run]', path: '../sources/run.md' },
+    });
+  });
+
+  it('should parse url source when example line has an angle url source', () => {
+    expect(parseExampleLine('She ran home. — <https://example.com/run>')).toEqual({
+      sentence: 'She ran home.',
+      source: { url: 'https://example.com/run' },
+    });
+  });
+
+  it('should keep sentence dash text when example line has no source syntax', () => {
+    expect(parseExampleLine('A pause — not a source.')).toEqual({
+      sentence: 'A pause — not a source.',
+      source: null,
+    });
+    expect(parseExampleLine(null)).toEqual({ sentence: '', source: null });
+    expect(parseExampleLine('- Run now.')).toEqual({ sentence: 'Run now.', source: null });
+  });
+
+  it('should resolve example source path when source stays inside readable markdown roots', () => {
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', 'wiki/source.md')).toBe('wiki/source.md');
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', '../sources/run.md')).toBe('wiki/sources/run.md');
+    expect(resolveExampleSourcePath('docs/vocab/run.md', './source.md')).toBe('docs/vocab/source.md');
+  });
+
+  it('should reject example source path when source escapes readable markdown roots', () => {
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', '../../secret.md')).toBeNull();
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', '../sources/run.txt')).toBeNull();
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', '/tmp/run.md')).toBeNull();
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', '')).toBeNull();
+    expect(resolveExampleSourcePath('wiki/vocab/run.md', 'wiki/../../secret.md')).toBeNull();
+    expect(resolveExampleSourcePath('', '../secret.md')).toBeNull();
+  });
+
+  it('should include comparative surfaces when entry has adjective pos', () => {
+    expect(surfacesFor({ word: 'big', pos: 'adjective' })).toEqual(expect.arrayContaining(['big', 'bigger', 'biggest']));
+    expect(surfacesFor({ word: 'quick' })).not.toContain('quicker');
+    expect(surfacesFor({ word: 'quick', pos: 'adjective' })).toContain('quicker');
+  });
+
+  it('should cloze whole inflected word surfaces when sentence contains matching tokens', () => {
+    expect(clozeSentence('Run, she ran while running studies.', { word: 'run' }).text).toBe('_____, she _____ while _____ studies.');
+    expect(clozeSentence('She studies daily.', { word: 'study' }).text).toBe('She _____ daily.');
+    expect(clozeSentence('A rerun is not run.', { word: 'run' }).text).toBe('A rerun is not _____.');
+  });
+
+  it('should not cloze apostrophe tokens or unrelated words when they are not exact surfaces', () => {
+    expect(clozeSentence("Don't stop the runner.", { word: 'do' }).text).toBe("Don't stop the runner.");
+    expect(clozeSentence('Nothing to see.', { word: 'run' }).hits).toEqual([]);
+  });
+
+  it('should pick examples by review log count after filtering unusable examples', () => {
+    const entry = {
+      word: 'run',
+      examples: [
+        'No target here.',
+        'She was running late. — [Read](wiki/read.md)',
+        'Yesterday I ran home.',
+      ],
+    };
+    expect(pickExample(entry, 0)?.sentence).toBe('She was running late.');
+    expect(pickExample(entry, 1)?.sentence).toBe('Yesterday I ran home.');
+    expect(pickExample(entry, 2)?.sentence).toBe('She was running late.');
+    expect(pickExample({ word: 'run', examples: ['No target here.'] }, 0)).toBeNull();
+  });
+
+  it('should truncate long cloze sentences on token boundaries after clozing target tokens', () => {
+    const before = 'alpha '.repeat(45);
+    const after = ' omega'.repeat(45);
+    const result = clozeSentence(`${before}running${after}`, { word: 'run' }, { maxLength: 120 });
+    expect(result.text).toContain('_____');
+    expect(result.text).not.toContain('running');
+    expect(result.text).not.toMatch(/\b(?:run|runni|runnin|running)\b/i);
+    expect(result.text.length).toBeLessThanOrEqual(120);
+  });
+
+  it('should keep the full cloze sentence when distant hits cannot fit one safe window', () => {
+    const middle = ' middle'.repeat(80);
+    const result = clozeSentence(`Run${middle} while running.`, { word: 'run' }, { maxLength: 80 });
+    expect(result.text).toBe(`_____${middle} while _____.`);
+    expect(result.hits).toHaveLength(2);
+  });
+
+  it('should keep a cloze intact when a tiny window cannot end on token boundaries', () => {
+    expect(clozeSentence('running', { word: 'run' }, { maxLength: 1 }).text).toBe('_____');
+    expect(clozeSentence(null, { word: 'run' }).text).toBe('');
+  });
+
+  it('should use safe defaults when example list and review count are absent or invalid', () => {
+    expect(pickExample({ word: 'run' })).toBeNull();
+    expect(pickExample({ word: 'run', examples: ['Run one.', 'Run two.'] }, -1)?.sentence).toBe('Run two.');
+    expect(pickExample({ word: 'run', examples: ['Run one.'] }, 'invalid')?.sentence).toBe('Run one.');
+  });
+});

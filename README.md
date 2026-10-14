@@ -7,7 +7,7 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
 ## 功能 / Features
 
 - 右侧面板 `English Vocab`：今日复习、生词本搜索、熟悉度标记、忽略与恢复。
-- 三种复习形式：翻卡、反向拼写、听音拼写。听音拼写会先调用 `speechSynthesis.cancel()`，因此会打断正在进行的朗读；没有英语声音时会禁用。
+- 四种复习形式：语境、翻卡、反向拼写、听音拼写。语境模式优先显示笔记中的例句并整词挖空；听音拼写会先调用 `speechSynthesis.cancel()`，因此会打断正在进行的朗读；没有英语声音时会禁用。
 - 选区动作「收为生词」支持 reading 和 web 两个 surface，会把请求追加到 Auton Knowledge 对话框，由 Agent 调用 `vocab_add`。网页里的右键收词需要开启了选区共享的网页面板，例如 Browser Panel 0.7.0 或更新。
 - 正文标色与点词卡片：在阅读正文里标出已收的词；点击后显示释义、例句、熟悉度、朗读按钮，并可直接标记「认识 / 不认识」。
 - 离线词典：点正文里任意英文词即可查 ECDICT 释义，支持 `ran → run` 这类变形还原，并可通过审阅提案一键收进生词本。
@@ -16,9 +16,19 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
   - `vocab_lookup { word }`
   - `vocab_add { entries }`
 
+## 语境复习 / Context review
+
+语境模式会从生词笔记的 `Examples` 中按复习日志轮换例句，并把目标词及其变形按完整单词替换为固定长度的 `_____`。正面只显示挖空后的句子和可用的文章来源；翻面显示单词、音标、释义、目标词高亮后的完整句子，以及整句朗读和 FSRS 四档评分。没有可用例句时，正面退回到“看义想词”，不会显示答案。
+
+在阅读正文中点击已收录词时，如果当前句子尚未出现在该词的例句里，卡片会显示「加为例句」。插件会即时重读最新笔记，并通过 `knowledge.propose` 提交追加内容供用户审阅；它不会直接写入知识库。相对来源路径只在解析到 `wiki/` 或 `docs/` 下的 Markdown 文档时才可打开。
+
+Context mode rotates usable examples according to the word's review-log count and replaces the target word and its inflections as whole tokens with a fixed `_____`. The front shows only the cloze sentence and an available reading source. The back shows the word, phonetic, definition, the full sentence with highlighted matches, sentence speech, and the same four FSRS ratings. Words without a usable example fall back to a definition prompt without revealing the answer.
+
+For a collected word in reading text, the word card offers “Add as example” when the current sentence is new. The plugin rereads the latest note and submits the appended content through `knowledge.propose` for review; it never writes the note directly. Relative source paths open only after resolving to a Markdown document under `wiki/` or `docs/`.
+
 ## 离线词典 / Offline dictionary
 
-0.4.0 随插件目录提交 `dict/a.mjs` 到 `dict/z.mjs`，运行时按首字母用 `import(new URL("./dict/<letter>.mjs", import.meta.url).href)` 懒加载，不联网，也不把词典打进 `main.mjs`。`dict/manifest.json` 只用于测试和审阅，运行时不读取。当前 `dict/` 约 11 MB，`main.mjs` 约 508 KB；安装插件时需要宿主把 `dict/` 文件夹连同 `main.mjs` 一起复制。
+0.5.0 随插件目录提交 `dict/a.mjs` 到 `dict/z.mjs`，运行时按首字母用 `import(new URL("./dict/<letter>.mjs", import.meta.url).href)` 懒加载，不联网，也不把词典打进 `main.mjs`。`dict/manifest.json` 只用于测试和审阅，运行时不读取。当前 `dict/` 约 11 MB；安装插件时需要宿主把 `dict/` 文件夹连同 `main.mjs` 一起复制。
 
 阅读宿主若支持 `ReadingDecorationHandle.setLookupAnyWord(enabled)`，面板里的「点任意词查词典」默认开启。首次启用时会提示：现在点正文里任意英文词即可查词典，可在生词本面板关闭。旧宿主没有这个 API 时会自动降级：不会接管未装饰词点击，但已收录词卡片下方的词典区和面板查词框仍可用。
 

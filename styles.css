@@ -235,6 +235,26 @@
   font-weight: 600;
 }
 
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-sentence,
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-answer {
+  overflow-wrap: anywhere;
+  color: var(--agent-color-text-primary, inherit);
+  font-size: var(--agent-typography-size-md, 15px);
+  line-height: 1.55;
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-hit {
+  padding: 1px 2px;
+  color: inherit;
+  background: var(--agent-color-accent-subtle, transparent);
+}
+
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-source {
+  overflow-wrap: anywhere;
+  color: var(--agent-color-text-muted, currentColor);
+  font-size: var(--agent-typography-size-sm, 13px);
+}
+
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-rating {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -355,6 +375,10 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+
+.ev-reading-card .ev-reading-actions {
+  flex-wrap: wrap;
 }
 
 .ev-reading-card .ev-reading-heading {
