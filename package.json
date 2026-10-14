@@ -1,0 +1,22 @@
+{
+  "name": "auton-english-vocab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "English vocabulary runtime plugin for Auton Knowledge.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "check": "node build.mjs --check && vitest run --coverage"
+  },
+  "dependencies": {
+    "ts-fsrs": "5.2.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.1.6",
+    "esbuild": "0.25.12",
+    "jsdom": "26.1.0",
+    "vitest": "4.1.6"
+  }
+}

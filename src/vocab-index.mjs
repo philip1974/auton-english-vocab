@@ -1,0 +1,90 @@
+import { parseNote } from './note-format.mjs';
+
+const VOCAB_PATH = /^wiki\/vocab\/[^/]+\.md$/;
+const sleep = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+function unwrap(result) {
+  if (result && result._tag === 'Err') throw new Error(String(result.error ?? 'knowledge error'));
+  return result;
+}
+
+export class VocabIndex {
+  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined } = {}) {
+    this.knowledge = knowledge;
+    this.batchSize = batchSize;
+    this.onProgress = onProgress;
+    this.onUpdate = onUpdate;
+    this.cache = new Map();
+    this.entries = new Map();
+    this.invalid = [];
+    this.refreshing = null;
+    this.pending = false;
+  }
+
+  async refresh() {
+    if (this.refreshing) {
+      this.pending = true;
+      return this.refreshing;
+    }
+    this.refreshing = (async () => {
+      let result;
+      do {
+        this.pending = false;
+        result = await this.refreshOnce();
+      } while (this.pending);
+      return result;
+    })();
+    try {
+      return await this.refreshing;
+    } finally {
+      this.refreshing = null;
+    }
+  }
+
+  async refreshOnce() {
+    const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
+    this.invalid = [];
+    const live = new Set(metas.map((meta) => meta.path));
+    for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
+    let done = 0;
+    for (let i = 0; i < metas.length; i += this.batchSize) {
+      const batch = metas.slice(i, i + this.batchSize);
+      for (const meta of batch) {
+        const hash = meta.revision?.contentHash ?? '';
+        const cached = this.cache.get(meta.path);
+        if (cached?.hash !== hash) {
+          try {
+            const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
+            this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
+          } catch (error) {
+            this.cache.set(meta.path, { hash, meta, parsed: { ok: false, error: error instanceof Error ? error.message : String(error) } });
+          }
+        }
+        done += 1;
+        this.onProgress(done, metas.length);
+        const partial = this.rebuild();
+        this.onUpdate(partial);
+      }
+      if (i + this.batchSize < metas.length) await sleep();
+    }
+    return this.rebuild();
+  }
+
+  rebuild() {
+    this.entries = new Map();
+    this.invalid = [];
+    for (const [path, item] of this.cache.entries()) {
+      if (!item.parsed.ok) {
+        this.invalid.push({ path, error: item.parsed.error });
+        continue;
+      }
+      const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
+      if (!this.entries.has(entry.word)) this.entries.set(entry.word, entry);
+    }
+    return { entries: [...this.entries.values()], invalid: this.invalid };
+  }
+
+  get(word) {
+    return this.entries.get(String(word).toLowerCase());
+  }
+}

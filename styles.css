@@ -1,0 +1,109 @@
+.english-vocab-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 12px;
+  color: var(--text-normal, #202124);
+  background: var(--background-primary, #ffffff);
+}
+
+.english-vocab-panel h2,
+.english-vocab-panel h3,
+.english-vocab-panel p {
+  margin: 0;
+}
+
+.ev-tabs,
+.ev-mode,
+.ev-rating {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ev-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.ev-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ev-button {
+  min-height: 30px;
+  border: 1px solid var(--background-modifier-border, #c8cdd3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: inherit;
+  background: var(--background-secondary, #f6f7f8);
+  cursor: pointer;
+}
+
+.ev-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ev-button[aria-pressed="true"] {
+  border-color: var(--interactive-accent, #2f6fed);
+  background: color-mix(in srgb, var(--interactive-accent, #2f6fed) 12%, transparent);
+}
+
+.ev-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--background-modifier-border, #c8cdd3);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.ev-definition {
+  font-weight: 600;
+}
+
+.ev-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--background-modifier-border, #c8cdd3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: inherit;
+  background: var(--background-primary, #ffffff);
+}
+
+.ev-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.ev-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) 2fr auto;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--background-modifier-border, #c8cdd3);
+  padding: 8px 0;
+}
+
+.ev-row .ev-button {
+  min-height: 26px;
+}
+
+.ev-warning,
+.ev-note,
+.ev-empty {
+  color: var(--text-muted, #5f6368);
+}
