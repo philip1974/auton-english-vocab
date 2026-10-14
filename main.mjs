@@ -1679,6 +1679,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async refreshIndex() {
     if (!this.index) return;
+    if (this.reviewStore !== null && await this.rootMoved()) {
+      this.state.review = await this.reviewStore.reloadForRootChange();
+      this.state.log = this.reviewStore.log;
+    }
     try {
       const result = await this.index.refresh();
       this.state.entries = result.entries;
@@ -1686,6 +1690,14 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } finally {
       this.state.loading = null;
       this.emitState();
+    }
+  }
+  async rootMoved() {
+    try {
+      const { rootGeneration } = await this.app.storage.scope();
+      return rootGeneration !== this.reviewStore.rootGeneration;
+    } catch {
+      return false;
     }
   }
   async handleRootChanged() {

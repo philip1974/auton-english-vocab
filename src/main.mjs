@@ -74,6 +74,12 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   async refreshIndex() {
     if (!this.index) return;
+    // A root switch always rebuilds the index; re-check the root here too, so a missed
+    // root-changed event cannot leave the old root's progress on screen.
+    if (this.reviewStore !== null && await this.rootMoved()) {
+      this.state.review = await this.reviewStore.reloadForRootChange();
+      this.state.log = this.reviewStore.log;
+    }
     try {
       const result = await this.index.refresh();
       this.state.entries = result.entries;
@@ -81,6 +87,15 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } finally {
       this.state.loading = null;
       this.emitState();
+    }
+  }
+
+  async rootMoved() {
+    try {
+      const { rootGeneration } = await this.app.storage.scope();
+      return rootGeneration !== this.reviewStore.rootGeneration;
+    } catch {
+      return false;
     }
   }
 

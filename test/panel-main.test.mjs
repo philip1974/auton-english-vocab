@@ -400,6 +400,27 @@ describe('main plugin', () => {
     await expect(app.tools.get('vocab_lookup').run({ word: 'alpha' })).resolves.toContain('2031-01-01');
   });
 
+  it('should reload review progress for the new root when the index changes after a root switch without a root-changed event', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let generation = 'root-a';
+    const byRoot = { 'root-a': JSON.stringify({ version: 1, cards: { alpha: { state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' } }, flags: {} }) };
+    app.storage.scope = async () => ({ rootGeneration: generation });
+    app.storage.read = async (root, name) => {
+      if (root !== generation) throw Object.assign(new Error('changed'), { code: 'ROOT_CHANGED' });
+      return name === 'review.json' && byRoot[root] ? { found: true, text: byRoot[root], revision: 'r' } : { found: false };
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(Object.keys(plugin.state.review.cards)).toEqual(['alpha']);
+
+    generation = 'root-b';
+    await app.events.find((event) => event.name === 'knowledge.index-changed').listener({ status: null });
+
+    expect(plugin.state.review.cards).toEqual({});
+  });
+
   it('should not register dependent capabilities when host APIs are missing', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
