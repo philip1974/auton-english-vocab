@@ -25,6 +25,33 @@ function reviewCount(log, word) {
   return (log ?? []).filter((item) => item?.word === word).length;
 }
 
+/** The "From <article>" line under a context sentence: a link when the host can open it, text otherwise. */
+function contextSourceRow(source, notePath, controls, t) {
+  if (!source) return null;
+  const row = el('div', 'ev-context-source');
+  row.append(el('span', 'ev-context-source-label', t.sourceLabel));
+  const sourcePath = source.path ? resolveExampleSourcePath(notePath, source.path) : null;
+  if (sourcePath && controls.canOpenReadingDocument?.()) {
+    const link = button(source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), 'ev-context-source-link');
+    link.title = t.openSource;
+    row.append(link);
+    return row;
+  }
+  if (source.path) {
+    row.append(el('span', 'ev-context-source-text', source.title || source.path));
+    return row;
+  }
+  if (source.url) {
+    let host = source.url;
+    try { host = new URL(source.url).hostname || source.url; } catch { /* keep the raw url */ }
+    const text = el('span', 'ev-context-source-text', host);
+    text.title = source.url;
+    row.append(text);
+    return row;
+  }
+  return null;
+}
+
 function visibleExample(entry) {
   for (const line of entry?.examples ?? []) {
     const parsed = parseExampleLine(line);
@@ -165,17 +192,8 @@ export function renderPanel(container, controls) {
       if (picked) {
         if (!flipped) {
           card.append(el('p', 'ev-context-sentence', picked.cloze.text));
-          const sourcePath = picked.source?.path ? resolveExampleSourcePath(item.path, picked.source.path) : null;
-          if (sourcePath) {
-            const source = button(picked.source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), 'ev-link-button');
-            source.title = t.openSource;
-            source.disabled = !controls.canOpenReadingDocument?.();
-            card.append(source);
-          } else if (picked.source?.path) {
-            card.append(el('p', 'ev-source', picked.source.title || picked.source.path));
-          } else if (picked.source?.url) {
-            card.append(el('p', 'ev-source', picked.source.url));
-          }
+          const sourceRow = contextSourceRow(picked.source, item.path, controls, t);
+          if (sourceRow) card.append(sourceRow);
           card.append(button(t.answer, () => { controls.cancelSpeech?.(); flipped = true; rerender(); }));
         } else {
           card.append(el('h3', 'ev-review-word', item.word));

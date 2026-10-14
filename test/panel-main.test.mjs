@@ -162,6 +162,36 @@ describe('panel', () => {
     expect(cancelSpeech).toHaveBeenCalled();
   });
 
+  it('should render the context source as a labelled link when the article can be opened', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      openReadingDocument: vi.fn(),
+      canOpenReadingDocument: () => true,
+    });
+    const row = container.querySelector('.ev-context-source');
+    expect(row?.querySelector('.ev-context-source-label')?.textContent).toBe('出自');
+    const link = row?.querySelector('button.ev-context-source-link');
+    expect(link?.textContent).toBe('Daily');
+    expect(link?.getAttribute('title')).toBe('打开来源');
+  });
+
+  it('should render the context source as plain text when the host cannot open documents', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+      canOpenReadingDocument: () => false,
+    });
+    expect(container.querySelector('.ev-context-source button')).toBeNull();
+    expect(container.querySelector('.ev-context-source-text')?.textContent).toBe('Daily');
+  });
+
   it('should show definition without leaking the word when selected context mode has no usable example', () => {
     const container = document.createElement('div');
     renderPanel(container, {
@@ -190,7 +220,8 @@ describe('panel', () => {
       speakSentence,
       hasEnglishVoice: () => true,
     });
-    expect(container.querySelector('.ev-source')?.textContent).toBe('https://example.com/run');
+    expect(container.querySelector('.ev-context-source-text')?.textContent).toBe('example.com');
+    expect(container.querySelector('.ev-context-source-text')?.getAttribute('title')).toBe('https://example.com/run');
     [...container.querySelectorAll('button')].find((node) => node.textContent === '答案').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector('.ev-reading-phonetic')?.textContent).toBe('/rʌn/');
@@ -209,7 +240,7 @@ describe('panel', () => {
       canOpenReadingDocument: () => true,
       hasEnglishVoice: () => true,
     });
-    expect(container.querySelector('.ev-source')?.textContent).toBe('Outside');
+    expect(container.querySelector('.ev-context-source-text')?.textContent).toBe('Outside');
     expect([...container.querySelectorAll('button')].some((node) => node.textContent === 'Outside')).toBe(false);
   });
 

@@ -40,6 +40,7 @@ var TEXT = {
     context: "Context",
     noExampleYet: "This word does not have an example yet.",
     openSource: "Open source",
+    sourceLabel: "From",
     speakSentence: "Read sentence aloud",
     addAsExample: "Add as example",
     exampleAdded: "Added.",
@@ -144,6 +145,7 @@ var TEXT = {
     context: "语境",
     noExampleYet: "这个词还没有例句",
     openSource: "打开来源",
+    sourceLabel: "出自",
     speakSentence: "朗读整句",
     addAsExample: "加为例句",
     exampleAdded: "已加入",
@@ -248,6 +250,7 @@ var TEXT = {
     context: "文脈",
     noExampleYet: "この単語にはまだ例文がありません。",
     openSource: "出典を開く",
+    sourceLabel: "出典",
     speakSentence: "文を読み上げる",
     addAsExample: "例文に追加",
     exampleAdded: "追加しました。",
@@ -352,6 +355,7 @@ var TEXT = {
     context: "문맥",
     noExampleYet: "이 단어에는 아직 예문이 없습니다.",
     openSource: "출처 열기",
+    sourceLabel: "출처",
     speakSentence: "문장 읽기",
     addAsExample: "예문으로 추가",
     exampleAdded: "추가했습니다.",
@@ -1953,6 +1957,34 @@ function button(text, onClick, className = "") {
 function reviewCount(log, word) {
   return (log ?? []).filter((item) => item?.word === word).length;
 }
+function contextSourceRow(source, notePath, controls, t) {
+  if (!source) return null;
+  const row = el("div", "ev-context-source");
+  row.append(el("span", "ev-context-source-label", t.sourceLabel));
+  const sourcePath = source.path ? resolveExampleSourcePath(notePath, source.path) : null;
+  if (sourcePath && controls.canOpenReadingDocument?.()) {
+    const link = button(source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), "ev-context-source-link");
+    link.title = t.openSource;
+    row.append(link);
+    return row;
+  }
+  if (source.path) {
+    row.append(el("span", "ev-context-source-text", source.title || source.path));
+    return row;
+  }
+  if (source.url) {
+    let host = source.url;
+    try {
+      host = new URL(source.url).hostname || source.url;
+    } catch {
+    }
+    const text = el("span", "ev-context-source-text", host);
+    text.title = source.url;
+    row.append(text);
+    return row;
+  }
+  return null;
+}
 function visibleExample(entry) {
   for (const line of entry?.examples ?? []) {
     const parsed = parseExampleLine(line);
@@ -2083,17 +2115,8 @@ function renderPanel(container, controls) {
       if (picked) {
         if (!flipped) {
           card.append(el("p", "ev-context-sentence", picked.cloze.text));
-          const sourcePath = picked.source?.path ? resolveExampleSourcePath(item.path, picked.source.path) : null;
-          if (sourcePath) {
-            const source = button(picked.source.title || sourcePath, () => controls.openReadingDocument?.(sourcePath), "ev-link-button");
-            source.title = t.openSource;
-            source.disabled = !controls.canOpenReadingDocument?.();
-            card.append(source);
-          } else if (picked.source?.path) {
-            card.append(el("p", "ev-source", picked.source.title || picked.source.path));
-          } else if (picked.source?.url) {
-            card.append(el("p", "ev-source", picked.source.url));
-          }
+          const sourceRow = contextSourceRow(picked.source, item.path, controls, t);
+          if (sourceRow) card.append(sourceRow);
           card.append(button(t.answer, () => {
             controls.cancelSpeech?.();
             flipped = true;
