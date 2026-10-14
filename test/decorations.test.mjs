@@ -317,6 +317,54 @@ describe('reading decorations', () => {
     expect(container.textContent).toContain('已收进生词本');
   });
 
+  it('should pass only url and title when collecting from a web lookup card', async () => {
+    const container = document.createElement('div');
+    const onCollectWord = vi.fn(async () => ({ outcome: 'applied', summary: 'ok' }));
+    const spec = createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [], review: review() }),
+      lookupDictionary: async () => ({ surface: 'serendipity', lemma: 'serendipity', entry: { d: 'a fortunate discovery' } }),
+      onCollectWord,
+    });
+    spec.renderCard(container, {
+      word: 'serendipity',
+      key: 'serendipity',
+      tone: null,
+      sentence: 'It was pure serendipity.',
+      source: { kind: 'web', url: 'https://example.com/article', title: 'Article', ownerPluginId: 'dev.auton.browser-panel' },
+    });
+    await Promise.resolve();
+    container.querySelector('[data-role="collect-dictionary-word"]').click();
+    await Promise.resolve();
+    expect(onCollectWord).toHaveBeenCalledWith(
+      expect.objectContaining({ lemma: 'serendipity' }),
+      expect.objectContaining({ source: { url: 'https://example.com/article', title: 'Article' } }),
+    );
+  });
+
+  it('should pass only url and title when adding an example from a collected web lookup card', async () => {
+    const container = document.createElement('div');
+    const onAddExample = vi.fn(async () => ({ outcome: 'applied', summary: 'ok' }));
+    const spec = createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [entry('alpha')], review: review() }),
+      onAddExample,
+    });
+    spec.renderCard(container, {
+      word: 'alpha',
+      key: 'alpha',
+      tone: 'learning',
+      sentence: 'Alpha appears on the web.',
+      source: { kind: 'web', url: 'https://example.com/alpha', title: 'Alpha page', ownerPluginId: 'dev.auton.browser-panel' },
+    });
+    container.querySelector('[data-role="add-example"]').click();
+    await Promise.resolve();
+    expect(onAddExample).toHaveBeenCalledWith(
+      'alpha',
+      expect.objectContaining({ source: { url: 'https://example.com/alpha', title: 'Alpha page' } }),
+    );
+  });
+
   it('should render dictionary card titles phonetics and definition items as separate elements', async () => {
     const container = document.createElement('div');
     const spec = createReadingDecorationSpec({

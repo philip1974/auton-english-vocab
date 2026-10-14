@@ -912,7 +912,12 @@ describe('main plugin', () => {
     const app = fullApp();
     app.readingDecorations = {
       register() {
-        const handle = { setTerms: vi.fn(() => true), setLookupAnyWord: vi.fn(() => true), dispose: vi.fn() };
+        const handle = {
+          setTerms: vi.fn(() => true),
+          setLookupAnyWord: vi.fn(() => true),
+          setWebLookup: vi.fn(() => true),
+          dispose: vi.fn(),
+        };
         registrations.push(handle);
         return handle;
       },
@@ -922,10 +927,23 @@ describe('main plugin', () => {
     plugin.saveData = async (data) => saved.push(data);
     await plugin.onload();
     expect(registrations[0].setLookupAnyWord).toHaveBeenCalledWith(true);
+    expect(registrations[0].setWebLookup).toHaveBeenCalledWith(true);
     expect(app.notices.some((item) => item.message.includes('任意英文词'))).toBe(true);
     expect(saved.at(-1)).toMatchObject({ custom: 'kept', highlight: true, lookupAnyWord: true, lookupNoticeShown: true });
     await plugin.setLookupAnyWord(false);
+    expect(registrations[0].setWebLookup).toHaveBeenLastCalledWith(false);
     expect(saved.at(-1)).toMatchObject({ custom: 'kept', lookupAnyWord: false, highlight: true });
+  });
+
+  it('should skip web lookup registration when the host does not expose setWebLookup', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const handle = { setTerms: vi.fn(() => true), setLookupAnyWord: vi.fn(() => true), dispose: vi.fn() };
+    app.readingDecorations = { register: vi.fn(() => handle) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await expect(plugin.onload()).resolves.toBeUndefined();
+    expect(handle.setLookupAnyWord).toHaveBeenCalledWith(true);
   });
 
   it('should dispose reading decorations when both highlighting and lookup-any-word are off', async () => {
@@ -1078,6 +1096,82 @@ describe('main plugin', () => {
     expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
     expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });
     expect(proposals).toHaveLength(1);
+  });
+
+  it('should write a web url source when collecting a dictionary word from web lookup', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const proposals = [];
+    app.knowledge.propose = vi.fn(async (proposal) => {
+      proposals.push(proposal);
+      return { outcome: 'applied', summary: 'accepted', paths: proposal.changes.map((change) => change.path) };
+    });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await plugin.collectDictionaryWord(
+      { surface: 'serendipity', lemma: 'serendipity', entry: { t: 'n. 意外发现美好事物', d: 'a fortunate discovery' } },
+      {
+        sentence: 'It was pure serendipity.',
+        source: {
+          kind: 'web',
+          url: 'https://example.com/article',
+          title: 'Article',
+          ownerPluginId: 'dev.auton.browser-panel',
+        },
+      },
+    );
+    expect(proposals[0].changes[0].newContent).toContain('- It was pure serendipity. — <https://example.com/article>');
+  });
+
+  it('should write a web url source when adding an example from web lookup', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const proposals = [];
+    app.knowledge.propose = vi.fn(async (proposal) => {
+      proposals.push(proposal);
+      return { outcome: 'applied', summary: 'added', paths: ['wiki/vocab/alpha.md'] };
+    });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await plugin.addExampleSentence('alpha', {
+      sentence: 'Alpha appears on the web.',
+      source: {
+        kind: 'web',
+        url: 'https://example.com/alpha',
+        title: 'Alpha page',
+        ownerPluginId: 'dev.auton.browser-panel',
+      },
+    });
+    expect(proposals[0].changes[0].newContent).toContain('- Alpha appears on the web. — <https://example.com/alpha>');
+  });
+
+  it('should deduplicate an example by sentence when web source differs', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const content = buildNote({
+      word: 'alpha',
+      definition: '字母',
+      example: 'Alpha appears here.',
+      source: { path: 'wiki/read.md', title: 'Read' },
+    });
+    app.knowledge.readDocument = vi.fn(async ({ path }) => ({
+      meta: { path, title: 'Alpha', revision: { contentHash: 'new', mtimeMs: 2 } },
+      content,
+      headings: [],
+      links: [],
+      citations: [],
+    }));
+    app.knowledge.propose = vi.fn();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.addExampleSentence('alpha', {
+      sentence: 'Alpha appears here.',
+      source: { kind: 'web', url: 'https://example.com/alpha', title: 'Alpha page', ownerPluginId: 'dev.auton.browser-panel' },
+    })).resolves.toMatchObject({ outcome: 'exists' });
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
   });
 
   it('should handle dictionary proposal errors and explain words without a sentence', async () => {

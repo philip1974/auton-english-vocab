@@ -43,6 +43,14 @@ function hasExample(entry, sentence) {
   return (entry?.examples ?? []).some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
 }
 
+function noteActionContext(context) {
+  if (context.source?.kind !== 'web') return context;
+  return {
+    ...context,
+    source: { url: context.source.url, title: context.source.title },
+  };
+}
+
 function dictionaryLineGroups(entry, locale) {
   const zh = String(entry?.t ?? '').split('\n').filter(Boolean);
   const en = String(entry?.d ?? '').split('\n').filter(Boolean);
@@ -137,7 +145,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
           const status = el('p', 'ev-reading-note');
           const addExample = button(t.addAsExample, async () => {
             addExample.disabled = true;
-            const receipt = await onAddExample(context.key, context).catch(() => null);
+            const receipt = await onAddExample(context.key, noteActionContext(context)).catch(() => null);
             if (receipt?.outcome === 'applied') status.textContent = t.exampleAdded;
             else if (receipt?.outcome === 'exists') status.textContent = t.exampleExists;
             else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.exampleCancelled;
@@ -187,7 +195,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
             const status = el('p', 'ev-reading-note');
             const collect = button(t.collectWord, async () => {
               collect.disabled = true;
-              const receipt = await onCollectWord?.(result, context);
+              const receipt = await onCollectWord?.(result, noteActionContext(context));
               if (receipt?.outcome === 'applied') status.textContent = t.dictionaryAdded;
               else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.dictionaryCancelled;
               else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);

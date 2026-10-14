@@ -36,6 +36,12 @@ For a collected word in reading text, the word card offers “Add as example” 
 
 The offline dictionary is shipped as separate lazy-loaded `dict/*.mjs` chunks. Clicking any English word in reading text works on hosts that implement `setLookupAnyWord`; older hosts degrade gracefully to collected-word cards and the panel lookup box. The card/panel “Add word” action always submits a `knowledge.propose` review proposal and never writes notes directly.
 
+## 浏览器面板里查词 / Look up words in the browser panel
+
+在 Browser Panel 0.7 或更新版本中，右键网页上的英文词并选择「查词」，即可打开与阅读正文相同的离线词典卡片。卡片支持释义、朗读、收词和加为例句；收词或加例句通过 `knowledge.propose` 审阅，网页例句的来源写成 `<https://…>`。此功能还需要支持网页查词的 Auton Knowledge；旧宿主没有 `ReadingDecorationHandle.setWebLookup(enabled)` 时，插件会通过能力检测自动跳过，不影响正文查词和其他功能。
+
+With Browser Panel 0.7 or newer, right-click an English word on a web page and choose “Look up” to open the same offline dictionary card used in reading text. The card supports definitions, speech, collecting the word, and adding the sentence as an example. Collection and example changes go through `knowledge.propose`, and web examples store their source as `<https://…>`. This also requires an Auton Knowledge host that supports web lookup; older hosts without `ReadingDecorationHandle.setWebLookup(enabled)` are detected and skipped without affecting reading-text lookup or other features.
+
 ## 正文标色与点词卡片 / Reading highlights and word cards
 
 插件会把生词本里的词条和常见变形提交给宿主的 `readingDecorations` API。宿主负责正文匹配和高亮颜色；插件只提供词表，并在用户点击已标出的词时渲染卡片。
@@ -104,6 +110,7 @@ wiki/vocab/<slug>.md
 - `knowledge.root-changed`
 - 可选：`readingDecorations`、`readingStatus`、`learningSuggestions`、`workspace.scope()`、`workspace.openDocument(path)`
 - 可选：`ReadingDecorationHandle.setLookupAnyWord(enabled)`，用于点未装饰英文词查离线词典。
+- 可选：`ReadingDecorationHandle.setWebLookup(enabled)`，用于在 Browser Panel 0.7+ 里右键网页英文词查词。
 
 如果这些能力缺失，插件只显示「需要 Auton Knowledge 0.3.0 或更新」，不会抛错，也不会注册依赖这些能力的入口。
 

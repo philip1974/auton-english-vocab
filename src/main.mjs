@@ -24,6 +24,9 @@ function proposalError(error) {
 }
 
 function readingSource(source) {
+  if (source?.kind === 'web' && source.url) return { url: source.url, title: source.title };
+  if (source?.kind === 'document' && source.path) return { path: source.path, title: source.title };
+  // Keep accepting pre-discriminated contexts from older hosts.
   if (source?.path) return { path: source.path, title: source.title };
   if (source?.url) return { url: source.url, title: source.title };
   return null;
@@ -345,6 +348,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
         this.savePreferences({ lookupNoticeShown: true }).catch(() => undefined);
       }
     }
+    if (typeof this.readingHandle.setWebLookup === 'function') {
+      this.readingHandle.setWebLookup(this.state.lookupAnyWord !== false);
+    }
     this.updateReadingTerms();
   }
 
@@ -549,7 +555,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       phonetic: entry.p,
       pos: inferPos(entry),
       example: context.sentence,
-      source: context.source,
+      source: readingSource(context.source),
     });
     const receipt = await this.app.knowledge.propose({
       description: this.t.proposalDescription(++this.submission, lemma),

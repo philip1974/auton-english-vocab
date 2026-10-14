@@ -2602,6 +2602,13 @@ function hasExample(entry, sentence) {
   const target = normalizedSentence(sentence);
   return (entry?.examples ?? []).some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
 }
+function noteActionContext(context) {
+  if (context.source?.kind !== "web") return context;
+  return {
+    ...context,
+    source: { url: context.source.url, title: context.source.title }
+  };
+}
 function dictionaryLineGroups2(entry, locale) {
   const zh = String(entry?.t ?? "").split("\n").filter(Boolean);
   const en = String(entry?.d ?? "").split("\n").filter(Boolean);
@@ -2690,7 +2697,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
           const status = el2("p", "ev-reading-note");
           const addExample = button2(t.addAsExample, async () => {
             addExample.disabled = true;
-            const receipt = await onAddExample(context.key, context).catch(() => null);
+            const receipt = await onAddExample(context.key, noteActionContext(context)).catch(() => null);
             if (receipt?.outcome === "applied") status.textContent = t.exampleAdded;
             else if (receipt?.outcome === "exists") status.textContent = t.exampleExists;
             else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.exampleCancelled;
@@ -2740,7 +2747,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
             const status = el2("p", "ev-reading-note");
             const collect = button2(t.collectWord, async () => {
               collect.disabled = true;
-              const receipt = await onCollectWord?.(result, context);
+              const receipt = await onCollectWord?.(result, noteActionContext(context));
               if (receipt?.outcome === "applied") status.textContent = t.dictionaryAdded;
               else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.dictionaryCancelled;
               else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);
@@ -33327,6 +33334,8 @@ function proposalError(error) {
   return String(error?.message ?? error?.code ?? error ?? "proposal failed");
 }
 function readingSource(source) {
+  if (source?.kind === "web" && source.url) return { url: source.url, title: source.title };
+  if (source?.kind === "document" && source.path) return { path: source.path, title: source.title };
   if (source?.path) return { path: source.path, title: source.title };
   if (source?.url) return { url: source.url, title: source.title };
   return null;
@@ -33636,6 +33645,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.savePreferences({ lookupNoticeShown: true }).catch(() => void 0);
       }
     }
+    if (typeof this.readingHandle.setWebLookup === "function") {
+      this.readingHandle.setWebLookup(this.state.lookupAnyWord !== false);
+    }
     this.updateReadingTerms();
   }
   disposeReadingDecorations() {
@@ -33821,7 +33833,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       phonetic: entry.p,
       pos: inferPos(entry),
       example: context.sentence,
-      source: context.source
+      source: readingSource(context.source)
     });
     const receipt = await this.app.knowledge.propose({
       description: this.t.proposalDescription(++this.submission, lemma),

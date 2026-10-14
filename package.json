@@ -1,6 +1,6 @@
 {
   "name": "auton-english-vocab",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "English vocabulary runtime plugin for Auton Knowledge.",
