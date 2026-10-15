@@ -1,5 +1,5 @@
 import { assertEnglishWord, isEnglishWordPrefix, normalizeWord } from './note-format.mjs';
-import { inflectionKindsFor } from './inflections.mjs';
+import { inflectionKindsFor, reliableFormsFor } from './inflections.mjs';
 
 const LETTER_RE = /^[a-z]$/u;
 const cache = new Map();
@@ -251,18 +251,43 @@ export function inferPos(entry) {
   return found.size ? [...found].join(', ') : undefined;
 }
 
-function exchangeForms(word, entry) {
-  const forms = new Set([word]);
-  for (const match of String(entry?.x ?? '').matchAll(/(?:^|\/)(?:s|d|p|i|3|r|t):([^/]+)/gu)) {
-    for (const value of match[1].split(',')) {
-      try { forms.add(assertEnglishWord(value)); } catch { /* Ignore malformed upstream exchange values. */ }
+function exchangeCandidates(entry) {
+  const candidates = [];
+  for (const match of String(entry?.x ?? '').matchAll(/(?:^|\/)(s|d|p|i|3|r|t):([^/]+)/gu)) {
+    for (const value of match[2].split(',')) {
+      try { candidates.push({ kind: match[1], surface: assertEnglishWord(value) }); } catch { /* Ignore malformed upstream exchange values. */ }
     }
+  }
+  return candidates;
+}
+
+function reverseInflectionPointsTo(entry, lemma) {
+  if (exchangeLemma(entry) !== lemma) return false;
+  if (isPureInflection(entry)) return true;
+  return String(entry?.t ?? '').split('\n').filter(Boolean).every((line) => /^\s*pl\.\s/iu.test(line));
+}
+
+async function verifiedForms(word, entry, dictionaryPos, importer) {
+  const reliable = reliableFormsFor(word, { pos: dictionaryPos });
+  const forms = new Set([word, ...reliable]);
+  const ownLemma = exchangeLemma(entry);
+  if (ownLemma && ownLemma !== word) return [...forms];
+  for (const candidate of exchangeCandidates(entry)) {
+    const surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
+    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
+    const independentComparative = ['r', 't'].includes(candidate.kind) && surfaceEntry && !reversed;
+    if (independentComparative) {
+      forms.delete(candidate.surface);
+      continue;
+    }
+    if (reliable.has(candidate.surface) || reversed) forms.add(candidate.surface);
   }
   return [...forms];
 }
 
 export async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
-  return Promise.all(entries.map(async (entry) => {
+  let incomplete = false;
+  const enriched = await Promise.all(entries.map(async (entry) => {
     const word = normalizeWord(entry?.word);
     let dictionaryEntry;
     try {
@@ -279,13 +304,22 @@ export async function enrichVocabularyEntries(entries, { importer = defaultImpor
         dictionaryEntry = await enrichmentCache.get(word);
       } else dictionaryEntry = await entryFor(word, importer);
     } catch {
+      incomplete = true;
       return entry;
     }
     if (!dictionaryEntry) return entry;
-    return {
-      ...entry,
-      dictionaryPos: inferPos(dictionaryEntry),
-      forms: exchangeForms(word, dictionaryEntry),
-    };
+    const dictionaryPos = inferPos(dictionaryEntry);
+    try {
+      return {
+        ...entry,
+        dictionaryPos,
+        forms: await verifiedForms(word, dictionaryEntry, dictionaryPos, importer),
+      };
+    } catch {
+      incomplete = true;
+      return entry;
+    }
   }));
+  Object.defineProperty(enriched, 'incomplete', { value: incomplete, enumerable: false });
+  return enriched;
 }

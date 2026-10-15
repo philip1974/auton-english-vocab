@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ANALYSIS_VERSION, buildLevelCacheEntry, cacheShardNames, LevelCache, scoreCachedEntry } from '../src/level-cache.mjs';
 import { rankMapFromWords } from '../src/rank-candidates.mjs';
+import { enrichVocabularyEntries } from '../src/dictionary.mjs';
 
 function storage() {
   const files = new Map();
@@ -90,6 +91,15 @@ describe('level cache and novel word scoring', () => {
     ];
     const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
     expect(scored).toMatchObject({ novel: 1, topWords: ['ground'] });
+  });
+
+  it('should inherit familiarity only through validated real dictionary forms', async () => {
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('emailed number feeling children went', table, 1);
+    const review = { cards: {}, flags: { email: 'mastered', numb: 'mastered', felt: 'mastered', child: 'mastered', go: 'mastered' } };
+    const entries = await enrichVocabularyEntries(['email', 'numb', 'felt', 'child', 'go'].map((word) => ({ word, definition: 'plain' })));
+    const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
+    expect(scored).toMatchObject({ novel: 2, topWords: ['feeling', 'number'] });
   });
 
   it('should expose only legal cache shard names when persisting split cache files', () => {

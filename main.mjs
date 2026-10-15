@@ -1927,6 +1927,7 @@ var IRREGULAR_NOUNS = new Map(Object.entries({
   analysis: ["analyses"],
   axis: ["axes"],
   crisis: ["crises"],
+  sheep: ["sheep"],
   child: ["children"],
   man: ["men"],
   woman: ["women"],
@@ -2009,11 +2010,21 @@ function partsOf(value) {
   };
   const pos = typeof value === "object" && value !== null ? value.pos : "";
   for (const token of String(pos ?? "").split(/[\s,;/；|]+/u)) add(token);
+  const dictionaryPos = typeof value === "object" && value !== null ? value.dictionaryPos : "";
+  for (const token of String(dictionaryPos ?? "").split(/[\s,;/；|]+/u)) add(token);
   if (parts.size === 0 && typeof value === "object" && value !== null) {
     const definition = String(value.definition ?? "");
     for (const match of definition.matchAll(/(?:^|[;；\n])\s*(vt|vi|v|n|a|adj|adv|verb|noun|adjective|adverb)\./giu)) add(match[1]);
   }
   return parts;
+}
+function reliableFormsFor(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const forms = /* @__PURE__ */ new Set();
+  if (!isSurface(lemma)) return forms;
+  const parts = partsOf(typeof posValue === "object" && posValue !== null ? posValue : { pos: posValue });
+  for (const part of parts) for (const surface of generatedForms(lemma, part)) forms.add(surface);
+  return forms;
 }
 var INFLECTED_VERB_SURFACES = /* @__PURE__ */ new Set([
   ...[...IRREGULAR_VERBS.values()].flat(),
@@ -2535,12 +2546,15 @@ function unwrap(result) {
   return result;
 }
 var VocabIndex = class {
-  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0, enrichEntries = async (entries) => entries } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1e3, 4e3] } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
     this.enrichEntries = enrichEntries;
+    this.enrichmentRetryDelays = enrichmentRetryDelays;
+    this.enrichmentRetryAttempt = 0;
+    this.enrichmentRetryTimer = null;
     this.cache = /* @__PURE__ */ new Map();
     this.entries = /* @__PURE__ */ new Map();
     this.duplicateWords = /* @__PURE__ */ new Set();
@@ -2555,6 +2569,9 @@ var VocabIndex = class {
     this.entries.clear();
     this.duplicateWords.clear();
     this.invalid = [];
+    if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
+    this.enrichmentRetryTimer = null;
+    this.enrichmentRetryAttempt = 0;
     if (this.refreshing) this.pending = true;
   }
   async refresh() {
@@ -2628,7 +2645,19 @@ var VocabIndex = class {
     if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
     this.onUpdate(result);
+    if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
+    else this.enrichmentRetryAttempt = 0;
     return result;
+  }
+  scheduleEnrichmentRetry(generation) {
+    if (this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
+    const delay = this.enrichmentRetryDelays[this.enrichmentRetryAttempt];
+    this.enrichmentRetryAttempt += 1;
+    this.enrichmentRetryTimer = setTimeout(() => {
+      this.enrichmentRetryTimer = null;
+      if (generation !== this.generation) return;
+      this.refresh().catch(() => void 0);
+    }, delay);
   }
   rebuild(readFailures = []) {
     this.entries = /* @__PURE__ */ new Map();
@@ -3026,20 +3055,43 @@ ${String(entry?.d ?? "")}`.split("\n")) {
   }
   return found.size ? [...found].join(", ") : void 0;
 }
-function exchangeForms(word, entry) {
-  const forms = /* @__PURE__ */ new Set([word]);
-  for (const match of String(entry?.x ?? "").matchAll(/(?:^|\/)(?:s|d|p|i|3|r|t):([^/]+)/gu)) {
-    for (const value of match[1].split(",")) {
+function exchangeCandidates(entry) {
+  const candidates = [];
+  for (const match of String(entry?.x ?? "").matchAll(/(?:^|\/)(s|d|p|i|3|r|t):([^/]+)/gu)) {
+    for (const value of match[2].split(",")) {
       try {
-        forms.add(assertEnglishWord(value));
+        candidates.push({ kind: match[1], surface: assertEnglishWord(value) });
       } catch {
       }
     }
   }
+  return candidates;
+}
+function reverseInflectionPointsTo(entry, lemma) {
+  if (exchangeLemma(entry) !== lemma) return false;
+  if (isPureInflection(entry)) return true;
+  return String(entry?.t ?? "").split("\n").filter(Boolean).every((line) => /^\s*pl\.\s/iu.test(line));
+}
+async function verifiedForms(word, entry, dictionaryPos, importer) {
+  const reliable = reliableFormsFor(word, { pos: dictionaryPos });
+  const forms = /* @__PURE__ */ new Set([word, ...reliable]);
+  const ownLemma = exchangeLemma(entry);
+  if (ownLemma && ownLemma !== word) return [...forms];
+  for (const candidate of exchangeCandidates(entry)) {
+    const surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
+    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
+    const independentComparative = ["r", "t"].includes(candidate.kind) && surfaceEntry && !reversed;
+    if (independentComparative) {
+      forms.delete(candidate.surface);
+      continue;
+    }
+    if (reliable.has(candidate.surface) || reversed) forms.add(candidate.surface);
+  }
   return [...forms];
 }
 async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
-  return Promise.all(entries.map(async (entry) => {
+  let incomplete = false;
+  const enriched = await Promise.all(entries.map(async (entry) => {
     const word = normalizeWord(entry?.word);
     let dictionaryEntry;
     try {
@@ -3054,15 +3106,24 @@ async function enrichVocabularyEntries(entries, { importer = defaultImporter } =
         dictionaryEntry = await enrichmentCache.get(word);
       } else dictionaryEntry = await entryFor(word, importer);
     } catch {
+      incomplete = true;
       return entry;
     }
     if (!dictionaryEntry) return entry;
-    return {
-      ...entry,
-      dictionaryPos: inferPos(dictionaryEntry),
-      forms: exchangeForms(word, dictionaryEntry)
-    };
+    const dictionaryPos = inferPos(dictionaryEntry);
+    try {
+      return {
+        ...entry,
+        dictionaryPos,
+        forms: await verifiedForms(word, dictionaryEntry, dictionaryPos, importer)
+      };
+    } catch {
+      incomplete = true;
+      return entry;
+    }
   }));
+  Object.defineProperty(enriched, "incomplete", { value: incomplete, enumerable: false });
+  return enriched;
 }
 
 // src/panel.mjs
@@ -34403,7 +34464,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
-var ANALYSIS_VERSION = 3;
+var ANALYSIS_VERSION = 4;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {

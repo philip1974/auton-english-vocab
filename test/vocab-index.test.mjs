@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { VocabIndex } from '../src/vocab-index.mjs';
+import { enrichVocabularyEntries, resetDictionaryCache } from '../src/dictionary.mjs';
 import { buildNote } from '../src/note-format.mjs';
 
 describe('vocab index', () => {
@@ -11,6 +12,62 @@ describe('vocab index', () => {
     const result = await index.refresh();
     expect(result.entries[0].forms).toEqual(['run', 'ran']);
     expect(index.get('run').forms).toEqual(['run', 'ran']);
+  });
+
+  it('should retry transient enrichment failures with bounded backoff and publish the recovered forms', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const updates = [];
+      resetDictionaryCache();
+      const importer = async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('temporary dictionary failure');
+        return { default: { run: { t: 'v. 跑', x: 'p:ran/i:running/3:runs' }, ran: { t: 'run的过去式', x: '0:run/1:p' } } };
+      };
+      const index = new VocabIndex({
+        async listDocuments() { return [{ path: 'wiki/vocab/run.md', revision: { contentHash: 'h' } }]; },
+        async readDocument() { return { content: '---\ntype: vocab\nword: run\ndefinition: move\n---\n# run\n' }; },
+      }, {
+        enrichmentRetryDelays: [10, 20],
+        enrichEntries: (entries) => enrichVocabularyEntries(entries, { importer }),
+        onUpdate: (result) => updates.push(result.entries),
+      });
+      await index.refresh();
+      expect(index.get('run').forms).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(index.get('run').forms).toEqual(expect.arrayContaining(['run', 'ran', 'running', 'runs']));
+      expect(attempts).toBe(2);
+      expect(updates.at(-1)[0].forms).toEqual(expect.arrayContaining(['run', 'ran', 'running', 'runs']));
+    } finally {
+      resetDictionaryCache();
+      vi.useRealTimers();
+    }
+  });
+
+  it('should stop enrichment retries at the configured bound and cancel them on reset', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const index = new VocabIndex({
+        async listDocuments() { return []; },
+      }, {
+        enrichmentRetryDelays: [5, 10],
+        enrichEntries: async (entries) => {
+          attempts += 1;
+          Object.defineProperty(entries, 'incomplete', { value: true, enumerable: false });
+          return entries;
+        },
+      });
+      await index.refresh();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts).toBe(3);
+      index.reset();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('should read changed vocab documents by content hash when refreshing', async () => {
     const reads = [];

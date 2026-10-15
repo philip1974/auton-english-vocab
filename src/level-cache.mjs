@@ -4,7 +4,7 @@ import { DEFAULT_LEVEL_SETTINGS, extractReadingTokens, classifyNovelRate } from 
 import { familiarityFor } from './familiarity.mjs';
 
 const SHARDS = ['level-cache-0.json', 'level-cache-1.json', 'level-cache-2.json', 'level-cache-3.json'];
-export const ANALYSIS_VERSION = 3;
+export const ANALYSIS_VERSION = 4;
 const MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 const utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 

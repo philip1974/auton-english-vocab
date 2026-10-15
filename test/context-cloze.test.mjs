@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath, surfacesFor } from '../src/context-cloze.mjs';
 import { buildNote, parseNote } from '../src/note-format.mjs';
+import { enrichVocabularyEntries } from '../src/dictionary.mjs';
 
 describe('context cloze', () => {
   it('should cloze explicit be and have irregular forms without leaking the answer', () => {
@@ -128,6 +129,19 @@ describe('context cloze', () => {
     expect(clozeSentence('He ran home.', run).text).toBe('He _____ home.');
     const record = { word: 'record', pos: 'noun', forms: ['record', 'records', 'recorded', 'recording'], dictionaryPos: 'noun, verb' };
     expect(clozeSentence('They recorded it.', record).text).toBe('They _____ it.');
+  });
+
+  it('should not cloze rejected real dictionary exchange mistakes or foreign paradigms', async () => {
+    const enriched = await enrichVocabularyEntries(['felt', 'numb', 'clothe', 'her', 'sheep'].map((word) => ({ word, definition: 'plain' })));
+    const byWord = new Map(enriched.map((entry) => [entry.word, entry]));
+    const cases = [
+      ['She feels happy and has a feeling of joy.', byWord.get('felt')],
+      ['The number is 42.', byWord.get('numb')],
+      ['Cloathing is misspelled.', byWord.get('clothe')],
+      ['I ate hering.', byWord.get('her')],
+      ['Sheeps is nonstandard.', byWord.get('sheep')],
+    ];
+    for (const [sentence, entry] of cases) expect(clozeSentence(sentence, entry).hits).toEqual([]);
   });
 
   it('should constrain known noun entries and infer explicit definition prefixes', () => {

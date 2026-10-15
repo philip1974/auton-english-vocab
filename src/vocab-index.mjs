@@ -14,12 +14,15 @@ function unwrap(result) {
 }
 
 export class VocabIndex {
-  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined, enrichEntries = async (entries) => entries } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1000, 4000] } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
     this.enrichEntries = enrichEntries;
+    this.enrichmentRetryDelays = enrichmentRetryDelays;
+    this.enrichmentRetryAttempt = 0;
+    this.enrichmentRetryTimer = null;
     this.cache = new Map();
     this.entries = new Map();
     this.duplicateWords = new Set();
@@ -35,6 +38,9 @@ export class VocabIndex {
     this.entries.clear();
     this.duplicateWords.clear();
     this.invalid = [];
+    if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
+    this.enrichmentRetryTimer = null;
+    this.enrichmentRetryAttempt = 0;
     if (this.refreshing) this.pending = true;
   }
 
@@ -110,7 +116,20 @@ export class VocabIndex {
     if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
     this.onUpdate(result);
+    if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
+    else this.enrichmentRetryAttempt = 0;
     return result;
+  }
+
+  scheduleEnrichmentRetry(generation) {
+    if (this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
+    const delay = this.enrichmentRetryDelays[this.enrichmentRetryAttempt];
+    this.enrichmentRetryAttempt += 1;
+    this.enrichmentRetryTimer = setTimeout(() => {
+      this.enrichmentRetryTimer = null;
+      if (generation !== this.generation) return;
+      this.refresh().catch(() => undefined);
+    }, delay);
   }
 
   rebuild(readFailures = []) {

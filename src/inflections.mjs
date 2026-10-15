@@ -207,6 +207,7 @@ const IRREGULAR_NOUNS = new Map(Object.entries({
   analysis: ['analyses'],
   axis: ['axes'],
   crisis: ['crises'],
+  sheep: ['sheep'],
   child: ['children'], man: ['men'], woman: ['women'], person: ['people'], mouse: ['mice'],
   tooth: ['teeth'], foot: ['feet'], goose: ['geese'], ox: ['oxen'],
 }));
@@ -283,11 +284,24 @@ function partsOf(value) {
   };
   const pos = typeof value === 'object' && value !== null ? value.pos : '';
   for (const token of String(pos ?? '').split(/[\s,;/；|]+/u)) add(token);
+  const dictionaryPos = typeof value === 'object' && value !== null ? value.dictionaryPos : '';
+  for (const token of String(dictionaryPos ?? '').split(/[\s,;/；|]+/u)) add(token);
   if (parts.size === 0 && typeof value === 'object' && value !== null) {
     const definition = String(value.definition ?? '');
     for (const match of definition.matchAll(/(?:^|[;；\n])\s*(vt|vi|v|n|a|adj|adv|verb|noun|adjective|adverb)\./giu)) add(match[1]);
   }
   return parts;
+}
+
+export function reliableFormsFor(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const forms = new Set();
+  if (!isSurface(lemma)) return forms;
+  const parts = partsOf(typeof posValue === 'object' && posValue !== null
+    ? posValue
+    : { pos: posValue });
+  for (const part of parts) for (const surface of generatedForms(lemma, part)) forms.add(surface);
+  return forms;
 }
 
 const INFLECTED_VERB_SURFACES = new Set([

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dictionaryDefinition, enrichVocabularyEntries, inferPos, loadChunk, lookup, resetDictionaryCache, suggest } from '../src/dictionary.mjs';
+import { buildSurfaceMap } from '../src/inflections.mjs';
 
 const chunks = {
   r: {
@@ -225,14 +226,54 @@ describe('dictionary', () => {
       { word: 'record', pos: 'noun', definition: 'n. 记录' },
       { word: 'run', definition: 'to move fast on foot' },
     ], { importer: importerWithForms });
-    expect(entries[0]).toMatchObject({ dictionaryPos: 'noun, verb, adjective', forms: ['record', 'records', 'recorded', 'recording'] });
-    expect(entries[1]).toMatchObject({ dictionaryPos: 'verb', forms: ['run', 'ran', 'running', 'runs'] });
+    expect(entries[0]).toMatchObject({ dictionaryPos: 'noun, verb, adjective', forms: expect.arrayContaining(['record', 'records', 'recorded', 'recording']) });
+    expect(entries[1]).toMatchObject({ dictionaryPos: 'verb', forms: expect.arrayContaining(['run', 'ran', 'running', 'runs']) });
+  });
+
+  it('should validate real dictionary exchange forms in both directions and keep reliable rules monotonic', async () => {
+    resetDictionaryCache();
+    const words = ['felt', 'numb', 'clothe', 'her', 'sheep', 'email', 'run', 'go', 'child'];
+    const entries = await enrichVocabularyEntries(words.map((word) => ({ word, definition: 'plain' })));
+    const forms = new Map(entries.map((entry) => [entry.word, new Set(entry.forms ?? [])]));
+    for (const [word, rejected] of Object.entries({ felt: ['feels', 'feeling'], numb: ['number'], clothe: ['cloathing'], her: ['hering'], sheep: ['sheeps'] })) {
+      for (const surface of rejected) expect(forms.get(word).has(surface)).toBe(false);
+    }
+    for (const surface of ['emails', 'emailed', 'emailing']) expect(forms.get('email').has(surface)).toBe(true);
+    for (const surface of ['ran', 'running', 'runs']) expect(forms.get('run').has(surface)).toBe(true);
+    for (const surface of ['went', 'gone', 'going', 'goes']) expect(forms.get('go').has(surface)).toBe(true);
+    expect(forms.get('child').has('children')).toBe(true);
+    const before = new Set(buildSurfaceMap([{ word: 'email', pos: 'noun, verb' }]).keys());
+    const after = new Set(buildSurfaceMap([entries.find((entry) => entry.word === 'email')]).keys());
+    for (const surface of before) expect(after.has(surface)).toBe(true);
+  });
+
+  it('should ignore a foreign lemma exchange paradigm while retaining reliable forms', async () => {
+    const importerWithForeignLemma = async () => ({ default: {
+      felt: { t: 'n. 毛毡\nvt. 制毡\nfeel的过去式', x: '0:feel/1:pd/s:felts/i:feeling/3:feels' },
+      feeling: { t: 'n. 感觉', x: '0:feel/1:i' },
+      feels: { t: 'feel的第三人称单数', x: '0:feel/1:3' },
+    } });
+    const [entry] = await enrichVocabularyEntries([{ word: 'felt', pos: 'noun', definition: '毛毡' }], { importer: importerWithForeignLemma });
+    expect(entry.forms).toContain('felts');
+    expect(entry.forms).not.toEqual(expect.arrayContaining(['feeling', 'feels']));
   });
 
   it('should keep original entries when dictionary enrichment is missing or temporarily fails', async () => {
     const entries = [{ word: 'missing', definition: 'plain' }];
     await expect(enrichVocabularyEntries(entries, { importer: async () => ({ default: {} }) })).resolves.toEqual(entries);
     await expect(enrichVocabularyEntries(entries, { importer: async () => { throw new Error('chunk failed'); } })).resolves.toEqual(entries);
-    await expect(enrichVocabularyEntries([{ word: 'broken', definition: 'plain' }], { importer: async () => ({ default: { broken: { t: 'n. bad', x: 's:not a word' } } }) })).resolves.toMatchObject([{ forms: ['broken'] }]);
+    await expect(enrichVocabularyEntries([{ word: 'broken', definition: 'plain' }], { importer: async () => ({ default: { broken: { t: 'n. bad', x: 's:not a word' } } }) })).resolves.toMatchObject([{ forms: expect.arrayContaining(['broken', 'brokens']) }]);
+  });
+
+  it('should mark enrichment incomplete when reverse validation needs a chunk that temporarily fails', async () => {
+    const original = [{ word: 'go', definition: 'move' }];
+    const enriched = await enrichVocabularyEntries(original, {
+      importer: async (letter) => {
+        if (letter === 'w') throw new Error('temporary surface chunk failure');
+        return { default: { go: { t: 'v. 去', x: 'p:went' } } };
+      },
+    });
+    expect(enriched).toEqual(original);
+    expect(enriched.incomplete).toBe(true);
   });
 });

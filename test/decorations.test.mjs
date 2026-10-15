@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildReadingTerms, createReadingDecorationSpec } from '../src/decorations.mjs';
+import { enrichVocabularyEntries } from '../src/dictionary.mjs';
 
 const review = (cards = {}, flags = {}) => ({ version: 1, cards, flags });
 const entry = (word, extra = {}) => ({
@@ -39,6 +40,17 @@ describe('reading decorations', () => {
     const terms = buildReadingTerms({ entries: [entry('do'), entry('leave'), entry('see')], review: review() });
     const surfaces = new Set(terms.map((item) => item.surface));
     for (const ambiguous of ['does', 'left', 'saw']) expect(surfaces.has(ambiguous)).toBe(false);
+  });
+
+  it('should publish validated dictionary terms without rejected exchange mistakes', async () => {
+    const entries = await enrichVocabularyEntries(['email', 'numb', 'felt'].map((word) => entry(word, { definition: 'plain' })));
+    const terms = buildReadingTerms({
+      entries,
+      review: review(),
+    });
+    const surfaces = new Set(terms.map((term) => term.surface));
+    for (const surface of ['emails', 'emailed', 'emailing']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['number', 'feels', 'feeling']) expect(surfaces.has(surface)).toBe(false);
   });
 
   it('should publish prototype-shaped collected words without inherited review state', () => {
