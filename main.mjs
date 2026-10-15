@@ -1730,7 +1730,9 @@ var DENYLIST = /* @__PURE__ */ new Set([
   "series",
   "species",
   "basis",
-  "analysis"
+  "analysis",
+  "dos",
+  "gos"
 ]);
 var AMBIGUOUS_INFLECTION_SURFACES2 = new Set(AMBIGUOUS_INFLECTION_SURFACES);
 var IRREGULAR_VERBS = new Map(Object.entries({
@@ -2018,12 +2020,24 @@ function partsOf(value) {
   }
   return parts;
 }
-function reliableFormsFor(wordValue, posValue) {
+function reliableRuleFormsFor(wordValue, posValue) {
   const lemma = normalize(wordValue);
   const forms = /* @__PURE__ */ new Set();
   if (!isSurface(lemma)) return forms;
   const parts = partsOf(typeof posValue === "object" && posValue !== null ? posValue : { pos: posValue });
-  for (const part of parts) for (const surface of generatedForms(lemma, part)) forms.add(surface);
+  for (const part of parts) {
+    if (part === "comparative") {
+      for (const surface of IRREGULAR_COMPARATIVES.get(lemma) ?? []) addCandidate(forms, surface, true);
+      continue;
+    }
+    if (part === "noun" && IRREGULAR_NOUNS.has(lemma)) continue;
+    if (part === "verb" && IRREGULAR_VERBS.has(lemma)) {
+      addCandidate(forms, thirdPerson(lemma), lemma === "be" || lemma === "have");
+      addCandidate(forms, presentParticiple(lemma));
+      continue;
+    }
+    for (const surface of generatedForms(lemma, part)) forms.add(surface);
+  }
   return forms;
 }
 var INFLECTED_VERB_SURFACES = /* @__PURE__ */ new Set([
@@ -2086,16 +2100,6 @@ function generatedForms(lemma, pos) {
   if (pos === "comparative") {
     const irregular2 = IRREGULAR_COMPARATIVES.get(lemma);
     if (irregular2) for (const form of irregular2) addCandidate(forms, form, true);
-    else if (endsConsonantY(lemma)) {
-      addCandidate(forms, `${lemma.slice(0, -1)}ier`);
-      addCandidate(forms, `${lemma.slice(0, -1)}iest`);
-    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1 && isCvc(lemma)) {
-      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
-      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
-    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1) {
-      addCandidate(forms, `${lemma}er`);
-      addCandidate(forms, `${lemma}est`);
-    }
     return forms;
   }
   if (pos !== "verb") return forms;
@@ -2122,11 +2126,6 @@ function inflectionKindsFor(lemmaValue, surfaceValue) {
   const comparative = IRREGULAR_COMPARATIVES.get(lemma);
   if (comparative?.[0] === surface) kinds.add("comparative");
   if (comparative?.[1] === surface) kinds.add("superlative");
-  if (!comparative) {
-    const forms = [...generatedForms(lemma, "comparative")];
-    if (forms[0] === surface) kinds.add("comparative");
-    if (forms[1] === surface) kinds.add("superlative");
-  }
   return kinds;
 }
 function chooseLemma(surface, current, next, collected) {
@@ -2546,13 +2545,14 @@ function unwrap(result) {
   return result;
 }
 var VocabIndex = class {
-  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1e3, 4e3] } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1e3, 4e3], onEnrichmentRetry = null } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
     this.enrichEntries = enrichEntries;
     this.enrichmentRetryDelays = enrichmentRetryDelays;
+    this.onEnrichmentRetry = onEnrichmentRetry ?? (() => this.refresh());
     this.enrichmentRetryAttempt = 0;
     this.enrichmentRetryTimer = null;
     this.cache = /* @__PURE__ */ new Map();
@@ -2656,7 +2656,7 @@ var VocabIndex = class {
     this.enrichmentRetryTimer = setTimeout(() => {
       this.enrichmentRetryTimer = null;
       if (generation !== this.generation) return;
-      this.refresh().catch(() => void 0);
+      Promise.resolve(this.onEnrichmentRetry(generation)).catch(() => void 0);
     }, delay);
   }
   rebuild(readFailures = []) {
@@ -2861,14 +2861,28 @@ function exchangeLemma(entry) {
   if (!match) return null;
   return match[1].split(",")[0]?.trim().toLowerCase() || null;
 }
+function exchangeKinds(entry) {
+  const code = String(entry?.x ?? "").match(/(?:^|\/)1:([^/]+)/u)?.[1] ?? "";
+  const kinds = /* @__PURE__ */ new Set();
+  for (const [marker, kind] of [
+    ["r", "comparative"],
+    ["t", "superlative"],
+    ["i", "presentParticiple"],
+    ["3", "thirdPerson"],
+    ["s", "plural"],
+    ["p", "pastParticiple"],
+    ["d", "past"]
+  ]) if (code.includes(marker)) kinds.add(kind);
+  return kinds;
+}
 function translatedLemma(entry) {
   const match = String(entry?.t ?? "").match(/([a-z][a-z'-]*)\s*的?\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
   return match?.[1]?.toLowerCase() ?? null;
 }
 function isPureInflection(entry) {
   const lines = String(entry?.t ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
-  if (!lines.length) return false;
-  return lines.every((line) => line.replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, "").match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
+  if (!lines.length || !exchangeLemma(entry)) return false;
+  return lines.every((line) => /^pl\.\s+/iu.test(line) || line.replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, "").match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
 }
 function entrySupportsKinds(entry, kinds) {
   const definitions = `${String(entry?.t ?? "")}
@@ -2968,6 +2982,7 @@ async function lookup(word, { importer = defaultImporter } = {}) {
     let verifiedKinds = /* @__PURE__ */ new Set();
     for (const candidate of candidates) {
       const kinds = inflectionKindsFor(candidate, surface);
+      if (exchange === candidate) for (const kind2 of exchangeKinds(direct)) kinds.add(kind2);
       const candidateEntry = candidate !== surface && kinds.size > 0 ? await entryFor(candidate, importer) : null;
       if (candidateEntry && entrySupportsKinds(candidateEntry, kinds)) {
         lemma = candidate;
@@ -3068,26 +3083,28 @@ function exchangeCandidates(entry) {
   return candidates;
 }
 function reverseInflectionPointsTo(entry, lemma) {
-  if (exchangeLemma(entry) !== lemma) return false;
-  if (isPureInflection(entry)) return true;
-  return String(entry?.t ?? "").split("\n").filter(Boolean).every((line) => /^\s*pl\.\s/iu.test(line));
+  return exchangeLemma(entry) === lemma;
 }
 async function verifiedForms(word, entry, dictionaryPos, importer) {
-  const reliable = reliableFormsFor(word, { pos: dictionaryPos });
+  const reliable = reliableRuleFormsFor(word, { pos: dictionaryPos });
   const forms = /* @__PURE__ */ new Set([word, ...reliable]);
+  let incomplete = false;
   const ownLemma = exchangeLemma(entry);
-  if (ownLemma && ownLemma !== word) return [...forms];
+  if (ownLemma && ownLemma !== word) return { forms: [...forms], incomplete };
   for (const candidate of exchangeCandidates(entry)) {
-    const surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
-    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
-    const independentComparative = ["r", "t"].includes(candidate.kind) && surfaceEntry && !reversed;
-    if (independentComparative) {
-      forms.delete(candidate.surface);
+    let surfaceEntry;
+    try {
+      surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
+    } catch {
+      incomplete = true;
       continue;
     }
-    if (reliable.has(candidate.surface) || reversed) forms.add(candidate.surface);
+    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
+    const reviewedComparative = ["r", "t"].includes(candidate.kind) && reliable.has(candidate.surface);
+    const verifiedExchange = !["r", "t"].includes(candidate.kind) && reversed;
+    if (reviewedComparative || verifiedExchange || reliable.has(candidate.surface) && !surfaceEntry) forms.add(candidate.surface);
   }
-  return [...forms];
+  return { forms: [...forms], incomplete };
 }
 async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
   let incomplete = false;
@@ -3111,16 +3128,13 @@ async function enrichVocabularyEntries(entries, { importer = defaultImporter } =
     }
     if (!dictionaryEntry) return entry;
     const dictionaryPos = inferPos(dictionaryEntry);
-    try {
-      return {
-        ...entry,
-        dictionaryPos,
-        forms: await verifiedForms(word, dictionaryEntry, dictionaryPos, importer)
-      };
-    } catch {
-      incomplete = true;
-      return entry;
-    }
+    const verified = await verifiedForms(word, dictionaryEntry, dictionaryPos, importer);
+    if (verified.incomplete) incomplete = true;
+    return {
+      ...entry,
+      dictionaryPos,
+      forms: verified.forms
+    };
   }));
   Object.defineProperty(enriched, "incomplete", { value: incomplete, enumerable: false });
   return enriched;
@@ -34464,7 +34478,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
-var ANALYSIS_VERSION = 4;
+var ANALYSIS_VERSION = 5;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {
@@ -35140,7 +35154,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.state.invalid = result.invalid;
         this.emitState();
       },
-      enrichEntries: (entries) => enrichVocabularyEntries(entries)
+      enrichEntries: (entries) => enrichVocabularyEntries(entries),
+      onEnrichmentRetry: (indexGeneration) => {
+        if (this.index?.generation !== indexGeneration) return false;
+        return this.refreshIndex(this.rootGeneration);
+      }
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();

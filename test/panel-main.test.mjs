@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendSelectionRequest, renderPanel } from '../src/panel.mjs';
 import { buildNote } from '../src/note-format.mjs';
 import { activeReviewLog, newSerializedCard } from '../src/scheduler.mjs';
+import { lookup } from '../src/dictionary.mjs';
 
 class FakePlugin {
   constructor(app, manifest) {
@@ -1208,6 +1209,45 @@ describe('panel', () => {
 });
 
 describe('main plugin', () => {
+  it('should republish every consumer and clear loading when dictionary enrichment retry recovers', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.resetModules();
+      const module = await import('../src/main.mjs');
+      const app = fullApp();
+      const published = [];
+      app.readingDecorations = { register: () => ({ setTerms: vi.fn((terms) => { published.push(terms); return true; }), dispose: vi.fn() }) };
+      const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+      await plugin.onload();
+      app.knowledge.listDocuments = async () => [{ path: 'wiki/vocab/run.md', title: 'Run', revision: { contentHash: 'run-hash' } }];
+      app.knowledge.readDocument = async ({ path }) => ({
+        meta: { path, title: 'Run', revision: { contentHash: 'run-hash' } },
+        content: buildNote({ word: 'run', definition: 'move' }),
+      });
+      let attempts = 0;
+      plugin.index.enrichmentRetryDelays = [5];
+      plugin.index.enrichEntries = async (entries) => {
+        attempts += 1;
+        if (attempts === 1) {
+          Object.defineProperty(entries, 'incomplete', { value: true, enumerable: false });
+          return entries;
+        }
+        return entries.map((entry) => ({ ...entry, forms: ['run', 'ran'] }));
+      };
+      plugin.refreshRecommendations = vi.fn(async () => undefined);
+      plugin.refreshLatestReadingStatus = vi.fn(async () => true);
+      await plugin.refreshIndex();
+      expect(new Set(published.at(-1).map((term) => term.surface))).toEqual(new Set(['run']));
+      await vi.advanceTimersByTimeAsync(5);
+      expect(new Set(published.at(-1).map((term) => term.surface))).toEqual(new Set(['run', 'ran']));
+      expect(plugin.refreshRecommendations).toHaveBeenCalledTimes(2);
+      expect(plugin.refreshLatestReadingStatus).toHaveBeenCalledTimes(2);
+      expect(plugin.state.loading).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('should register the selection action disposable for plugin unload', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -2113,6 +2153,24 @@ describe('main plugin', () => {
     expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
     expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });
     expect(proposals).toHaveLength(1);
+  });
+
+  it('should collect the noun lemma when a dictionary card starts from a pure irregular plural', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const proposals = [];
+    const app = fullApp();
+    app.knowledge.propose = async (proposal) => {
+      proposals.push(proposal);
+      return appliedProposal(app, proposal, 'accepted');
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const result = await lookup('children');
+    expect(result).toMatchObject({ surface: 'children', lemma: 'child' });
+    await expect(plugin.collectDictionaryWord(result)).resolves.toMatchObject({ outcome: 'applied' });
+    expect(proposals[0].changes[0]).toMatchObject({ path: 'wiki/vocab/child.md' });
+    expect(proposals[0].changes[0].newContent).toContain('word: "child"');
   });
 
   it('should abort dictionary collection when the real vocabulary index contains duplicate notes', async () => {

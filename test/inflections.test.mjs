@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { AMBIGUOUS_INFLECTION_SURFACES, buildSurfaceMap } from '../src/inflections.mjs';
+import { AMBIGUOUS_INFLECTION_SURFACES, buildSurfaceMap, reliableFormsFor, reliableRuleFormsFor } from '../src/inflections.mjs';
 
 describe('inflections', () => {
-  it('should generate regular noun verb participle and adjective surfaces when lemma is collected', () => {
+  it('should expose broad and locally reliable form sets when dictionary enrichment validates candidates', () => {
+    expect(reliableFormsFor('run', 'verb')).toEqual(expect.objectContaining({ size: expect.any(Number) }));
+    expect([...reliableFormsFor('run', 'verb')]).toEqual(expect.arrayContaining(['ran', 'running', 'runs']));
+    expect([...reliableRuleFormsFor('run', { pos: 'verb' })]).toEqual(expect.arrayContaining(['running', 'runs']));
+    expect(reliableRuleFormsFor('run', { pos: 'verb' }).has('ran')).toBe(false);
+    expect([...reliableRuleFormsFor('good', 'adjective')]).toEqual(expect.arrayContaining(['better', 'best']));
+    expect([...reliableRuleFormsFor('child', 'noun')]).toEqual([]);
+    expect([...reliableFormsFor('not valid!', 'verb')]).toEqual([]);
+    expect([...reliableRuleFormsFor('not valid!', 'verb')]).toEqual([]);
+  });
+
+  it('should generate regular noun and verb surfaces without mechanical adjective comparisons', () => {
     const map = buildSurfaceMap([
       { word: 'cat', pos: 'noun' }, { word: 'box', pos: 'noun' }, { word: 'city', pos: 'noun' },
       { word: 'stop', pos: 'verb' }, { word: 'make', pos: 'verb' }, { word: 'die', pos: 'verb' }, { word: 'run', pos: 'verb' },
       { word: 'big', pos: 'adjective' },
-      { word: 'happy', pos: '形容词' },
+      { word: 'happy', pos: '形容词' }, { word: 'good', pos: 'adjective' },
     ]);
     expect(map.get('cats')).toBe('cat');
     expect(map.get('boxes')).toBe('box');
@@ -16,11 +27,13 @@ describe('inflections', () => {
     expect(map.get('making')).toBe('make');
     expect(map.get('dying')).toBe('die');
     expect(map.get('running')).toBe('run');
-    expect(map.get('bigger')).toBe('big');
-    expect(map.get('happiest')).toBe('happy');
+    expect(map.has('bigger')).toBe(false);
+    expect(map.has('happiest')).toBe(false);
+    expect(map.get('better')).toBe('good');
+    expect(map.get('best')).toBe('good');
   });
 
-  it('should generate comparative forms only when pos is adjective and keep adverbs conservative', () => {
+  it('should keep regular adjectives and adverbs conservative without dictionary confirmation', () => {
     const map = buildSurfaceMap([
       { word: 'teach', pos: 'verb' },
       { word: 'big', pos: 'AdJeCtIvE' },
@@ -28,8 +41,8 @@ describe('inflections', () => {
       { word: 'happy' },
     ]);
     expect(map.has('teacher')).toBe(false);
-    expect(map.get('bigger')).toBe('big');
-    expect(map.get('biggest')).toBe('big');
+    expect(map.has('bigger')).toBe(false);
+    expect(map.has('biggest')).toBe(false);
     expect(map.has('quicker')).toBe(false);
     expect(map.has('happier')).toBe(false);
   });
@@ -222,8 +235,8 @@ describe('inflections', () => {
       { word: 'consider', definition: 'vt. 考虑' },
       { word: 'arrive', definition: 'vi. 到达' },
     ]);
-    expect(map.get('happier')).toBe('happy');
-    expect(map.get('happiest')).toBe('happy');
+    expect(map.has('happier')).toBe(false);
+    expect(map.has('happiest')).toBe(false);
     expect(map.get('considered')).toBe('consider');
     expect(map.get('considering')).toBe('consider');
     expect(map.get('arrived')).toBe('arrive');

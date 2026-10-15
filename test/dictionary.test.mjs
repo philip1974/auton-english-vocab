@@ -88,8 +88,9 @@ describe('dictionary', () => {
       biggest: ['big', '最高级', 'superlative'],
     };
     const local = { b: { bake: { t: 'v. 烘焙' }, break: { t: 'v. 打破' }, base: { t: 'n. 基础' }, big: { t: 'a. 大的' } } };
-    for (const [surface, [lemma, label]] of Object.entries(kinds)) {
-      local.b[surface] = { t: `n. 独立义项\n${lemma}的${label}`, x: `0:${lemma}` };
+    const markers = { past: 'd', pastParticiple: 'p', presentParticiple: 'i', plural: 's', thirdPerson: '3', comparative: 'r', superlative: 't' };
+    for (const [surface, [lemma, label, kind]] of Object.entries(kinds)) {
+      local.b[surface] = { t: `n. 独立义项\n${lemma}的${label}`, x: `0:${lemma}/1:${markers[kind]}` };
     }
     const localImporter = async () => ({ default: local.b });
     for (const [surface, [lemma, , kind]] of Object.entries(kinds)) {
@@ -120,7 +121,7 @@ describe('dictionary', () => {
     await expect(lookup('running', { importer })).resolves.toMatchObject({ surface: 'running', lemma: 'run', entry: chunks.r.run });
   });
 
-  it('should try common suffix candidates for past plural comparative and superlative forms', async () => {
+  it('should try reliable common suffix candidates without guessing adjective comparatives', async () => {
     const local = {
       h: { happy: { t: 'adj. 快乐的\nv. 使快乐\nn. 快乐的人', d: 'glad' }, hop: { t: 'v. 跳', d: 'jump' } },
       b: { box: { t: 'n. 盒子', d: 'container' }, big: { t: 'adj. 大的', d: 'large' } },
@@ -131,8 +132,8 @@ describe('dictionary', () => {
     await expect(lookup('happied', { importer: localImporter })).resolves.toMatchObject({ lemma: 'happy' });
     await expect(lookup('hopped', { importer: localImporter })).resolves.toMatchObject({ lemma: 'hop' });
     await expect(lookup('boxes', { importer: localImporter })).resolves.toMatchObject({ lemma: 'box' });
-    await expect(lookup('bigger', { importer: localImporter })).resolves.toMatchObject({ lemma: 'big' });
-    await expect(lookup('biggest', { importer: localImporter })).resolves.toMatchObject({ lemma: 'big' });
+    await expect(lookup('bigger', { importer: localImporter })).resolves.toBeNull();
+    await expect(lookup('biggest', { importer: localImporter })).resolves.toBeNull();
     await expect(lookup('liked', { importer: localImporter })).resolves.toMatchObject({ lemma: 'like' });
   });
 
@@ -221,6 +222,7 @@ describe('dictionary', () => {
     const importerWithForms = async () => ({ default: {
       record: { t: 'n. 记录\nvt. 记录\na. 创纪录的', x: 's:records/d:recorded/p:recorded/i:recording/3:records' },
       run: { t: 'vi. 跑', x: 'd:ran/p:run/i:running/3:runs' },
+      ran: { t: 'run的过去式', x: '0:run/1:p' },
     } });
     const entries = await enrichVocabularyEntries([
       { word: 'record', pos: 'noun', definition: 'n. 记录' },
@@ -273,7 +275,28 @@ describe('dictionary', () => {
         return { default: { go: { t: 'v. 去', x: 'p:went' } } };
       },
     });
-    expect(enriched).toEqual(original);
+    expect(enriched[0]).toMatchObject({
+      word: 'go',
+      dictionaryPos: 'verb',
+      forms: expect.arrayContaining(['go', 'goes', 'going']),
+    });
+    expect(enriched[0].forms).not.toContain('went');
     expect(enriched.incomplete).toBe(true);
+  });
+
+  it('should preserve reviewed irregular comparatives when exchange validation sees independent entries', async () => {
+    resetDictionaryCache();
+    const [entry] = await enrichVocabularyEntries([{ word: 'good', definition: 'positive' }]);
+    expect(entry.forms).toEqual(expect.arrayContaining(['good', 'better', 'best']));
+  });
+
+  it('should normalize a pure irregular plural to its noun lemma when looking up children', async () => {
+    resetDictionaryCache();
+    await expect(lookup('children')).resolves.toMatchObject({
+      surface: 'children',
+      lemma: 'child',
+      surfaceEntry: expect.objectContaining({ t: expect.stringMatching(/^pl\./u) }),
+    });
+    await expect(lookup('people')).resolves.toMatchObject({ surface: 'people', lemma: 'people' });
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildReadingTerms, createReadingDecorationSpec } from '../src/decorations.mjs';
-import { enrichVocabularyEntries } from '../src/dictionary.mjs';
+import { enrichVocabularyEntries, lookup, resetDictionaryCache } from '../src/dictionary.mjs';
 
 const review = (cards = {}, flags = {}) => ({ version: 1, cards, flags });
 const entry = (word, extra = {}) => ({
@@ -53,6 +53,25 @@ describe('reading decorations', () => {
     for (const surface of ['number', 'feels', 'feeling']) expect(surfaces.has(surface)).toBe(false);
   });
 
+  it('should publish reviewed comparatives without generated nouns or abbreviation collisions', async () => {
+    const entries = await enrichVocabularyEntries(['good', 'run', 'do', 'go'].map((word) => ({ word, definition: 'plain' })));
+    const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
+    for (const surface of ['better', 'best']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['runner', 'runnest', 'dos', 'gos']) expect(surfaces.has(surface)).toBe(false);
+  });
+
+  it('should publish reliable terms when one exchange validation chunk fails', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([{ word: 'go', definition: 'move' }], {
+      importer: async (letter) => {
+        if (letter === 'w') throw new Error('temporary surface chunk failure');
+        return { default: { go: { t: 'v. 去', x: 'p:went' } } };
+      },
+    });
+    const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
+    expect(surfaces).toEqual(new Set(['go', 'goes', 'going']));
+  });
+
   it('should publish prototype-shaped collected words without inherited review state', () => {
     const terms = buildReadingTerms({ entries: [entry('constructor', { pos: 'noun' }), entry('toString', { pos: 'noun' }), entry('hasOwnProperty', { pos: 'noun' })], review: JSON.parse('{"version":1,"cards":{},"flags":{}}') });
     expect(terms.map((item) => item.surface)).toEqual(expect.arrayContaining(['constructor', 'constructors', 'tostring', 'hasownproperty']));
@@ -91,6 +110,21 @@ describe('reading decorations', () => {
     expect(container.querySelectorAll('[data-rating]')).toHaveLength(2);
   });
 
+  it('should pass the noun lemma to collection when a card starts from a pure irregular plural', async () => {
+    const container = document.createElement('div');
+    const collect = vi.fn(async () => ({ outcome: 'applied' }));
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [], review: review() }),
+      lookupDictionary: lookup,
+      onCollectWord: collect,
+    }).renderCard(container, { word: 'children', key: 'children', tone: null });
+    await vi.waitFor(() => expect(container.querySelector('[data-role="collect-dictionary-word"]')).not.toBeNull());
+    container.querySelector('[data-role="collect-dictionary-word"]').click();
+    await vi.waitFor(() => expect(collect).toHaveBeenCalled());
+    expect(collect.mock.calls[0][0]).toMatchObject({ surface: 'children', lemma: 'child' });
+  });
+
   it('should show duplicate-note state without a collect action in a dictionary reading card', async () => {
     const container = document.createElement('div');
     createReadingDecorationSpec({
@@ -104,18 +138,18 @@ describe('reading decorations', () => {
     expect(container.querySelector('[data-role="collect-dictionary-word"]')).toBeNull();
   });
 
-  it('should pass entry pos through when building comparative reading terms', () => {
+  it('should avoid mechanical comparatives when building reading terms', () => {
     const terms = buildReadingTerms({
       entries: [
         { word: 'teach', pos: 'verb' },
-        { word: 'big', pos: 'adjective' },
+        { word: 'good', pos: 'adjective' },
         { word: 'happy' },
       ],
     });
     const surfaces = new Set(terms.map((term) => term.surface));
     expect(surfaces.has('teacher')).toBe(false);
-    expect(surfaces.has('bigger')).toBe(true);
-    expect(surfaces.has('biggest')).toBe(true);
+    expect(surfaces.has('better')).toBe(true);
+    expect(surfaces.has('best')).toBe(true);
     expect(surfaces.has('happier')).toBe(false);
   });
 

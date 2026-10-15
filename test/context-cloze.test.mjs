@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath, surfacesFor } from '../src/context-cloze.mjs';
 import { buildNote, parseNote } from '../src/note-format.mjs';
-import { enrichVocabularyEntries } from '../src/dictionary.mjs';
+import { enrichVocabularyEntries, resetDictionaryCache } from '../src/dictionary.mjs';
 
 describe('context cloze', () => {
   it('should cloze explicit be and have irregular forms without leaking the answer', () => {
@@ -71,10 +71,11 @@ describe('context cloze', () => {
     expect(resolveExampleSourcePath()).toBeNull();
   });
 
-  it('should include comparative surfaces only when adjective pos is known', () => {
-    expect(surfacesFor({ word: 'big', pos: 'adjective' })).toEqual(expect.arrayContaining(['big', 'bigger', 'biggest']));
+  it('should include comparative surfaces only when an irregular relation is reviewed', () => {
+    expect(surfacesFor({ word: 'big', pos: 'adjective' })).toEqual(['big']);
     expect(surfacesFor({ word: 'quick' })).toEqual(['quick']);
-    expect(surfacesFor({ word: 'quick', pos: 'adjective' })).toContain('quicker');
+    expect(surfacesFor({ word: 'quick', pos: 'adjective' })).toEqual(['quick']);
+    expect(surfacesFor({ word: 'good', pos: 'adjective' })).toEqual(expect.arrayContaining(['good', 'better', 'best']));
   });
 
   it('should cloze whole inflected word surfaces when sentence contains matching tokens', () => {
@@ -142,6 +143,27 @@ describe('context cloze', () => {
       ['Sheeps is nonstandard.', byWord.get('sheep')],
     ];
     for (const [sentence, entry] of cases) expect(clozeSentence(sentence, entry).hits).toEqual([]);
+  });
+
+  it('should cloze reviewed comparatives without clozing generated nouns or abbreviation collisions', async () => {
+    const enriched = await enrichVocabularyEntries(['good', 'run', 'do', 'go'].map((word) => ({ word, definition: 'plain' })));
+    const byWord = new Map(enriched.map((entry) => [entry.word, entry]));
+    expect(clozeSentence('This is better and best.', byWord.get('good')).text).toBe('This is _____ and _____.');
+    expect(clozeSentence('The runner saw DOS and gos.', byWord.get('run')).hits).toEqual([]);
+    expect(clozeSentence('Use DOS.', byWord.get('do')).hits).toEqual([]);
+    expect(clozeSentence('The gos label is uncommon.', byWord.get('go')).hits).toEqual([]);
+  });
+
+  it('should keep reliable cloze forms when one exchange validation chunk fails', async () => {
+    resetDictionaryCache();
+    const [entry] = await enrichVocabularyEntries([{ word: 'go', definition: 'move' }], {
+      importer: async (letter) => {
+        if (letter === 'w') throw new Error('temporary surface chunk failure');
+        return { default: { go: { t: 'v. 去', x: 'p:went' } } };
+      },
+    });
+    expect(clozeSentence('She goes while going.', entry).text).toBe('She _____ while _____.');
+    expect(clozeSentence('She went.', entry).hits).toEqual([]);
   });
 
   it('should constrain known noun entries and infer explicit definition prefixes', () => {

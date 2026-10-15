@@ -18,6 +18,7 @@ describe('vocab index', () => {
     vi.useFakeTimers();
     try {
       let attempts = 0;
+      let retryCalls = 0;
       const updates = [];
       resetDictionaryCache();
       const importer = async () => {
@@ -32,12 +33,14 @@ describe('vocab index', () => {
         enrichmentRetryDelays: [10, 20],
         enrichEntries: (entries) => enrichVocabularyEntries(entries, { importer }),
         onUpdate: (result) => updates.push(result.entries),
+        onEnrichmentRetry: () => { retryCalls += 1; return index.refresh(); },
       });
       await index.refresh();
       expect(index.get('run').forms).toBeUndefined();
       await vi.advanceTimersByTimeAsync(10);
       expect(index.get('run').forms).toEqual(expect.arrayContaining(['run', 'ran', 'running', 'runs']));
       expect(attempts).toBe(2);
+      expect(retryCalls).toBe(1);
       expect(updates.at(-1)[0].forms).toEqual(expect.arrayContaining(['run', 'ran', 'running', 'runs']));
     } finally {
       resetDictionaryCache();

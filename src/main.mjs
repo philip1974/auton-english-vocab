@@ -349,6 +349,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
       onProgress: (done, total) => { this.state.loading = { done, total }; this.emitState(); },
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
       enrichEntries: (entries) => enrichVocabularyEntries(entries),
+      onEnrichmentRetry: (indexGeneration) => {
+        if (this.index?.generation !== indexGeneration) return false;
+        return this.refreshIndex(this.rootGeneration);
+      },
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();

@@ -14,13 +14,14 @@ function unwrap(result) {
 }
 
 export class VocabIndex {
-  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1000, 4000] } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined, enrichEntries = async (entries) => entries, enrichmentRetryDelays = [250, 1000, 4000], onEnrichmentRetry = null } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
     this.enrichEntries = enrichEntries;
     this.enrichmentRetryDelays = enrichmentRetryDelays;
+    this.onEnrichmentRetry = onEnrichmentRetry ?? (() => this.refresh());
     this.enrichmentRetryAttempt = 0;
     this.enrichmentRetryTimer = null;
     this.cache = new Map();
@@ -128,7 +129,7 @@ export class VocabIndex {
     this.enrichmentRetryTimer = setTimeout(() => {
       this.enrichmentRetryTimer = null;
       if (generation !== this.generation) return;
-      this.refresh().catch(() => undefined);
+      Promise.resolve(this.onEnrichmentRetry(generation)).catch(() => undefined);
     }, delay);
   }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ANALYSIS_VERSION, buildLevelCacheEntry, cacheShardNames, LevelCache, scoreCachedEntry } from '../src/level-cache.mjs';
 import { rankMapFromWords } from '../src/rank-candidates.mjs';
-import { enrichVocabularyEntries } from '../src/dictionary.mjs';
+import { enrichVocabularyEntries, resetDictionaryCache } from '../src/dictionary.mjs';
 
 function storage() {
   const files = new Map();
@@ -40,6 +40,9 @@ function storage() {
 }
 
 describe('level cache and novel word scoring', () => {
+  it('should invalidate prior analysis when dictionary surface semantics change', () => {
+    expect(ANALYSIS_VERSION).toBe(5);
+  });
   it('should score rank boundaries and collected mastered states without rereading text when vocabulary size changes', () => {
     const table = rankMapFromWords(['the', 'and', ...Array.from({ length: 998 }, (_, index) => `filler${index}`), 'alpha', 'beta', 'gamma']);
     const entry = buildLevelCacheEntry('the and alpha beta gamma gamma', table, 1);
@@ -100,6 +103,35 @@ describe('level cache and novel word scoring', () => {
     const entries = await enrichVocabularyEntries(['email', 'numb', 'felt', 'child', 'go'].map((word) => ({ word, definition: 'plain' })));
     const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
     expect(scored).toMatchObject({ novel: 2, topWords: ['feeling', 'number'] });
+  });
+
+  it('should inherit familiarity through reviewed comparatives without generated collision surfaces', async () => {
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('better best runner dos gos', table, 1);
+    const review = { cards: {}, flags: { good: 'mastered', run: 'mastered', do: 'mastered', go: 'mastered' } };
+    const entries = await enrichVocabularyEntries(['good', 'run', 'do', 'go'].map((word) => ({ word, definition: 'plain' })));
+    const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
+    expect(scored).toMatchObject({ novel: 3 });
+    expect(new Set(scored.topWords)).toEqual(new Set(['dos', 'gos', 'runner']));
+  });
+
+  it('should score with reliable forms when one exchange validation chunk fails', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([{ word: 'go', definition: 'move' }], {
+      importer: async (letter) => {
+        if (letter === 'w') throw new Error('temporary surface chunk failure');
+        return { default: { go: { t: 'v. 去', x: 'p:went' } } };
+      },
+    });
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('goes going went', table, 1);
+    const scored = scoreCachedEntry(cached, {
+      table,
+      review: { cards: {}, flags: { go: 'mastered' } },
+      entries,
+      settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 },
+    });
+    expect(scored).toMatchObject({ novel: 1, topWords: ['went'] });
   });
 
   it('should expose only legal cache shard names when persisting split cache files', () => {

@@ -4,7 +4,7 @@ const SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
 const DENYLIST = new Set([
   'us', 'as', 'is', 'was', 'has', 'its', 'bus', 'gas', 'yes', 'this', 'thus', 'plus',
-  'his', 'hers', 'ours', 'news', 'series', 'species', 'basis', 'analysis',
+  'his', 'hers', 'ours', 'news', 'series', 'species', 'basis', 'analysis', 'dos', 'gos',
 ]);
 
 // These high-frequency surfaces have common standalone meanings in the bundled
@@ -304,6 +304,29 @@ export function reliableFormsFor(wordValue, posValue) {
   return forms;
 }
 
+export function reliableRuleFormsFor(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const forms = new Set();
+  if (!isSurface(lemma)) return forms;
+  const parts = partsOf(typeof posValue === 'object' && posValue !== null
+    ? posValue
+    : { pos: posValue });
+  for (const part of parts) {
+    if (part === 'comparative') {
+      for (const surface of IRREGULAR_COMPARATIVES.get(lemma) ?? []) addCandidate(forms, surface, true);
+      continue;
+    }
+    if (part === 'noun' && IRREGULAR_NOUNS.has(lemma)) continue;
+    if (part === 'verb' && IRREGULAR_VERBS.has(lemma)) {
+      addCandidate(forms, thirdPerson(lemma), lemma === 'be' || lemma === 'have');
+      addCandidate(forms, presentParticiple(lemma));
+      continue;
+    }
+    for (const surface of generatedForms(lemma, part)) forms.add(surface);
+  }
+  return forms;
+}
+
 const INFLECTED_VERB_SURFACES = new Set([
   ...[...IRREGULAR_VERBS.values()].flat(), 'am', 'are', 'is', 'does', 'has',
 ]);
@@ -363,16 +386,6 @@ function generatedForms(lemma, pos) {
   if (pos === 'comparative') {
     const irregular = IRREGULAR_COMPARATIVES.get(lemma);
     if (irregular) for (const form of irregular) addCandidate(forms, form, true);
-    else if (endsConsonantY(lemma)) {
-      addCandidate(forms, `${lemma.slice(0, -1)}ier`);
-      addCandidate(forms, `${lemma.slice(0, -1)}iest`);
-    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1 && isCvc(lemma)) {
-      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
-      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
-    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1) {
-      addCandidate(forms, `${lemma}er`);
-      addCandidate(forms, `${lemma}est`);
-    }
     return forms;
   }
   if (pos !== 'verb') return forms;
@@ -400,11 +413,6 @@ export function inflectionKindsFor(lemmaValue, surfaceValue) {
   const comparative = IRREGULAR_COMPARATIVES.get(lemma);
   if (comparative?.[0] === surface) kinds.add('comparative');
   if (comparative?.[1] === surface) kinds.add('superlative');
-  if (!comparative) {
-    const forms = [...generatedForms(lemma, 'comparative')];
-    if (forms[0] === surface) kinds.add('comparative');
-    if (forms[1] === surface) kinds.add('superlative');
-  }
   return kinds;
 }
 
