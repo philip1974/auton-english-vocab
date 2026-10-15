@@ -68,13 +68,25 @@ describe('inflections', () => {
   });
 
   it('should not map ambiguous independent words to an inflection lemma', () => {
-    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(expect.arrayContaining(['does', 'left', 'saw', 'rose', 'found', 'lay', 'wound', 'fell']));
+    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['does', 'fell', 'found', 'lay', 'left', 'rose', 'saw', 'wound']);
     const cases = [
       ['do', 'does'], ['leave', 'left'], ['see', 'saw'], ['rise', 'rose'],
       ['find', 'found'], ['lie', 'lay'], ['wind', 'wound'], ['fall', 'fell'],
     ];
     const map = buildSurfaceMap(cases.map(([word]) => ({ word, pos: 'verb' })));
     for (const [, surface] of cases) expect(map.has(surface)).toBe(false);
+  });
+
+  it('should retain reviewed normal inflections and transparent nominalizations', () => {
+    const map = buildSurfaceMap([
+      { word: 'program', pos: 'noun' }, { word: 'feel', pos: 'verb' },
+      { word: 'put', pos: 'verb' }, { word: 'choose', pos: 'verb' },
+      { word: 'sit', pos: 'verb' }, { word: 'train', pos: 'verb' },
+      { word: 'engineer', pos: 'verb' }, { word: 'market', pos: 'verb' },
+    ]);
+    for (const [surface, lemma] of Object.entries({ programs: 'program', feels: 'feel', putting: 'put', chose: 'choose', sat: 'sit', training: 'train', engineering: 'engineer', marketing: 'market' })) {
+      expect(map.get(surface)).toBe(lemma);
+    }
   });
 
   it('should generate unambiguous third person es forms for verbs ending in o', () => {

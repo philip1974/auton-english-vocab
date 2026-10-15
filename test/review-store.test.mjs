@@ -43,6 +43,18 @@ describe('review store', () => {
     await expect(store.load()).resolves.toEqual({ version: 1, cards: {}, flags: {} });
   });
 
+  it('should stop retrying after three consecutive root changes during initial reads', async () => {
+    let reads = 0;
+    const app = appWithStorage();
+    app.storage.read = async () => {
+      reads += 1;
+      throw Object.assign(new Error('root keeps changing'), { code: 'ROOT_CHANGED' });
+    };
+    const store = new ReviewStore(app);
+    await expect(store.load()).rejects.toMatchObject({ code: 'ROOT_CHANGED' });
+    expect(reads).toBe(3);
+  });
+
   it('should back up corrupt review json and keep only recent three backups when parsing fails', async () => {
     const app = appWithStorage({
       'review.json': '{broken',

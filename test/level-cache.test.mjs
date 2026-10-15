@@ -55,6 +55,13 @@ describe('level cache and novel word scoring', () => {
     expect(Number.isFinite(scored.rate)).toBe(true);
   });
 
+  it('should inherit known ranks for straight and curly possessives', () => {
+    const table = rankMapFromWords(['the', 'mother']);
+    const entry = buildLevelCacheEntry(`${'the '.repeat(98)}mother's mother’s`, table, 1);
+    expect(entry).toMatchObject({ counted: 100, base: 100, words: {} });
+    expect(scoreCachedEntry(entry, { table, review: { cards: {}, flags: {} }, settings: { vocabularySize: 2, easyMax: 2, goodMax: 5 } })).toMatchObject({ novel: 0, rate: 0 });
+  });
+
   it('should use notebook entries plus FSRS familiarity when deciding whether collected words are novel', () => {
     const table = rankMapFromWords(['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'alpha', 'beta', 'gamma', 'delta']);
     const entry = buildLevelCacheEntry('alpha beta gamma delta', table, 1);

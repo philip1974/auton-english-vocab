@@ -94,25 +94,46 @@ export class ReviewStore {
   }
 
   async load() {
-    const generation = ++this.generation;
-    const rootGeneration = (await this.app.storage.scope()).rootGeneration;
-    /* v8 ignore next -- the delayed mutation/root reload test covers the shared stale-generation contract. */
-    if (generation !== this.generation) return this.review;
-    this.rootGeneration = rootGeneration;
-    await this.#loadReview(generation);
-    /* v8 ignore next -- repeated await boundary for the same generation contract. */
-    if (generation !== this.generation) return this.review;
-    await this.#loadLog(generation);
-    /* v8 ignore next -- repeated await boundary for the same generation contract. */
-    if (generation !== this.generation) return this.review;
-    if (this.review.pendingLogs?.length) {
-      try { await this.flushPendingLogs(); } catch { this.notify(this.t.pendingLogRecoveryFailed); }
+    let rootChange;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const generation = ++this.generation;
+      this.#resetProjection();
+      try {
+        const rootGeneration = (await this.app.storage.scope()).rootGeneration;
+        /* v8 ignore next -- the delayed mutation/root reload test covers the shared stale-generation contract. */
+        if (generation !== this.generation) return this.review;
+        this.rootGeneration = rootGeneration;
+        await this.#loadReview(generation);
+        /* v8 ignore next -- repeated await boundary for the same generation contract. */
+        if (generation !== this.generation) return this.review;
+        await this.#loadLog(generation);
+        /* v8 ignore next -- repeated await boundary for the same generation contract. */
+        if (generation !== this.generation) return this.review;
+        if (this.review.pendingLogs?.length) {
+          try {
+            const flushed = await this.flushPendingLogs();
+            if (flushed.rootChanged) throw Object.assign(new Error('root changed while flushing pending logs'), { code: 'ROOT_CHANGED' });
+          } catch (error) {
+            if (codeOf(error) === 'ROOT_CHANGED') throw error;
+            this.notify(this.t.pendingLogRecoveryFailed);
+          }
+        }
+        return this.review;
+      } catch (error) {
+        if (codeOf(error) !== 'ROOT_CHANGED') throw error;
+        rootChange = error;
+      }
     }
-    return this.review;
+    throw rootChange;
   }
 
   async reloadForRootChange() {
     this.generation += 1;
+    this.#resetProjection();
+    return this.load();
+  }
+
+  #resetProjection() {
     this.rootGeneration = null;
     this.reviewRevision = undefined;
     this.logRevision = undefined;
@@ -121,7 +142,6 @@ export class ReviewStore {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
     this.logWritable = true;
-    return this.load();
   }
 
   async #loadReview(generation = this.generation) {
@@ -152,6 +172,7 @@ export class ReviewStore {
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
+      if (codeOf(error) === 'ROOT_CHANGED') throw error;
       await this.#preserveCorrupt('review', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
       if (this.#stale(generation, rootGeneration)) return;
@@ -195,7 +216,8 @@ export class ReviewStore {
         if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
         if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
-    } catch {
+    } catch (error) {
+      if (codeOf(error) === 'ROOT_CHANGED') throw error;
       await this.#preserveCorrupt('log', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
       if (this.#stale(generation, rootGeneration)) return;

@@ -1275,25 +1275,41 @@ var ReviewStore = class {
     this.generation = 0;
   }
   async load() {
-    const generation = ++this.generation;
-    const rootGeneration = (await this.app.storage.scope()).rootGeneration;
-    if (generation !== this.generation) return this.review;
-    this.rootGeneration = rootGeneration;
-    await this.#loadReview(generation);
-    if (generation !== this.generation) return this.review;
-    await this.#loadLog(generation);
-    if (generation !== this.generation) return this.review;
-    if (this.review.pendingLogs?.length) {
+    let rootChange;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const generation = ++this.generation;
+      this.#resetProjection();
       try {
-        await this.flushPendingLogs();
-      } catch {
-        this.notify(this.t.pendingLogRecoveryFailed);
+        const rootGeneration = (await this.app.storage.scope()).rootGeneration;
+        if (generation !== this.generation) return this.review;
+        this.rootGeneration = rootGeneration;
+        await this.#loadReview(generation);
+        if (generation !== this.generation) return this.review;
+        await this.#loadLog(generation);
+        if (generation !== this.generation) return this.review;
+        if (this.review.pendingLogs?.length) {
+          try {
+            const flushed = await this.flushPendingLogs();
+            if (flushed.rootChanged) throw Object.assign(new Error("root changed while flushing pending logs"), { code: "ROOT_CHANGED" });
+          } catch (error) {
+            if (codeOf(error) === "ROOT_CHANGED") throw error;
+            this.notify(this.t.pendingLogRecoveryFailed);
+          }
+        }
+        return this.review;
+      } catch (error) {
+        if (codeOf(error) !== "ROOT_CHANGED") throw error;
+        rootChange = error;
       }
     }
-    return this.review;
+    throw rootChange;
   }
   async reloadForRootChange() {
     this.generation += 1;
+    this.#resetProjection();
+    return this.load();
+  }
+  #resetProjection() {
     this.rootGeneration = null;
     this.reviewRevision = void 0;
     this.logRevision = void 0;
@@ -1302,7 +1318,6 @@ var ReviewStore = class {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
     this.logWritable = true;
-    return this.load();
   }
   async #loadReview(generation = this.generation) {
     const rootGeneration = this.rootGeneration;
@@ -1337,6 +1352,7 @@ var ReviewStore = class {
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
+      if (codeOf(error) === "ROOT_CHANGED") throw error;
       await this.#preserveCorrupt("review", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
       if (codeOf(error) === "UNSUPPORTED_REVIEW_VERSION") {
@@ -1379,7 +1395,8 @@ var ReviewStore = class {
         if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
         if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
-    } catch {
+    } catch (error) {
+      if (codeOf(error) === "ROOT_CHANGED") throw error;
       await this.#preserveCorrupt("log", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
       this.notify(this.t.corruptLog);
@@ -1634,52 +1651,20 @@ function mergeReview(base, incoming) {
   return merged;
 }
 
-// src/ambiguous-inflections.generated.mjs
-var AMBIGUOUS_INFLECTION_METADATA = Object.freeze({
-  source: "dict/*.mjs + data/en-wordfreq-30k.json",
-  frequencyLimit: 5e3,
-  count: 38
-});
-var AMBIGUOUS_INFLECTION_SURFACES = Object.freeze([
-  "does",
-  "found",
-  "left",
-  "thought",
-  "bit",
-  "saw",
-  "shot",
-  "training",
-  "ground",
-  "feeling",
-  "felt",
-  "feels",
-  "programs",
-  "putting",
-  "fell",
-  "wedding",
-  "rose",
-  "engineering",
-  "marketing",
-  "clothes",
-  "feed",
-  "lay",
-  "sat",
-  "falls",
-  "spoke",
-  "painting",
-  "rent",
-  "manufacturing",
-  "chose",
-  "advertising",
-  "pants",
-  "bound",
-  "programming",
-  "drove",
-  "timing",
-  "feeding",
-  "wound",
-  "rangers"
+// src/ambiguous-inflections.reviewed.mjs
+var AMBIGUOUS_INFLECTION_REVIEWS = Object.freeze([
+  Object.freeze({ surface: "does", reason: "do 的第三人称单数，同时也是 doe（母鹿）的复数。" }),
+  Object.freeze({ surface: "fell", reason: "fall 的过去式，同时是“砍倒”及相关名词、形容词。" }),
+  Object.freeze({ surface: "found", reason: "find 的过去式和过去分词，同时是“建立、创立”。" }),
+  Object.freeze({ surface: "lay", reason: "lie 的过去式，同时是常用动词“放置”。" }),
+  Object.freeze({ surface: "left", reason: "leave 的过去式和过去分词，同时表示“左边、左侧”。" }),
+  Object.freeze({ surface: "rose", reason: "rise 的过去式，同时是常用名词“玫瑰”。" }),
+  Object.freeze({ surface: "saw", reason: "see 的过去式，同时是常用名词和动词“锯、锯开”。" }),
+  Object.freeze({ surface: "wound", reason: "wind 的过去式和过去分词，同时是常用名词“伤口”。" })
 ]);
+var AMBIGUOUS_INFLECTION_SURFACES = Object.freeze(
+  AMBIGUOUS_INFLECTION_REVIEWS.map((item) => item.surface)
+);
 
 // src/inflections.mjs
 var SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
@@ -2093,7 +2078,7 @@ function chooseLemma(surface, current, next, collected) {
   if (surface === next && collected.has(next)) return next;
   return next.localeCompare(current) < 0 ? next : current;
 }
-function buildSurfaceMap(words, { permissive = false } = {}) {
+function buildSurfaceMap(words) {
   const collected = /* @__PURE__ */ new Set();
   const parts = /* @__PURE__ */ new Map();
   for (const value of words) {
@@ -2109,8 +2094,7 @@ function buildSurfaceMap(words, { permissive = false } = {}) {
     const surfaces = /* @__PURE__ */ new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", "’"));
     const generatedParts = parts.get(lemma) ?? /* @__PURE__ */ new Set();
-    const selectedParts = permissive && generatedParts.size === 0 ? /* @__PURE__ */ new Set(["noun", "verb", "comparative"]) : generatedParts;
-    for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
       if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES2.has(surface)) continue;
@@ -2217,7 +2201,7 @@ function resolveExampleSourcePath(notePath, rawPath) {
   return readableMarkdownPath([...noteParts, ...source.split("/")].join("/"));
 }
 function surfacesFor(entry) {
-  return [...buildSurfaceMap([entry], { permissive: true }).keys()].sort();
+  return [...buildSurfaceMap([entry]).keys()].sort();
 }
 function tokenMatches(sentence, surfaces) {
   const hits = [];
@@ -3436,7 +3420,8 @@ function renderPanel(container, controls) {
       for (const item of state.invalid) {
         const row = el("div", "ev-invalid-note");
         row.append(el("strong", "", item.path), el("span", "", t.invalidNoteReason(item)));
-        const raw = el("small", "ev-note", String(item.error ?? ""));
+        const raw = el("small", "ev-note");
+        raw.hidden = true;
         raw.dataset.rawError = String(item.error ?? "");
         row.append(raw);
         invalid.append(row);
@@ -3707,20 +3692,22 @@ async function availablePath(app, word, guard, reservedPaths) {
   }
   throw new Error(`no available note path for ${word}`);
 }
-function makeVocabLookup({ index, review, getReview = () => review }) {
+function makeVocabLookup({ index, review, getReview = () => review, bindRootRead = (operation) => operation() }) {
   return async function vocabLookup(input) {
-    const word = normalizeWord(input?.word);
-    const entry = index.get(word);
-    const current = getReview();
-    const card = Object.hasOwn(current.cards, word) ? current.cards[word] : void 0;
-    const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : void 0;
-    const familiarity = familiarityFor(card, flag);
-    return JSON.stringify({
-      collected: Boolean(entry),
-      word,
-      definition: entry?.definition ?? null,
-      familiarity,
-      due: card?.due ?? null
+    return bindRootRead(() => {
+      const word = normalizeWord(input?.word);
+      const entry = index.get(word);
+      const current = getReview();
+      const card = Object.hasOwn(current.cards, word) ? current.cards[word] : void 0;
+      const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : void 0;
+      const familiarity = familiarityFor(card, flag);
+      return JSON.stringify({
+        collected: Boolean(entry),
+        word,
+        definition: entry?.definition ?? null,
+        familiarity,
+        due: card?.due ?? null
+      });
     });
   };
 }
@@ -34234,6 +34221,14 @@ function rankMapFromWords(words) {
 function rankCandidates(surface) {
   const word = normalize2(surface);
   const candidates = /* @__PURE__ */ new Set([word]);
+  const singularPossessive = /^(?<stem>[a-z]+)'s$/u.exec(word);
+  const pluralPossessive = /^(?<stem>[a-z]+s)'$/u.exec(word);
+  if (singularPossessive?.groups) addCandidate2(candidates, singularPossessive.groups.stem);
+  if (pluralPossessive?.groups) {
+    addCandidate2(candidates, pluralPossessive.groups.stem);
+    addCandidate2(candidates, pluralPossessive.groups.stem.slice(0, -1));
+  }
+  if (singularPossessive || pluralPossessive) return [...candidates];
   if (IRREGULAR_SURFACE.has(word)) addCandidate2(candidates, IRREGULAR_SURFACE.get(word));
   if (word.length < 5 || RANK_DENYLIST.has(word)) return [...candidates];
   if (word.endsWith("ies")) addCandidate2(candidates, `${word.slice(0, -3)}y`);
@@ -34880,6 +34875,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
       throw error;
     }
   }
+  async withRootBoundRead(operation, abortedValue) {
+    let consistent = await this.ensureRootConsistent();
+    if (!consistent.ok) consistent = await this.ensureRootConsistent({ recover: false });
+    return consistent.ok ? operation() : abortedValue;
+  }
   panelState() {
     return {
       app: this.app,
@@ -35407,7 +35407,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
       name: "vocab_lookup",
       description: "Look up whether an English word is already in the user vocabulary notebook and return review familiarity.",
       inputSchema: LOOKUP_SCHEMA,
-      run: makeVocabLookup({ index: { get: (word) => this.index?.get(word) }, getReview: () => this.state.review })
+      run: makeVocabLookup({
+        index: { get: (word) => this.index?.get(word) },
+        getReview: () => this.state.review,
+        bindRootRead: (operation) => this.withRootBoundRead(operation, JSON.stringify({ error: this.t.knowledgeWriteAborted }))
+      })
     });
     await this.addAgentTool({
       name: "vocab_add",

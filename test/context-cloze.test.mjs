@@ -70,9 +70,9 @@ describe('context cloze', () => {
     expect(resolveExampleSourcePath()).toBeNull();
   });
 
-  it('should include comparative surfaces for adjective pos and permissive unknown-pos cloze', () => {
+  it('should include comparative surfaces only when adjective pos is known', () => {
     expect(surfacesFor({ word: 'big', pos: 'adjective' })).toEqual(expect.arrayContaining(['big', 'bigger', 'biggest']));
-    expect(surfacesFor({ word: 'quick' })).toContain('quicker');
+    expect(surfacesFor({ word: 'quick' })).toEqual(['quick']);
     expect(surfacesFor({ word: 'quick', pos: 'adjective' })).toContain('quicker');
   });
 
@@ -104,18 +104,18 @@ describe('context cloze', () => {
     expect(clozeSentence('Use toString and hasOwnProperty.', { word: 'toString' }).text).toBe('Use _____ and hasOwnProperty.');
   });
 
-  it('should use a permissive inflection union for cloze when note pos cannot be inferred', () => {
+  it('should use only the lemma when note pos cannot be inferred', () => {
     const run = { word: 'run', definition: 'to move fast on foot' };
-    expect(clozeSentence('She was running late.', run).text).toBe('She was _____ late.');
-    expect(clozeSentence('He ran home.', run).text).toBe('He _____ home.');
-    expect(pickExample({ ...run, examples: ['She was running late.', 'He ran home.'] }, 0)?.sentence).toBe('She was running late.');
-    expect(clozeSentence('She booked it.', { word: 'book', definition: 'a written work' }).text).toBe('She _____ it.');
+    expect(surfacesFor(run)).toEqual(['run']);
+    expect(clozeSentence('She was running late.', run).hits).toEqual([]);
+    expect(clozeSentence('He ran home.', run).hits).toEqual([]);
+    expect(clozeSentence('I ate herring.', { word: 'her', definition: 'pronoun' }).hits).toEqual([]);
   });
 
-  it('should constrain known noun entries while allowing verb forms for unknown-pos cloze', () => {
+  it('should constrain known noun entries and infer explicit definition prefixes', () => {
     expect(clozeSentence('She booked it.', { word: 'book', pos: 'noun' }).text).toBe('She booked it.');
     expect(clozeSentence('They sawed it.', { word: 'saw', pos: 'noun' }).text).toBe('They sawed it.');
-    expect(clozeSentence('She opened it.', { word: 'open' }).text).toBe('She _____ it.');
+    expect(clozeSentence('She opened it.', { word: 'open', definition: 'v. make accessible' }).text).toBe('She _____ it.');
   });
 
   it('should not cloze apostrophe tokens or unrelated words when they are not exact surfaces', () => {

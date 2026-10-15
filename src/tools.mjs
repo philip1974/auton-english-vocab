@@ -106,20 +106,22 @@ async function availablePath(app, word, guard, reservedPaths) {
   throw new Error(`no available note path for ${word}`);
 }
 
-export function makeVocabLookup({ index, review, getReview = () => review }) {
+export function makeVocabLookup({ index, review, getReview = () => review, bindRootRead = (operation) => operation() }) {
   return async function vocabLookup(input) {
-    const word = normalizeWord(input?.word);
-    const entry = index.get(word);
-    const current = getReview();
-    const card = Object.hasOwn(current.cards, word) ? current.cards[word] : undefined;
-    const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : undefined;
-    const familiarity = familiarityFor(card, flag);
-    return JSON.stringify({
-      collected: Boolean(entry),
-      word,
-      definition: entry?.definition ?? null,
-      familiarity,
-      due: card?.due ?? null,
+    return bindRootRead(() => {
+      const word = normalizeWord(input?.word);
+      const entry = index.get(word);
+      const current = getReview();
+      const card = Object.hasOwn(current.cards, word) ? current.cards[word] : undefined;
+      const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : undefined;
+      const familiarity = familiarityFor(card, flag);
+      return JSON.stringify({
+        collected: Boolean(entry),
+        word,
+        definition: entry?.definition ?? null,
+        familiarity,
+        due: card?.due ?? null,
+      });
     });
   };
 }

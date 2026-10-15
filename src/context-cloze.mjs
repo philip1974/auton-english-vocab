@@ -102,7 +102,7 @@ export function resolveExampleSourcePath(notePath, rawPath) {
 }
 
 export function surfacesFor(entry) {
-  return [...buildSurfaceMap([entry], { permissive: true }).keys()].sort();
+  return [...buildSurfaceMap([entry]).keys()].sort();
 }
 
 function tokenMatches(sentence, surfaces) {

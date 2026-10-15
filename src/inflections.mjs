@@ -1,4 +1,4 @@
-import { AMBIGUOUS_INFLECTION_SURFACES as GENERATED_AMBIGUOUS_INFLECTION_SURFACES } from './ambiguous-inflections.generated.mjs';
+import { AMBIGUOUS_INFLECTION_SURFACES as REVIEWED_AMBIGUOUS_INFLECTION_SURFACES } from './ambiguous-inflections.reviewed.mjs';
 
 const SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
@@ -10,7 +10,7 @@ const DENYLIST = new Set([
 // These high-frequency surfaces have common standalone meanings in the bundled
 // dictionary. Without a reliable local POS tag, treating them as inflections
 // creates more false positives than useful matches.
-export const AMBIGUOUS_INFLECTION_SURFACES = new Set(GENERATED_AMBIGUOUS_INFLECTION_SURFACES);
+export const AMBIGUOUS_INFLECTION_SURFACES = new Set(REVIEWED_AMBIGUOUS_INFLECTION_SURFACES);
 
 const IRREGULAR_VERBS = new Map(Object.entries({
   abide: ['abode', 'abode'],
@@ -396,7 +396,7 @@ function chooseLemma(surface, current, next, collected) {
   return next.localeCompare(current) < 0 ? next : current;
 }
 
-export function buildSurfaceMap(words, { permissive = false } = {}) {
+export function buildSurfaceMap(words) {
   const collected = new Set();
   const parts = new Map();
   for (const value of words) {
@@ -412,8 +412,7 @@ export function buildSurfaceMap(words, { permissive = false } = {}) {
     const surfaces = new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", '’'));
     const generatedParts = parts.get(lemma) ?? new Set();
-    const selectedParts = permissive && generatedParts.size === 0 ? new Set(['noun', 'verb', 'comparative']) : generatedParts;
-    for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
       if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;

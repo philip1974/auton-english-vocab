@@ -50,4 +50,12 @@ describe('rank candidates', () => {
     expect(rankCandidates(null)).toEqual(['']);
     expect(rankOf('ran', ['run', 'ran'])).toBe(1);
   });
+
+  it('should normalize straight and curly possessives without stripping contractions', () => {
+    expect(rankCandidates("mother's")).toEqual(expect.arrayContaining(["mother's", 'mother']));
+    expect(rankCandidates('mother’s')).toEqual(expect.arrayContaining(["mother's", 'mother']));
+    expect(rankCandidates("mothers'")).toEqual(expect.arrayContaining(["mothers'", 'mothers', 'mother']));
+    expect(rankCandidates("can't")).toEqual(["can't"]);
+    expect(rankCandidates("don't")).toEqual(["don't"]);
+  });
 });

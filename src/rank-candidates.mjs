@@ -49,6 +49,14 @@ export function rankMapFromWords(words) {
 export function rankCandidates(surface) {
   const word = normalize(surface);
   const candidates = new Set([word]);
+  const singularPossessive = /^(?<stem>[a-z]+)'s$/u.exec(word);
+  const pluralPossessive = /^(?<stem>[a-z]+s)'$/u.exec(word);
+  if (singularPossessive?.groups) addCandidate(candidates, singularPossessive.groups.stem);
+  if (pluralPossessive?.groups) {
+    addCandidate(candidates, pluralPossessive.groups.stem);
+    addCandidate(candidates, pluralPossessive.groups.stem.slice(0, -1));
+  }
+  if (singularPossessive || pluralPossessive) return [...candidates];
   if (IRREGULAR_SURFACE.has(word)) addCandidate(candidates, IRREGULAR_SURFACE.get(word));
   if (word.length < 5 || RANK_DENYLIST.has(word)) return [...candidates];
 

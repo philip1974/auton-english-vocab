@@ -741,6 +741,7 @@ describe('panel', () => {
     expect(container.textContent).toContain('无效笔记（1）');
     expect(container.textContent).toContain('wiki/vocab/broken.md');
     expect(container.textContent).toContain('笔记格式无效');
+    expect(container.textContent).not.toContain('unsupported YAML block scalar');
     expect(container.querySelector('[data-raw-error]')?.dataset.rawError).toBe('unsupported YAML block scalar');
   });
 
@@ -1893,6 +1894,46 @@ describe('main plugin', () => {
     expect(app.commands.at(-1).title).toContain('start review');
   });
 
+  it('should finish activation on the new root when review loading receives ROOT_CHANGED', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const read = app.storage.read.bind(app.storage);
+    let switched = false;
+    app.storage.read = async (root, name) => {
+      if (!switched && name === 'review.json') {
+        switched = true;
+        app.storage.setRoot('root-b');
+        throw Object.assign(new Error('root changed during review read'), { code: 'ROOT_CHANGED' });
+      }
+      return read(root, name);
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await expect(plugin.onload()).resolves.toBeUndefined();
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    expect(plugin.indexBinding.storageRootGeneration).toBe('root-b');
+  });
+
+  it('should finish activation on the new root when log loading receives ROOT_CHANGED', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const read = app.storage.read.bind(app.storage);
+    let switched = false;
+    app.storage.read = async (root, name) => {
+      if (!switched && name === 'log.json') {
+        switched = true;
+        app.storage.setRoot('root-b');
+        throw Object.assign(new Error('root changed during log read'), { code: 'ROOT_CHANGED' });
+      }
+      return read(root, name);
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await expect(plugin.onload()).resolves.toBeUndefined();
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    expect(plugin.indexBinding.storageRootGeneration).toBe('root-b');
+  });
+
   it('should replay a root change emitted while tool registration is still loading', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -2029,6 +2070,23 @@ describe('main plugin', () => {
     await plugin.onload();
     await expect(app.tools.get('vocab_lookup').run({ word: 'alpha' })).resolves.toContain('"collected":true');
     await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '测试' }] })).resolves.toContain('已提交审核');
+  });
+
+  it('should recover a silent root change before vocab lookup reads index and review projections', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.knowledge.listDocuments = async () => (await app.storage.scope()).rootGeneration === 'root'
+      ? [{ path: 'wiki/vocab/alpha.md', title: 'Alpha', revision: { contentHash: 'a' } }]
+      : [];
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(JSON.parse(await app.tools.get('vocab_lookup').run({ word: 'alpha' })).collected).toBe(true);
+    app.storage.setRoot('root-b');
+    const lookup = JSON.parse(await app.tools.get('vocab_lookup').run({ word: 'alpha' }));
+    expect(lookup).toMatchObject({ collected: false, familiarity: 'new' });
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    expect(plugin.state.entries).toEqual([]);
   });
 
   it('should submit dictionary collection as a knowledge proposal with note metadata and skip existing words', async () => {

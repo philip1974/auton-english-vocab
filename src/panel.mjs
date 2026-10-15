@@ -452,7 +452,8 @@ export function renderPanel(container, controls) {
       for (const item of state.invalid) {
         const row = el('div', 'ev-invalid-note');
         row.append(el('strong', '', item.path), el('span', '', t.invalidNoteReason(item)));
-        const raw = el('small', 'ev-note', String(item.error ?? ''));
+        const raw = el('small', 'ev-note');
+        raw.hidden = true;
         raw.dataset.rawError = String(item.error ?? '');
         row.append(raw);
         invalid.append(row);

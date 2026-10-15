@@ -276,6 +276,12 @@ export default class EnglishVocabPlugin extends BasePlugin {
     }
   }
 
+  async withRootBoundRead(operation, abortedValue) {
+    let consistent = await this.ensureRootConsistent();
+    if (!consistent.ok) consistent = await this.ensureRootConsistent({ recover: false });
+    return consistent.ok ? operation() : abortedValue;
+  }
+
   panelState() {
     return {
       app: this.app,
@@ -831,7 +837,11 @@ export default class EnglishVocabPlugin extends BasePlugin {
       name: 'vocab_lookup',
       description: 'Look up whether an English word is already in the user vocabulary notebook and return review familiarity.',
       inputSchema: LOOKUP_SCHEMA,
-      run: makeVocabLookup({ index: { get: (word) => this.index?.get(word) }, getReview: () => this.state.review }),
+      run: makeVocabLookup({
+        index: { get: (word) => this.index?.get(word) },
+        getReview: () => this.state.review,
+        bindRootRead: (operation) => this.withRootBoundRead(operation, JSON.stringify({ error: this.t.knowledgeWriteAborted })),
+      }),
     });
     await this.addAgentTool({
       name: 'vocab_add',
