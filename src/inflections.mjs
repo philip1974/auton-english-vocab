@@ -253,8 +253,8 @@ function isCvc(word) {
   return isConsonant(a) && VOWELS.has(b) && isConsonant(c) && !['w', 'x', 'y'].includes(c);
 }
 
-function addCandidate(set, surface) {
-  if (isSurface(surface) && !DENYLIST.has(surface)) set.add(surface);
+function addCandidate(set, surface, allowDenied = false) {
+  if (isSurface(surface) && (allowDenied || !DENYLIST.has(surface))) set.add(surface);
 }
 
 function normalizePos(value) {
@@ -320,7 +320,7 @@ function generatedForms(lemma, pos) {
   if (pos === 'noun') {
     if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
     const irregular = IRREGULAR_NOUNS[lemma];
-    if (irregular) for (const form of irregular) addCandidate(forms, form);
+    if (irregular) for (const form of irregular) addCandidate(forms, form, true);
     else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
     else if (/fe?$/u.test(lemma)) return forms;
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
@@ -332,7 +332,7 @@ function generatedForms(lemma, pos) {
   }
   if (pos === 'comparative') {
     const irregular = IRREGULAR_COMPARATIVES[lemma];
-    if (irregular) for (const form of irregular) addCandidate(forms, form);
+    if (irregular) for (const form of irregular) addCandidate(forms, form, true);
     else if (endsConsonantY(lemma)) {
       addCandidate(forms, `${lemma.slice(0, -1)}ier`);
       addCandidate(forms, `${lemma.slice(0, -1)}iest`);
@@ -348,12 +348,34 @@ function generatedForms(lemma, pos) {
   if (pos !== 'verb') return forms;
   if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS[lemma]) return forms;
   const irregular = IRREGULAR_VERBS[lemma];
-  for (const form of irregular ?? []) addCandidate(forms, form);
-  if (lemma === 'be') for (const form of ['am', 'are', 'is', 'was', 'were', 'been', 'being']) addCandidate(forms, form);
-  addCandidate(forms, thirdPerson(lemma));
+  for (const form of irregular ?? []) addCandidate(forms, form, true);
+  if (lemma === 'be') for (const form of ['am', 'are', 'is', 'was', 'were', 'been', 'being']) addCandidate(forms, form, true);
+  addCandidate(forms, thirdPerson(lemma), lemma === 'be' || lemma === 'have');
   addCandidate(forms, presentParticiple(lemma));
   if (!irregular) addCandidate(forms, regularPast(lemma));
   return forms;
+}
+
+export function inflectionKindsFor(lemmaValue, surfaceValue) {
+  const lemma = normalize(lemmaValue);
+  const surface = normalize(surfaceValue);
+  const kinds = new Set();
+  if (!isSurface(lemma) || !isSurface(surface) || lemma === surface) return kinds;
+  if (generatedForms(lemma, 'noun').has(surface)) kinds.add('plural');
+  if (thirdPerson(lemma) === surface) kinds.add('thirdPerson');
+  if (presentParticiple(lemma) === surface) kinds.add('presentParticiple');
+  const irregular = IRREGULAR_VERBS[lemma];
+  if (irregular?.[0] === surface || (!irregular && regularPast(lemma) === surface)) kinds.add('past');
+  if (irregular?.[1] === surface || (!irregular && regularPast(lemma) === surface)) kinds.add('pastParticiple');
+  const comparative = IRREGULAR_COMPARATIVES[lemma];
+  if (comparative?.[0] === surface) kinds.add('comparative');
+  if (comparative?.[1] === surface) kinds.add('superlative');
+  if (!comparative) {
+    const forms = [...generatedForms(lemma, 'comparative')];
+    if (forms[0] === surface) kinds.add('comparative');
+    if (forms[1] === surface) kinds.add('superlative');
+  }
+  return kinds;
 }
 
 function chooseLemma(surface, current, next, collected) {
@@ -382,7 +404,7 @@ export function buildSurfaceMap(words, { permissive = false } = {}) {
     const selectedParts = permissive && generatedParts.size === 0 ? new Set(['noun', 'verb', 'comparative']) : generatedParts;
     for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
-      if (!isSurface(surface) || (surface !== lemma && DENYLIST.has(surface))) continue;
+      if (!isSurface(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }

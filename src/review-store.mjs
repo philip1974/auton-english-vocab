@@ -301,6 +301,9 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
       if (card.difficulty > 10) throw new Error('invalid card');
       if (!['New', 'Learning', 'Review', 'Relearning'].includes(card.state)) throw new Error('invalid card');
       if (card.state !== 'New' && !card.last_review) throw new Error('invalid card');
+      if (card.state === 'New') {
+        if (card.stability !== 0 || card.difficulty !== 0 || card.reps !== 0 || card.lapses !== 0) throw new Error('invalid card');
+      } else if (card.stability < 0.001 || card.difficulty < 1 || card.reps < 1) throw new Error('invalid card');
       const normalized = deserializeCard(card);
       if (!normalized || Number.isNaN(normalized.due?.getTime?.()) || (normalized.last_review && Number.isNaN(normalized.last_review.getTime())) || ![0, 1, 2, 3].includes(normalized.state)) throw new Error('invalid card');
       review.cards[word] = serializeCard(normalized);

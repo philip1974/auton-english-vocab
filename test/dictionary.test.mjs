@@ -60,25 +60,39 @@ describe('dictionary', () => {
     await expect(lookup('better')).resolves.toMatchObject({ surface: 'better', lemma: 'better', inflection: { lemma: 'good', kind: 'comparative' } });
     const hers = await lookup('hers');
     expect(hers?.inflection).toBeUndefined();
+    const ambiguousImporter = async () => ({ default: {
+      axes: { t: 'n. 独立义项\nv. 独立义项', x: '0:axe' },
+      axe: { t: 'n. 斧头\nv. 砍' },
+    } });
+    expect((await lookup('axes', { importer: ambiguousImporter }))?.inflection).toBeUndefined();
+  });
+
+  it('should reverse validate real dictionary relations for axes and quizzes', async () => {
+    await expect(lookup('axes')).resolves.toMatchObject({
+      surface: 'axes', lemma: 'axes', inflection: { lemma: 'ax', kind: 'plural' },
+    });
+    await expect(lookup('quizzes')).resolves.toMatchObject({
+      surface: 'quizzes', lemma: 'quizzes', inflection: { lemma: 'quiz', kind: 'plural' },
+    });
   });
 
   it('should classify every supported semantic surface inflection relation', async () => {
     const kinds = {
-      baked: ['过去式', 'past'],
-      broken: ['过去分词', 'pastParticiple'],
-      baking: ['现在分词', 'presentParticiple'],
-      bases: ['复数', 'plural'],
-      bakes: ['第三人称单数', 'thirdPerson'],
-      bigger: ['比较级', 'comparative'],
-      biggest: ['最高级', 'superlative'],
+      baked: ['bake', '过去式', 'past'],
+      broken: ['break', '过去分词', 'pastParticiple'],
+      baking: ['bake', '现在分词', 'presentParticiple'],
+      bases: ['base', '复数', 'plural'],
+      bakes: ['bake', '第三人称单数', 'thirdPerson'],
+      bigger: ['big', '比较级', 'comparative'],
+      biggest: ['big', '最高级', 'superlative'],
     };
-    const local = { b: { base: { t: 'n. 基础' } } };
-    for (const [surface, [label]] of Object.entries(kinds)) {
-      local.b[surface] = { t: `n. 独立义项\nbase的${label}`, x: '0:base' };
+    const local = { b: { bake: { t: 'v. 烘焙' }, break: { t: 'v. 打破' }, base: { t: 'n. 基础' }, big: { t: 'a. 大的' } } };
+    for (const [surface, [lemma, label]] of Object.entries(kinds)) {
+      local.b[surface] = { t: `n. 独立义项\n${lemma}的${label}`, x: `0:${lemma}` };
     }
     const localImporter = async () => ({ default: local.b });
-    for (const [surface, [, kind]] of Object.entries(kinds)) {
-      await expect(lookup(surface, { importer: localImporter })).resolves.toMatchObject({ lemma: surface, inflection: { lemma: 'base', kind } });
+    for (const [surface, [lemma, , kind]] of Object.entries(kinds)) {
+      await expect(lookup(surface, { importer: localImporter })).resolves.toMatchObject({ lemma: surface, inflection: { lemma, kind } });
     }
   });
 
@@ -94,7 +108,7 @@ describe('dictionary', () => {
 
   it('should try common suffix candidates for past plural comparative and superlative forms', async () => {
     const local = {
-      h: { happy: { t: 'adj. 快乐的', d: 'glad' }, hop: { t: 'v. 跳', d: 'jump' } },
+      h: { happy: { t: 'adj. 快乐的\nv. 使快乐\nn. 快乐的人', d: 'glad' }, hop: { t: 'v. 跳', d: 'jump' } },
       b: { box: { t: 'n. 盒子', d: 'container' }, big: { t: 'adj. 大的', d: 'large' } },
       l: { like: { t: 'v. 喜欢', d: 'enjoy' } },
     };

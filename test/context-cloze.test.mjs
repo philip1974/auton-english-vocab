@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath, surfacesFor } from '../src/context-cloze.mjs';
 
 describe('context cloze', () => {
+  it('should cloze explicit be and have irregular forms without leaking the answer', () => {
+    expect(clozeSentence('He is ready and was calm.', { word: 'be', pos: 'verb' }).text).toBe('He _____ ready and _____ calm.');
+    expect(clozeSentence('She has it.', { word: 'have', pos: 'verb' }).text).toBe('She _____ it.');
+  });
+
   it('should parse markdown source when example line has a path source', () => {
     expect(parseExampleLine('She was running late. — [Daily\\[Run\\]](../sources/run.md)')).toEqual({
       sentence: 'She was running late.',

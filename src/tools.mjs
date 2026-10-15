@@ -49,9 +49,9 @@ async function withSoftTimeout(promise, ms) {
   return result;
 }
 
-async function resolveSource(app, source, notes) {
+async function resolveSource(app, source, notes, guard) {
   if (!source?.path || !source.path.startsWith('wiki/')) return source;
-  const doc = await withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap).catch(() => null), 3000);
+  const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap).catch(() => null), 3000));
   if (!doc) {
     notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
     return undefined;
@@ -73,9 +73,9 @@ async function mapConcurrent(values, limit, mapper) {
   return results;
 }
 
-async function readOptional(app, path) {
+async function readOptional(app, path, guard) {
   try {
-    const result = await app.knowledge.readDocument({ path });
+    const result = await guard.wait(app.knowledge.readDocument({ path }));
     if (result?._tag !== 'Err') return result;
     if (result.error?.code === 'NOT_FOUND') return null;
     throw new Error(String(result.error?.message ?? result.error?.code ?? result.error ?? 'knowledge error'));
@@ -85,11 +85,11 @@ async function readOptional(app, path) {
   }
 }
 
-async function availablePath(app, word) {
+async function availablePath(app, word, guard) {
   const slug = slugFor(word);
   for (let number = 1; number < 1000; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
-    const doc = await readOptional(app, path);
+    const doc = await readOptional(app, path, guard);
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
     if (parsed.ok && parsed.entry.word === word) return { path, doc };
@@ -114,16 +114,18 @@ export function makeVocabLookup({ index, review, getReview = () => review }) {
   };
 }
 
-export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = 'en' }) {
+export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = 'en', bindKnowledgeWrite }) {
   return async function vocabAdd(input) {
+    const t = uiText(typeof locale === 'function' ? locale() : locale);
+    const bind = bindKnowledgeWrite ?? ((operation) => operation({ assertCurrent: () => undefined, wait: (promise) => promise }));
+    return bind(async (guard) => {
     const entries = input?.entries;
     if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
       throw new Error('entries must contain 1-20 items');
     }
-    const t = uiText(typeof locale === 'function' ? locale() : locale);
     const notes = [];
     const validated = entries.map(validateEntry);
-    const normalized = await mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes) }));
+    const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes, guard) })));
     const groups = new Map();
     for (const entry of normalized) {
       const group = groups.get(entry.word) ?? { ...entry, examples: [] };
@@ -135,14 +137,15 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     const changes = [];
     const accepted = [];
     for (const entry of groups.values()) {
+      if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
       const existing = index.get(entry.word);
       let path;
       let doc;
       if (existing) {
         path = existing.path;
-        doc = unwrap(await app.knowledge.readDocument({ path }));
+        doc = unwrap(await guard.wait(app.knowledge.readDocument({ path })));
       } else {
-        ({ path, doc } = await availablePath(app, entry.word));
+        ({ path, doc } = await availablePath(app, entry.word, guard));
       }
       let content;
       if (doc) {
@@ -161,6 +164,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     if (!changes.length) return ['No vocabulary entries changed.', ...notes].join('\n');
     const number = nextNumber();
     const words = accepted;
+    guard.assertCurrent();
     const proposal = app.knowledge.propose({
       description: t.proposalDescription(number, words.join(', ')),
       changes,
@@ -170,6 +174,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       refresh?.();
     }).catch(() => notify(t.proposalFailed(number)));
     return [`Submitted for review #${number}: ${words.length} ${words.length === 1 ? 'word' : 'words'}.`, ...notes].join('\n');
+    }, t.knowledgeWriteAborted);
   };
 }
 

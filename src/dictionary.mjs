@@ -1,4 +1,5 @@
 import { assertEnglishWord, isEnglishWordPrefix, normalizeWord } from './note-format.mjs';
+import { inflectionKindsFor } from './inflections.mjs';
 
 const LETTER_RE = /^[a-z]$/u;
 const cache = new Map();
@@ -53,7 +54,7 @@ function exchangeLemma(entry) {
 }
 
 function translatedLemma(entry) {
-  const match = String(entry?.t ?? '').match(/([a-z][a-z'-]*)\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
+  const match = String(entry?.t ?? '').match(/([a-z][a-z'-]*)\s*的?\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
   return match?.[1]?.toLowerCase() ?? null;
 }
 
@@ -65,7 +66,17 @@ function isPureInflection(entry) {
     .match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
 }
 
-function inflectionKind(entry, lemma) {
+function entrySupportsKinds(entry, kinds) {
+  const definitions = `${String(entry?.t ?? '')}\n${String(entry?.d ?? '')}`;
+  const noun = /(?:^|\n)\s*(?:n\.|pl\.)/imu.test(definitions);
+  const verb = /(?:^|\n)\s*(?:v\.|vt\.|vi\.)/imu.test(definitions);
+  const adjective = /(?:^|\n)\s*(?:a\.|adj\.|adv\.)/imu.test(definitions);
+  if (kinds.has('plural') && noun) return true;
+  if ([...kinds].some((kind) => ['past', 'pastParticiple', 'presentParticiple', 'thirdPerson'].includes(kind)) && verb) return true;
+  return [...kinds].some((kind) => ['comparative', 'superlative'].includes(kind)) && adjective;
+}
+
+function inflectionKind(entry, lemma, surface, verifiedKinds = inflectionKindsFor(lemma, surface)) {
   const lines = String(entry?.t ?? '').split('\n');
   const related = lines.find((line) => line.toLowerCase().includes(lemma)) ?? lines.join('\n');
   const label = related.match(/(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/u)?.[0];
@@ -73,16 +84,20 @@ function inflectionKind(entry, lemma) {
     过去式: 'past', 过去分词: 'pastParticiple', 现在分词: 'presentParticiple', 复数: 'plural',
     第三人称单数: 'thirdPerson', 比较级: 'comparative', 最高级: 'superlative',
   }[label];
-  if (translated) return translated;
+  if (translated && verifiedKinds.has(translated)) return translated;
   const code = String(entry?.x ?? '').match(/(?:^|\/)1:([^/]+)/u)?.[1] ?? '';
-  if (code.includes('r')) return 'comparative';
-  if (code.includes('t')) return 'superlative';
-  if (code.includes('i')) return 'presentParticiple';
-  if (code.includes('3')) return 'thirdPerson';
-  if (code.includes('s')) return 'plural';
-  if (code.includes('p')) return 'pastParticiple';
-  if (code.includes('d')) return 'past';
-  return '';
+  const definitions = `${String(entry?.t ?? '')}\n${String(entry?.d ?? '')}`;
+  const noun = /(?:^|\n)\s*(?:n\.|pl\.)/imu.test(definitions);
+  const verb = /(?:^|\n)\s*(?:v\.|vt\.|vi\.)/imu.test(definitions);
+  if (noun && code.includes('s') && verifiedKinds.has('plural')) return 'plural';
+  const coded = [
+    ['r', 'comparative'], ['t', 'superlative'], ['i', 'presentParticiple'],
+    ['3', 'thirdPerson'], ['s', 'plural'], ['p', 'pastParticiple'], ['d', 'past'],
+  ];
+  for (const [marker, kind] of coded) {
+    if (code.includes(marker) && verifiedKinds.has(kind) && (kind !== 'thirdPerson' || verb || !noun)) return kind;
+  }
+  return verifiedKinds.size === 1 ? [...verifiedKinds][0] : '';
 }
 
 function candidateBases(surface) {
@@ -91,6 +106,7 @@ function candidateBases(surface) {
     if (value && value !== surface && /^[a-z]+(?:'[a-z]+)*$/u.test(value) && !bases.includes(value)) bases.push(value);
   };
   add(IRREGULAR_BASES.get(surface));
+  if (surface.endsWith('zzes') && surface.length > 5) add(surface.slice(0, -3));
   if (surface.endsWith('ies') && surface.length > 4) add(`${surface.slice(0, -3)}y`);
   if (surface.endsWith('ied') && surface.length > 4) add(`${surface.slice(0, -3)}y`);
   if (surface.endsWith('ing') && surface.length > 5) {
@@ -131,21 +147,30 @@ export async function lookup(word, { importer = defaultImporter } = {}) {
   if (direct) {
     const exchange = exchangeLemma(direct);
     const candidates = [translatedLemma(direct), exchange, ...candidateBases(surface)].filter(Boolean);
-    let lemma = exchange;
+    let lemma = null;
+    let verifiedKinds = new Set();
     for (const candidate of candidates) {
-      if (candidate !== surface && await entryFor(candidate, importer)) { lemma = candidate; break; }
+      const kinds = inflectionKindsFor(candidate, surface);
+      const candidateEntry = candidate !== surface && kinds.size > 0 ? await entryFor(candidate, importer) : null;
+      if (candidateEntry && entrySupportsKinds(candidateEntry, kinds)) {
+        lemma = candidate;
+        verifiedKinds = kinds;
+        break;
+      }
     }
     if (lemma && lemma !== surface && isPureInflection(direct)) {
       const lemmaEntry = await entryFor(lemma, importer);
       if (lemmaEntry) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
     }
-    const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma) : '';
+    const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma, surface, verifiedKinds) : '';
     const inflection = kind ? { lemma, kind } : undefined;
     return { surface: displaySurface, lemma: surface, entry: direct, surfaceEntry: direct, ...(inflection ? { inflection } : {}) };
   }
   for (const lemma of candidateBases(surface)) {
+    const kinds = inflectionKindsFor(lemma, surface);
+    if (kinds.size === 0) continue;
     const entry = await entryFor(lemma, importer);
-    if (entry) return { surface: displaySurface, lemma, entry, surfaceEntry: null };
+    if (entry && entrySupportsKinds(entry, kinds)) return { surface: displaySurface, lemma, entry, surfaceEntry: null };
   }
   return null;
 }

@@ -25,7 +25,7 @@ describe('vocab index', () => {
     expect(reads).toEqual(['wiki/vocab/a.md', 'wiki/vocab/b.md', 'wiki/vocab/b.md']);
   });
 
-  it('should drop removed cached paths and keep the first duplicate word when refreshing', async () => {
+  it('should report every duplicate word path and withhold the ambiguous entry until resolved', async () => {
     let metas = [
       { path: 'wiki/vocab/one.md', title: 'One', revision: {} },
       { path: 'wiki/vocab/two.md', title: 'Two', revision: {} },
@@ -36,7 +36,12 @@ describe('vocab index', () => {
         return { meta: { path }, content: buildNote({ word: 'same', definition: path }) };
       },
     });
-    await index.refresh();
+    const duplicated = await index.refresh();
+    expect(duplicated.entries).toEqual([]);
+    expect(duplicated.invalid).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'wiki/vocab/one.md', kind: 'duplicate', word: 'same' }),
+      expect.objectContaining({ path: 'wiki/vocab/two.md', kind: 'duplicate', word: 'same' }),
+    ]));
     metas = [{ path: 'wiki/vocab/two.md', title: 'Two', revision: {} }];
     const result = await index.refresh();
     expect(result.entries).toHaveLength(1);

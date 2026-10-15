@@ -21,6 +21,7 @@ export class VocabIndex {
     this.onUpdate = onUpdate;
     this.cache = new Map();
     this.entries = new Map();
+    this.duplicateWords = new Set();
     this.invalid = [];
     this.refreshing = null;
     this.pending = false;
@@ -31,6 +32,7 @@ export class VocabIndex {
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
+    this.duplicateWords.clear();
     this.invalid = [];
     if (this.refreshing) this.pending = true;
   }
@@ -51,6 +53,7 @@ export class VocabIndex {
           if (error?.code !== 'ROOT_CHANGED' && generation === this.generation) throw error;
           this.cache.clear();
           this.entries.clear();
+          this.duplicateWords.clear();
           this.invalid = [];
           if (!this.pending && generation === this.generation) throw error;
           this.pending = true;
@@ -106,14 +109,25 @@ export class VocabIndex {
 
   rebuild(readFailures = []) {
     this.entries = new Map();
+    this.duplicateWords = new Set();
     this.invalid = [];
+    const byWord = new Map();
     for (const [path, item] of this.cache.entries()) {
       if (!item.parsed.ok) {
         this.invalid.push({ path, kind: 'parse', error: item.parsed.error });
         continue;
       }
       const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
-      if (!this.entries.has(entry.word)) this.entries.set(entry.word, entry);
+      const matches = byWord.get(entry.word) ?? [];
+      matches.push(entry);
+      byWord.set(entry.word, matches);
+    }
+    for (const [word, matches] of byWord.entries()) {
+      if (matches.length === 1) this.entries.set(word, matches[0]);
+      else {
+        this.duplicateWords.add(word);
+        for (const entry of matches) this.invalid.push({ path: entry.path, kind: 'duplicate', word });
+      }
     }
     this.invalid.push(...readFailures);
     return { entries: [...this.entries.values()], invalid: this.invalid };
@@ -121,5 +135,9 @@ export class VocabIndex {
 
   get(word) {
     return this.entries.get(String(word).toLowerCase());
+  }
+
+  isAmbiguous(word) {
+    return this.duplicateWords.has(String(word).toLowerCase());
   }
 }

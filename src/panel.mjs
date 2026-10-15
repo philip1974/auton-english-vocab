@@ -45,7 +45,7 @@ function contextSourceRow(source, notePath, controls, t) {
   if (source.url) {
     let host = source.url;
     try { host = new URL(source.url).hostname || source.url; } catch { /* keep the raw url */ }
-    const text = el('span', 'ev-context-source-text', host);
+    const text = el('span', 'ev-context-source-text', source.title || host);
     text.title = source.url;
     row.append(text);
     return row;
@@ -181,7 +181,11 @@ export function renderPanel(container, controls) {
   const renderToday = (state) => {
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     const validModes = ['context', 'flip', 'reverse', 'listening'];
-    if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
+    if (renderedWord !== null && renderedWord !== item?.word) {
+      controls.cancelSpeech?.();
+      flipped = false;
+      lastSpokenWord = null;
+    }
     renderedWord = item?.word ?? null;
     if (validModes.includes(state.reviewMode)) {
       explicitMode = state.reviewMode;

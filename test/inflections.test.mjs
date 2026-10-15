@@ -174,4 +174,11 @@ describe('inflections', () => {
     expect([...map.keys()]).toEqual(expect.arrayContaining(['children', 'have', 'having', 'had', 'go', 'goes', 'going', 'went', 'gone']));
     expect(map.has('childrens')).toBe(false);
   });
+
+  it('should retain explicit be and have irregular surfaces even when generic ambiguity rules deny them', () => {
+    const map = buildSurfaceMap([{ word: 'be', pos: 'verb' }, { word: 'have', pos: 'verb' }]);
+    expect(map.get('is')).toBe('be');
+    expect(map.get('was')).toBe('be');
+    expect(map.get('has')).toBe('have');
+  });
 });

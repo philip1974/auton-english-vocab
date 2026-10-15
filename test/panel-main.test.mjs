@@ -299,6 +299,37 @@ describe('panel', () => {
     expect(speakSentence).toHaveBeenCalledWith('Run today.');
   });
 
+  it('should prefer a saved web source title over its hostname in a context card', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', examples: ['Run today. — [Article title](https://example.com/article)'] }],
+      review: { version: 1, cards: {}, flags: {} }, log: [], hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('.ev-context-source-text')?.textContent).toBe('Article title');
+    expect(container.querySelector('.ev-context-source-text')?.title).toBe('https://example.com/article');
+  });
+
+  it('should hide the answer again when an external state change advances the queue', () => {
+    const container = document.createElement('div');
+    let listener;
+    let state = {
+      entries: [{ word: 'alpha', definition: 'first' }, { word: 'beta', definition: 'second' }],
+      review: { version: 1, cards: {}, flags: {} }, log: [], reviewMode: 'flip',
+    };
+    renderPanel(container, {
+      app: fullApp(), getState: () => state,
+      subscribe: (next) => { listener = next; return () => undefined; }, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '答案').click();
+    expect(container.textContent).toContain('first');
+    state = { ...state, review: { ...state.review, flags: { alpha: 'ignored' } } };
+    listener();
+    expect(container.querySelector('.ev-review-word')?.textContent).toBe('beta');
+    expect(container.textContent).not.toContain('second');
+    expect([...container.querySelectorAll('button')].some((node) => node.textContent === '答案')).toBe(true);
+  });
+
   it('should show an unsafe source title as plain text without offering to open it', () => {
     const container = document.createElement('div');
     renderPanel(container, {
@@ -654,6 +685,7 @@ describe('panel', () => {
         { path: 'wiki/vocab/large.md', kind: 'read', code: 'DOCUMENT_TOO_LARGE', error: 'large' },
         { path: 'wiki/vocab/binary.md', kind: 'read', code: 'DOCUMENT_NOT_TEXT', error: 'binary' },
         { path: 'wiki/vocab/offline.md', kind: 'read', code: 'READ_FAILED', error: 'offline' },
+        { path: 'wiki/vocab/run-2.md', kind: 'duplicate', word: 'run' },
       ],
       review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
     });
@@ -662,6 +694,7 @@ describe('panel', () => {
     expect(container.textContent).toContain('文件过大');
     expect(container.textContent).toContain('不是文本文件');
     expect(container.textContent).toContain('文件读取失败');
+    expect(container.textContent).toContain('生词重复');
   });
 
   it('should append a manual add request and reject empty or non English words', () => {
@@ -1740,7 +1773,7 @@ describe('main plugin', () => {
     app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
-    const previous = { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' };
+    const previous = { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' };
     plugin.state.review = { version: 1, cards: { alpha: previous }, flags: {} };
     plugin.reviewStore.review = plugin.state.review;
     await plugin.rateWord('alpha', 'Again', 'reading-card');
@@ -2045,8 +2078,9 @@ describe('main plugin', () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
     const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: generation }) };
     let generation = 'root-a';
-    const byRoot = { 'root-a': JSON.stringify({ version: 1, cards: { alpha: { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' } }, flags: {} }) };
+    const byRoot = { 'root-a': JSON.stringify({ version: 1, cards: { alpha: { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' } }, flags: {} }) };
     app.storage.scope = async () => ({ rootGeneration: generation });
     app.storage.read = async (root, name) => {
       if (root !== generation) throw Object.assign(new Error('changed'), { code: 'ROOT_CHANGED' });
@@ -2055,11 +2089,89 @@ describe('main plugin', () => {
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
     expect(Object.keys(plugin.state.review.cards)).toEqual(['alpha']);
+    const reload = vi.spyOn(plugin.recommender, 'reload');
 
     generation = 'root-b';
     await app.events.find((event) => event.name === 'knowledge.index-changed').listener({ status: null });
 
     expect(plugin.state.review.cards).toEqual({});
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it('should create review operation ids that remain unique across plugin instances in the same millisecond', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(42);
+    try {
+      const first = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+      const second = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+      await Promise.all([first.onload(), second.onload()]);
+      expect(first.nextLogId()).not.toBe(second.nextLogId());
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('should preserve both cards and logs when two plugin instances rate in the same millisecond through cas', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(42);
+    try {
+      const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+      const second = new module.default(app, { id: 'dev.auton.english-vocab' });
+      await Promise.all([first.onload(), second.onload()]);
+      await Promise.all([first.rateWord('alpha', 'Good', 'flip'), second.rateWord('beta', 'Good', 'flip')]);
+      const review = JSON.parse((await app.storage.read('root', 'review.json')).text);
+      const log = JSON.parse((await app.storage.read('root', 'log.json')).text);
+      expect(Object.keys(review.cards).sort()).toEqual(['alpha', 'beta']);
+      expect(log.map((entry) => entry.word).sort()).toEqual(['alpha', 'beta']);
+      expect(new Set(log.map((entry) => entry.id)).size).toBe(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('should abort every knowledge proposal when its captured root generation or workspace epoch changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const runCase = async (kind) => {
+      const app = fullApp();
+      let epoch = 'epoch-a';
+      app.workspace = { scope: () => ({ epoch }) };
+      const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+      await plugin.onload();
+      let release;
+      app.knowledge.propose = vi.fn();
+      app.knowledge.readDocument = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+      let pending;
+      if (kind === 'example') pending = plugin.addExampleSentence('alpha', { sentence: 'Alpha after switch.' });
+      else if (kind === 'collect') pending = plugin.collectDictionaryWord({ lemma: 'beta', entry: { t: 'n. 贝塔' } });
+      else pending = app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '贝塔' }] });
+      for (let attempt = 0; attempt < 20 && typeof release !== 'function'; attempt += 1) await Promise.resolve();
+      if (typeof release !== 'function') await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(typeof release, kind).toBe('function');
+      if (kind === 'collect') epoch = 'epoch-b';
+      else plugin.invalidateRoot();
+      release(kind === 'example'
+        ? { content: buildNote({ word: 'alpha', definition: '字母' }), meta: { title: 'Alpha' } }
+        : { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } });
+      const result = await pending;
+      expect(app.knowledge.propose).not.toHaveBeenCalled();
+      expect(kind === 'tool' ? result : result.summary).toMatch(/知识库.*中止/u);
+    };
+    await runCase('example');
+    await runCase('collect');
+    await runCase('tool');
+  });
+
+  it('should use the legacy root-binding epoch when workspace scope is unavailable', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => { throw new Error('workspace unavailable'); } };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    expect(plugin.workspaceEpoch()).toBe('legacy');
   });
 
   it('should register reading status with a pure open-panel action and learning suggestions when host ports exist', async () => {

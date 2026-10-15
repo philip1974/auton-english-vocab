@@ -66,6 +66,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.pendingMutations = 0;
     this.mutationSequence = 0;
+    this.operationNonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
@@ -145,7 +146,40 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   nextLogId() {
     this.mutationSequence += 1;
-    return `review-${Date.now().toString(36)}-${this.mutationSequence}`;
+    return `review-${this.operationNonce}-${Date.now().toString(36)}-${this.mutationSequence}`;
+  }
+
+  workspaceEpoch() {
+    try { return this.app.workspace?.scope?.().epoch ?? 'legacy'; } catch { return 'legacy'; }
+  }
+
+  async withRootBoundKnowledgeWrite(operation, abortedValue = { outcome: 'aborted', summary: this.t.knowledgeWriteAborted }) {
+    const generation = this.rootGeneration;
+    const epoch = this.workspaceEpoch();
+    const current = () => generation === this.rootGeneration && epoch === this.workspaceEpoch();
+    const assertCurrent = () => {
+      if (!current()) throw Object.assign(new Error('knowledge root changed'), { code: 'KNOWLEDGE_WRITE_ABORTED' });
+    };
+    const guard = {
+      assertCurrent,
+      wait: async (promise) => {
+        try {
+          const value = await promise;
+          assertCurrent();
+          return value;
+        } catch (error) {
+          assertCurrent();
+          throw error;
+        }
+      },
+    };
+    try {
+      assertCurrent();
+      return await operation(guard);
+    } catch (error) {
+      if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') return abortedValue;
+      throw error;
+    }
   }
 
   panelState() {
@@ -258,6 +292,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       if (generation !== this.rootGeneration) return;
       this.state.review = review;
       this.state.log = this.reviewStore.effectiveLog();
+      await this.recommender?.reload();
+      if (generation !== this.rootGeneration) return;
     }
     try {
       const result = await this.index.refresh();
@@ -659,11 +695,12 @@ export default class EnglishVocabPlugin extends BasePlugin {
       inputSchema: ADD_SCHEMA,
       run: makeVocabAdd({
         app: this.app,
-        index: { get: (word) => this.index?.get(word) },
+        index: { get: (word) => this.index?.get(word), isAmbiguous: (word) => this.index?.isAmbiguous(word) === true },
         nextNumber: () => ++this.submission,
         notify: (message) => this.notice(message),
         refresh: () => this.refreshIndex(),
         locale: () => this.locale,
+        bindKnowledgeWrite: (operation, abortedValue) => this.withRootBoundKnowledgeWrite(operation, abortedValue),
       }),
     });
   }
@@ -705,73 +742,81 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async addExampleSentence(word, context = {}) {
-    const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
-    if (!entry?.path || !context.sentence) return { outcome: 'aborted', summary: 'missing vocabulary entry or sentence' };
-    let document;
-    try {
-      document = await this.app.knowledge.readDocument({ path: entry.path });
-    } catch (error) {
-      return { outcome: 'aborted', summary: proposalError(error) };
-    }
-    if (document?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(document.error) };
-    const parsed = parseNote(document.content);
-    if (!parsed.ok) return { outcome: 'aborted', summary: parsed.error };
-    const target = normalizedSentence(context.sentence);
-    const duplicate = parsed.entry.examples.some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
-    if (duplicate) return { outcome: 'exists', summary: this.t.exampleExists };
-    const newContent = appendExample(document.content, context.sentence, readingSource(context.source));
-    if (newContent === document.content) return { outcome: 'exists', summary: this.t.exampleExists };
-    const receipt = await this.app.knowledge.propose({
-      description: this.t.addExampleDescription(word),
-      changes: [{ path: entry.path, newContent }],
+    return this.withRootBoundKnowledgeWrite(async (guard) => {
+      const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
+      if (!entry?.path || !context.sentence) return { outcome: 'aborted', summary: 'missing vocabulary entry or sentence' };
+      let document;
+      try {
+        document = await guard.wait(this.app.knowledge.readDocument({ path: entry.path }));
+      } catch (error) {
+        if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') throw error;
+        return { outcome: 'aborted', summary: proposalError(error) };
+      }
+      if (document?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(document.error) };
+      const parsed = parseNote(document.content);
+      if (!parsed.ok) return { outcome: 'aborted', summary: parsed.error };
+      const target = normalizedSentence(context.sentence);
+      const duplicate = parsed.entry.examples.some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
+      if (duplicate) return { outcome: 'exists', summary: this.t.exampleExists };
+      const newContent = appendExample(document.content, context.sentence, readingSource(context.source));
+      if (newContent === document.content) return { outcome: 'exists', summary: this.t.exampleExists };
+      guard.assertCurrent();
+      const receipt = await guard.wait(this.app.knowledge.propose({
+        description: this.t.addExampleDescription(word),
+        changes: [{ path: entry.path, newContent }],
+      }));
+      if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(receipt.error) };
+      if (receipt?.outcome === 'applied') await guard.wait(this.refreshIndex());
+      return receipt;
     });
-    if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(receipt.error) };
-    if (receipt?.outcome === 'applied') await this.refreshIndex();
-    return receipt;
   }
 
   async collectDictionaryWord(result, context = {}) {
-    const lemma = result?.lemma;
-    const entry = result?.entry;
-    if (!lemma || !entry) return { outcome: 'aborted', summary: 'missing dictionary entry' };
-    if (this.index?.get(lemma)) return { outcome: 'aborted', summary: this.t.collectedWord };
-    const slug = slugFor(lemma);
-    let path;
-    for (let number = 1; number < 1000; number += 1) {
-      const candidate = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
-      let existing;
-      try {
-        existing = await this.app.knowledge.readDocument({ path: candidate });
-      } catch (error) {
-        if (error?.code === 'NOT_FOUND') { path = candidate; break; }
-        return { outcome: 'aborted', summary: proposalError(error) };
+    return this.withRootBoundKnowledgeWrite(async (guard) => {
+      const lemma = result?.lemma;
+      const entry = result?.entry;
+      if (!lemma || !entry) return { outcome: 'aborted', summary: 'missing dictionary entry' };
+      if (this.index?.get(lemma)) return { outcome: 'aborted', summary: this.t.collectedWord };
+      const slug = slugFor(lemma);
+      let path;
+      for (let number = 1; number < 1000; number += 1) {
+        const candidate = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
+        let existing;
+        try {
+          existing = await guard.wait(this.app.knowledge.readDocument({ path: candidate }));
+        } catch (error) {
+          if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') throw error;
+          if (error?.code === 'NOT_FOUND') { path = candidate; break; }
+          return { outcome: 'aborted', summary: proposalError(error) };
+        }
+        if (existing?._tag === 'Err') {
+          if (existing.error?.code === 'NOT_FOUND') { path = candidate; break; }
+          return { outcome: 'aborted', summary: proposalError(existing.error) };
+        }
+        const parsed = parseNote(existing.content);
+        if (parsed.ok && parsed.entry.word === lemma) return { outcome: 'aborted', summary: this.t.collectedWord };
       }
-      if (existing?._tag === 'Err') {
-        if (existing.error?.code === 'NOT_FOUND') { path = candidate; break; }
-        return { outcome: 'aborted', summary: proposalError(existing.error) };
-      }
-      const parsed = parseNote(existing.content);
-      if (parsed.ok && parsed.entry.word === lemma) return { outcome: 'aborted', summary: this.t.collectedWord };
-    }
-    if (!path) return { outcome: 'aborted', summary: this.t.collectFailed };
-    const chinese = String(entry.t ?? '').split('\n').filter(Boolean).slice(0, 2);
-    const english = String(entry.d ?? '').split('\n').filter(Boolean).slice(0, 1);
-    const definition = [...chinese, ...english].join('\n') || dictionaryDefinition(entry, this.locale);
-    const newContent = buildNote({
-      word: lemma,
-      definition,
-      phonetic: entry.p,
-      pos: inferPos(entry),
-      example: context.sentence,
-      source: readingSource(context.source),
+      if (!path) return { outcome: 'aborted', summary: this.t.collectFailed };
+      const chinese = String(entry.t ?? '').split('\n').filter(Boolean).slice(0, 2);
+      const english = String(entry.d ?? '').split('\n').filter(Boolean).slice(0, 1);
+      const definition = [...chinese, ...english].join('\n') || dictionaryDefinition(entry, this.locale);
+      const newContent = buildNote({
+        word: lemma,
+        definition,
+        phonetic: entry.p,
+        pos: inferPos(entry),
+        example: context.sentence,
+        source: readingSource(context.source),
+      });
+      guard.assertCurrent();
+      const receipt = await guard.wait(this.app.knowledge.propose({
+        description: this.t.proposalDescription(++this.submission, lemma),
+        changes: [{ path, newContent }],
+      }));
+      if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: String(receipt.error ?? 'proposal failed') };
+      if (receipt?.outcome === 'applied') await guard.wait(this.refreshIndex());
+      return receipt;
     });
-    const receipt = await this.app.knowledge.propose({
-      description: this.t.proposalDescription(++this.submission, lemma),
-      changes: [{ path, newContent }],
-    });
-    if (receipt?._tag === 'Err') return { outcome: 'aborted', summary: String(receipt.error ?? 'proposal failed') };
-    if (receipt?.outcome === 'applied') await this.refreshIndex();
-    return receipt;
   }
 
   explainDictionaryWord(word, context = {}) {

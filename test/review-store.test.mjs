@@ -67,8 +67,8 @@ describe('review store', () => {
   });
 
   it('should merge by newer last_review when revision conflict occurs', async () => {
-    const oldCard = { ...newSerializedCard(new Date('2026-10-14T00:00:00Z')), state: 'Review', last_review: '2026-10-14T00:00:00.000Z' };
-    const newCard = { ...newSerializedCard(new Date('2026-10-15T00:00:00Z')), state: 'Review', last_review: '2026-10-15T00:00:00.000Z' };
+    const oldCard = { ...newSerializedCard(new Date('2026-10-14T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, last_review: '2026-10-14T00:00:00.000Z' };
+    const newCard = { ...newSerializedCard(new Date('2026-10-15T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, last_review: '2026-10-15T00:00:00.000Z' };
     const app = appWithStorage({
       'review.json': JSON.stringify({ version: 1, cards: { word: oldCard }, flags: {} }),
     }, { conflictOnce: true });
@@ -165,8 +165,8 @@ describe('review store', () => {
   });
 
   it('should keep existing card when it has the newest review time', () => {
-    const newer = { ...newSerializedCard(new Date('2026-10-15T00:00:00Z')), state: 'Review', due: '2026-10-15T00:00:00.000Z', last_review: '2026-10-15T00:00:00.000Z' };
-    const older = { ...newSerializedCard(new Date('2026-10-14T00:00:00Z')), state: 'Review', due: '2026-10-14T00:00:00.000Z', last_review: '2026-10-14T00:00:00.000Z' };
+    const newer = { ...newSerializedCard(new Date('2026-10-15T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2026-10-15T00:00:00.000Z', last_review: '2026-10-15T00:00:00.000Z' };
+    const older = { ...newSerializedCard(new Date('2026-10-14T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2026-10-14T00:00:00.000Z', last_review: '2026-10-14T00:00:00.000Z' };
     const merged = mergeReview(
       { version: 1, cards: { word: newer }, flags: {} },
       { version: 1, cards: { word: older }, flags: {} },
@@ -231,6 +231,9 @@ describe('review store', () => {
       fractionalReps: { ...reviewed, reps: 0.5 },
       fractionalLapses: { ...reviewed, lapses: 0.25 },
       highDifficulty: { ...reviewed, difficulty: 11 },
+      zeroStability: { ...reviewed, stability: 0 },
+      zeroDifficulty: { ...reviewed, difficulty: 0 },
+      zeroReps: { ...reviewed, reps: 0 },
       missingReviewDate: { ...reviewed, last_review: null },
     }, flags: {} }) });
     const store = new ReviewStore(app);
@@ -297,7 +300,7 @@ describe('review store', () => {
 
   it('should reject conditional card restoration after a conflict changes the successor card', async () => {
     const first = newSerializedCard(new Date('2026-10-14T00:00:00Z'));
-    const successor = { ...first, reps: 1, due: '2026-10-15T00:00:00.000Z' };
+    const successor = { ...first, state: 'Review', stability: 2, difficulty: 5, reps: 1, last_review: '2026-10-14T00:00:00.000Z', due: '2026-10-15T00:00:00.000Z' };
     const external = { ...successor, reps: 2, due: '2026-10-17T00:00:00.000Z' };
     const app = appWithStorage({ 'review.json': JSON.stringify({ version: 1, cards: { run: successor }, flags: {} }) }, { conflictOnce: true });
     const store = new ReviewStore(app);

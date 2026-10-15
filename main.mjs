@@ -104,7 +104,7 @@ var TEXT = {
     addWord: "Word",
     invalidManualWord: "Enter one English word.",
     invalidNotes: (count) => `Invalid notes (${count})`,
-    invalidNoteReason: (item) => item?.kind !== "read" ? "Invalid note format" : item.code === "DOCUMENT_TOO_LARGE" ? "File is too large" : item.code === "DOCUMENT_NOT_TEXT" ? "File is not text" : "Could not read file",
+    invalidNoteReason: (item) => item?.kind === "duplicate" ? "Duplicate vocabulary word" : item?.kind !== "read" ? "Invalid note format" : item.code === "DOCUMENT_TOO_LARGE" ? "File is too large" : item.code === "DOCUMENT_NOT_TEXT" ? "File is not text" : "Could not read file",
     noCards: "No due words.",
     emptyNotebook: "Your vocabulary notebook is still empty. Click an English word while reading to look it up and add it, or add one manually from Notebook.",
     proposalApplied: (number, words) => `Vocabulary proposal #${number} was applied: ${words}`,
@@ -113,6 +113,7 @@ var TEXT = {
     proposalTimeout: (number, words) => `Vocabulary proposal #${number} timed out: ${words}`,
     proposalAborted: (number, words) => `Vocabulary proposal #${number} was aborted: ${words}`,
     proposalFailed: (number) => `Vocabulary proposal #${number} could not be submitted.`,
+    knowledgeWriteAborted: "The knowledge base changed, so the operation was aborted.",
     proposalDescription: (number, words) => `English Vocab #${number}: ${words}`,
     request: {
       short: (value) => `Add "${value}" to my English vocabulary.`,
@@ -223,7 +224,7 @@ var TEXT = {
     addWord: "输入词",
     invalidManualWord: "请输入一个英文词。",
     invalidNotes: (count) => `无效笔记（${count}）`,
-    invalidNoteReason: (item) => item?.kind !== "read" ? "笔记格式无效" : item.code === "DOCUMENT_TOO_LARGE" ? "文件过大" : item.code === "DOCUMENT_NOT_TEXT" ? "不是文本文件" : "文件读取失败",
+    invalidNoteReason: (item) => item?.kind === "duplicate" ? "生词重复" : item?.kind !== "read" ? "笔记格式无效" : item.code === "DOCUMENT_TOO_LARGE" ? "文件过大" : item.code === "DOCUMENT_NOT_TEXT" ? "不是文本文件" : "文件读取失败",
     noCards: "没有到期生词。",
     emptyNotebook: "生词本还是空的。读文章时点一个英文词即可查词并收进生词本，也可以在「生词本」里手动添加。",
     proposalApplied: (number, words) => `生词提案 #${number} 已应用：${words}`,
@@ -232,6 +233,7 @@ var TEXT = {
     proposalTimeout: (number, words) => `生词提案 #${number} 审阅超时：${words}`,
     proposalAborted: (number, words) => `生词提案 #${number} 已中止：${words}`,
     proposalFailed: (number) => `生词提案 #${number} 提交失败。`,
+    knowledgeWriteAborted: "知识库已切换，操作已中止。",
     proposalDescription: (number, words) => `英语生词本 #${number}：${words}`,
     request: {
       short: (value) => `请把 "${value}" 收为英语生词。`,
@@ -342,7 +344,7 @@ var TEXT = {
     addWord: "単語",
     invalidManualWord: "英単語を1つ入力してください。",
     invalidNotes: (count) => `無効なノート（${count}）`,
-    invalidNoteReason: (item) => item?.kind !== "read" ? "ノート形式が無効です" : item.code === "DOCUMENT_TOO_LARGE" ? "ファイルが大きすぎます" : item.code === "DOCUMENT_NOT_TEXT" ? "テキストファイルではありません" : "ファイルを読み取れません",
+    invalidNoteReason: (item) => item?.kind === "duplicate" ? "単語が重複しています" : item?.kind !== "read" ? "ノート形式が無効です" : item.code === "DOCUMENT_TOO_LARGE" ? "ファイルが大きすぎます" : item.code === "DOCUMENT_NOT_TEXT" ? "テキストファイルではありません" : "ファイルを読み取れません",
     noCards: "期限の単語はありません。",
     emptyNotebook: "単語帳はまだ空です。記事を読みながら英単語をクリックして調べ、単語帳に追加するか、「単語帳」から手動で追加できます。",
     proposalApplied: (number, words) => `単語提案 #${number} を適用しました：${words}`,
@@ -351,6 +353,7 @@ var TEXT = {
     proposalTimeout: (number, words) => `単語提案 #${number} はタイムアウトしました：${words}`,
     proposalAborted: (number, words) => `単語提案 #${number} は中止されました：${words}`,
     proposalFailed: (number) => `単語提案 #${number} を送信できませんでした。`,
+    knowledgeWriteAborted: "ナレッジベースが切り替わったため、操作を中止しました。",
     proposalDescription: (number, words) => `英単語帳 #${number}：${words}`,
     request: {
       short: (value) => `「${value}」を英単語帳に追加してください。`,
@@ -461,7 +464,7 @@ var TEXT = {
     addWord: "단어",
     invalidManualWord: "영단어 하나를 입력하세요.",
     invalidNotes: (count) => `잘못된 노트(${count})`,
-    invalidNoteReason: (item) => item?.kind !== "read" ? "노트 형식이 잘못되었습니다" : item.code === "DOCUMENT_TOO_LARGE" ? "파일이 너무 큽니다" : item.code === "DOCUMENT_NOT_TEXT" ? "텍스트 파일이 아닙니다" : "파일을 읽을 수 없습니다",
+    invalidNoteReason: (item) => item?.kind === "duplicate" ? "단어가 중복되었습니다" : item?.kind !== "read" ? "노트 형식이 잘못되었습니다" : item.code === "DOCUMENT_TOO_LARGE" ? "파일이 너무 큽니다" : item.code === "DOCUMENT_NOT_TEXT" ? "텍스트 파일이 아닙니다" : "파일을 읽을 수 없습니다",
     noCards: "기한이 된 단어가 없습니다.",
     emptyNotebook: "단어장이 아직 비어 있습니다. 글을 읽을 때 영어 단어를 눌러 찾아보고 단어장에 추가하거나, 「단어장」에서 직접 추가할 수 있습니다.",
     proposalApplied: (number, words) => `단어 제안 #${number}이 적용되었습니다: ${words}`,
@@ -470,6 +473,7 @@ var TEXT = {
     proposalTimeout: (number, words) => `단어 제안 #${number} 검토 시간이 초과되었습니다: ${words}`,
     proposalAborted: (number, words) => `단어 제안 #${number}이 중단되었습니다: ${words}`,
     proposalFailed: (number) => `단어 제안 #${number}을 제출할 수 없습니다.`,
+    knowledgeWriteAborted: "지식베이스가 전환되어 작업을 중단했습니다.",
     proposalDescription: (number, words) => `영어 단어장 #${number}: ${words}`,
     request: {
       short: (value) => `"${value}"를 영어 단어장에 추가해 주세요.`,
@@ -1430,6 +1434,9 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
       if (card.difficulty > 10) throw new Error("invalid card");
       if (!["New", "Learning", "Review", "Relearning"].includes(card.state)) throw new Error("invalid card");
       if (card.state !== "New" && !card.last_review) throw new Error("invalid card");
+      if (card.state === "New") {
+        if (card.stability !== 0 || card.difficulty !== 0 || card.reps !== 0 || card.lapses !== 0) throw new Error("invalid card");
+      } else if (card.stability < 1e-3 || card.difficulty < 1 || card.reps < 1) throw new Error("invalid card");
       const normalized = deserializeCard(card);
       if (!normalized || Number.isNaN(normalized.due?.getTime?.()) || normalized.last_review && Number.isNaN(normalized.last_review.getTime()) || ![0, 1, 2, 3].includes(normalized.state)) throw new Error("invalid card");
       review.cards[word] = serializeCard(normalized);
@@ -1636,6 +1643,7 @@ var VocabIndex = class {
     this.onUpdate = onUpdate;
     this.cache = /* @__PURE__ */ new Map();
     this.entries = /* @__PURE__ */ new Map();
+    this.duplicateWords = /* @__PURE__ */ new Set();
     this.invalid = [];
     this.refreshing = null;
     this.pending = false;
@@ -1645,6 +1653,7 @@ var VocabIndex = class {
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
+    this.duplicateWords.clear();
     this.invalid = [];
     if (this.refreshing) this.pending = true;
   }
@@ -1664,6 +1673,7 @@ var VocabIndex = class {
           if (error?.code !== "ROOT_CHANGED" && generation === this.generation) throw error;
           this.cache.clear();
           this.entries.clear();
+          this.duplicateWords.clear();
           this.invalid = [];
           if (!this.pending && generation === this.generation) throw error;
           this.pending = true;
@@ -1717,20 +1727,34 @@ var VocabIndex = class {
   }
   rebuild(readFailures = []) {
     this.entries = /* @__PURE__ */ new Map();
+    this.duplicateWords = /* @__PURE__ */ new Set();
     this.invalid = [];
+    const byWord = /* @__PURE__ */ new Map();
     for (const [path, item] of this.cache.entries()) {
       if (!item.parsed.ok) {
         this.invalid.push({ path, kind: "parse", error: item.parsed.error });
         continue;
       }
       const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
-      if (!this.entries.has(entry.word)) this.entries.set(entry.word, entry);
+      const matches = byWord.get(entry.word) ?? [];
+      matches.push(entry);
+      byWord.set(entry.word, matches);
+    }
+    for (const [word, matches] of byWord.entries()) {
+      if (matches.length === 1) this.entries.set(word, matches[0]);
+      else {
+        this.duplicateWords.add(word);
+        for (const entry of matches) this.invalid.push({ path: entry.path, kind: "duplicate", word });
+      }
     }
     this.invalid.push(...readFailures);
     return { entries: [...this.entries.values()], invalid: this.invalid };
   }
   get(word) {
     return this.entries.get(String(word).toLowerCase());
+  }
+  isAmbiguous(word) {
+    return this.duplicateWords.has(String(word).toLowerCase());
   }
 };
 
@@ -2114,8 +2138,8 @@ function isCvc(word) {
   const [a, b2, c] = word.slice(-3);
   return isConsonant(a) && VOWELS.has(b2) && isConsonant(c) && !["w", "x", "y"].includes(c);
 }
-function addCandidate(set, surface) {
-  if (isSurface(surface) && !DENYLIST.has(surface)) set.add(surface);
+function addCandidate(set, surface, allowDenied = false) {
+  if (isSurface(surface) && (allowDenied || !DENYLIST.has(surface))) set.add(surface);
 }
 function normalizePos(value) {
   const pos = normalize(value).replace(/\.$/u, "");
@@ -2179,7 +2203,7 @@ function generatedForms(lemma, pos) {
   if (pos === "noun") {
     if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
     const irregular2 = IRREGULAR_NOUNS[lemma];
-    if (irregular2) for (const form of irregular2) addCandidate(forms, form);
+    if (irregular2) for (const form of irregular2) addCandidate(forms, form, true);
     else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
     else if (/fe?$/u.test(lemma)) return forms;
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
@@ -2191,7 +2215,7 @@ function generatedForms(lemma, pos) {
   }
   if (pos === "comparative") {
     const irregular2 = IRREGULAR_COMPARATIVES[lemma];
-    if (irregular2) for (const form of irregular2) addCandidate(forms, form);
+    if (irregular2) for (const form of irregular2) addCandidate(forms, form, true);
     else if (endsConsonantY(lemma)) {
       addCandidate(forms, `${lemma.slice(0, -1)}ier`);
       addCandidate(forms, `${lemma.slice(0, -1)}iest`);
@@ -2207,12 +2231,33 @@ function generatedForms(lemma, pos) {
   if (pos !== "verb") return forms;
   if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS[lemma]) return forms;
   const irregular = IRREGULAR_VERBS[lemma];
-  for (const form of irregular ?? []) addCandidate(forms, form);
-  if (lemma === "be") for (const form of ["am", "are", "is", "was", "were", "been", "being"]) addCandidate(forms, form);
-  addCandidate(forms, thirdPerson(lemma));
+  for (const form of irregular ?? []) addCandidate(forms, form, true);
+  if (lemma === "be") for (const form of ["am", "are", "is", "was", "were", "been", "being"]) addCandidate(forms, form, true);
+  addCandidate(forms, thirdPerson(lemma), lemma === "be" || lemma === "have");
   addCandidate(forms, presentParticiple(lemma));
   if (!irregular) addCandidate(forms, regularPast(lemma));
   return forms;
+}
+function inflectionKindsFor(lemmaValue, surfaceValue) {
+  const lemma = normalize(lemmaValue);
+  const surface = normalize(surfaceValue);
+  const kinds = /* @__PURE__ */ new Set();
+  if (!isSurface(lemma) || !isSurface(surface) || lemma === surface) return kinds;
+  if (generatedForms(lemma, "noun").has(surface)) kinds.add("plural");
+  if (thirdPerson(lemma) === surface) kinds.add("thirdPerson");
+  if (presentParticiple(lemma) === surface) kinds.add("presentParticiple");
+  const irregular = IRREGULAR_VERBS[lemma];
+  if (irregular?.[0] === surface || !irregular && regularPast(lemma) === surface) kinds.add("past");
+  if (irregular?.[1] === surface || !irregular && regularPast(lemma) === surface) kinds.add("pastParticiple");
+  const comparative = IRREGULAR_COMPARATIVES[lemma];
+  if (comparative?.[0] === surface) kinds.add("comparative");
+  if (comparative?.[1] === surface) kinds.add("superlative");
+  if (!comparative) {
+    const forms = [...generatedForms(lemma, "comparative")];
+    if (forms[0] === surface) kinds.add("comparative");
+    if (forms[1] === surface) kinds.add("superlative");
+  }
+  return kinds;
 }
 function chooseLemma(surface, current, next, collected) {
   if (!current) return next;
@@ -2239,7 +2284,7 @@ function buildSurfaceMap(words, { permissive = false } = {}) {
     const selectedParts = permissive && generatedParts.size === 0 ? /* @__PURE__ */ new Set(["noun", "verb", "comparative"]) : generatedParts;
     for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
-      if (!isSurface(surface) || surface !== lemma && DENYLIST.has(surface)) continue;
+      if (!isSurface(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }
@@ -2434,7 +2479,7 @@ function exchangeLemma(entry) {
   return match[1].split(",")[0]?.trim().toLowerCase() || null;
 }
 function translatedLemma(entry) {
-  const match = String(entry?.t ?? "").match(/([a-z][a-z'-]*)\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
+  const match = String(entry?.t ?? "").match(/([a-z][a-z'-]*)\s*的?\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
   return match?.[1]?.toLowerCase() ?? null;
 }
 function isPureInflection(entry) {
@@ -2442,7 +2487,17 @@ function isPureInflection(entry) {
   if (!lines.length) return false;
   return lines.every((line) => line.replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, "").match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
 }
-function inflectionKind(entry, lemma) {
+function entrySupportsKinds(entry, kinds) {
+  const definitions = `${String(entry?.t ?? "")}
+${String(entry?.d ?? "")}`;
+  const noun = /(?:^|\n)\s*(?:n\.|pl\.)/imu.test(definitions);
+  const verb = /(?:^|\n)\s*(?:v\.|vt\.|vi\.)/imu.test(definitions);
+  const adjective = /(?:^|\n)\s*(?:a\.|adj\.|adv\.)/imu.test(definitions);
+  if (kinds.has("plural") && noun) return true;
+  if ([...kinds].some((kind) => ["past", "pastParticiple", "presentParticiple", "thirdPerson"].includes(kind)) && verb) return true;
+  return [...kinds].some((kind) => ["comparative", "superlative"].includes(kind)) && adjective;
+}
+function inflectionKind(entry, lemma, surface, verifiedKinds = inflectionKindsFor(lemma, surface)) {
   const lines = String(entry?.t ?? "").split("\n");
   const related = lines.find((line) => line.toLowerCase().includes(lemma)) ?? lines.join("\n");
   const label = related.match(/(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/u)?.[0];
@@ -2455,16 +2510,26 @@ function inflectionKind(entry, lemma) {
     比较级: "comparative",
     最高级: "superlative"
   }[label];
-  if (translated) return translated;
+  if (translated && verifiedKinds.has(translated)) return translated;
   const code = String(entry?.x ?? "").match(/(?:^|\/)1:([^/]+)/u)?.[1] ?? "";
-  if (code.includes("r")) return "comparative";
-  if (code.includes("t")) return "superlative";
-  if (code.includes("i")) return "presentParticiple";
-  if (code.includes("3")) return "thirdPerson";
-  if (code.includes("s")) return "plural";
-  if (code.includes("p")) return "pastParticiple";
-  if (code.includes("d")) return "past";
-  return "";
+  const definitions = `${String(entry?.t ?? "")}
+${String(entry?.d ?? "")}`;
+  const noun = /(?:^|\n)\s*(?:n\.|pl\.)/imu.test(definitions);
+  const verb = /(?:^|\n)\s*(?:v\.|vt\.|vi\.)/imu.test(definitions);
+  if (noun && code.includes("s") && verifiedKinds.has("plural")) return "plural";
+  const coded = [
+    ["r", "comparative"],
+    ["t", "superlative"],
+    ["i", "presentParticiple"],
+    ["3", "thirdPerson"],
+    ["s", "plural"],
+    ["p", "pastParticiple"],
+    ["d", "past"]
+  ];
+  for (const [marker, kind] of coded) {
+    if (code.includes(marker) && verifiedKinds.has(kind) && (kind !== "thirdPerson" || verb || !noun)) return kind;
+  }
+  return verifiedKinds.size === 1 ? [...verifiedKinds][0] : "";
 }
 function candidateBases(surface) {
   const bases = [];
@@ -2472,6 +2537,7 @@ function candidateBases(surface) {
     if (value && value !== surface && /^[a-z]+(?:'[a-z]+)*$/u.test(value) && !bases.includes(value)) bases.push(value);
   };
   add(IRREGULAR_BASES.get(surface));
+  if (surface.endsWith("zzes") && surface.length > 5) add(surface.slice(0, -3));
   if (surface.endsWith("ies") && surface.length > 4) add(`${surface.slice(0, -3)}y`);
   if (surface.endsWith("ied") && surface.length > 4) add(`${surface.slice(0, -3)}y`);
   if (surface.endsWith("ing") && surface.length > 5) {
@@ -2515,10 +2581,14 @@ async function lookup(word, { importer = defaultImporter } = {}) {
   if (direct) {
     const exchange = exchangeLemma(direct);
     const candidates = [translatedLemma(direct), exchange, ...candidateBases(surface)].filter(Boolean);
-    let lemma = exchange;
+    let lemma = null;
+    let verifiedKinds = /* @__PURE__ */ new Set();
     for (const candidate of candidates) {
-      if (candidate !== surface && await entryFor(candidate, importer)) {
+      const kinds = inflectionKindsFor(candidate, surface);
+      const candidateEntry = candidate !== surface && kinds.size > 0 ? await entryFor(candidate, importer) : null;
+      if (candidateEntry && entrySupportsKinds(candidateEntry, kinds)) {
         lemma = candidate;
+        verifiedKinds = kinds;
         break;
       }
     }
@@ -2526,13 +2596,15 @@ async function lookup(word, { importer = defaultImporter } = {}) {
       const lemmaEntry = await entryFor(lemma, importer);
       if (lemmaEntry) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
     }
-    const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma) : "";
+    const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma, surface, verifiedKinds) : "";
     const inflection = kind ? { lemma, kind } : void 0;
     return { surface: displaySurface, lemma: surface, entry: direct, surfaceEntry: direct, ...inflection ? { inflection } : {} };
   }
   for (const lemma of candidateBases(surface)) {
+    const kinds = inflectionKindsFor(lemma, surface);
+    if (kinds.size === 0) continue;
     const entry = await entryFor(lemma, importer);
-    if (entry) return { surface: displaySurface, lemma, entry, surfaceEntry: null };
+    if (entry && entrySupportsKinds(entry, kinds)) return { surface: displaySurface, lemma, entry, surfaceEntry: null };
   }
   return null;
 }
@@ -2623,7 +2695,7 @@ function contextSourceRow(source, notePath, controls, t) {
       host = new URL(source.url).hostname || source.url;
     } catch {
     }
-    const text = el("span", "ev-context-source-text", host);
+    const text = el("span", "ev-context-source-text", source.title || host);
     text.title = source.url;
     row.append(text);
     return row;
@@ -2747,7 +2819,11 @@ function renderPanel(container, controls) {
   const renderToday = (state) => {
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     const validModes = ["context", "flip", "reverse", "listening"];
-    if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
+    if (renderedWord !== null && renderedWord !== item?.word) {
+      controls.cancelSpeech?.();
+      flipped = false;
+      lastSpokenWord = null;
+    }
     renderedWord = item?.word ?? null;
     if (validModes.includes(state.reviewMode)) {
       explicitMode = state.reviewMode;
@@ -3247,9 +3323,9 @@ async function withSoftTimeout(promise, ms) {
   clearTimeout(timer);
   return result;
 }
-async function resolveSource(app, source, notes) {
+async function resolveSource(app, source, notes, guard) {
   if (!source?.path || !source.path.startsWith("wiki/")) return source;
-  const doc = await withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap2).catch(() => null), 3e3);
+  const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap2).catch(() => null), 3e3));
   if (!doc) {
     notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
     return void 0;
@@ -3269,9 +3345,9 @@ async function mapConcurrent(values, limit, mapper) {
   await Promise.all(workers);
   return results;
 }
-async function readOptional(app, path) {
+async function readOptional(app, path, guard) {
   try {
-    const result = await app.knowledge.readDocument({ path });
+    const result = await guard.wait(app.knowledge.readDocument({ path }));
     if (result?._tag !== "Err") return result;
     if (result.error?.code === "NOT_FOUND") return null;
     throw new Error(String(result.error?.message ?? result.error?.code ?? result.error ?? "knowledge error"));
@@ -3280,11 +3356,11 @@ async function readOptional(app, path) {
     throw error;
   }
 }
-async function availablePath(app, word) {
+async function availablePath(app, word, guard) {
   const slug = slugFor(word);
   for (let number = 1; number < 1e3; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? "" : `-${number}`}.md`;
-    const doc = await readOptional(app, path);
+    const doc = await readOptional(app, path, guard);
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
     if (parsed.ok && parsed.entry.word === word) return { path, doc };
@@ -3307,62 +3383,67 @@ function makeVocabLookup({ index, review, getReview = () => review }) {
     });
   };
 }
-function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en" }) {
+function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", bindKnowledgeWrite }) {
   return async function vocabAdd(input) {
-    const entries = input?.entries;
-    if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
-      throw new Error("entries must contain 1-20 items");
-    }
     const t = uiText(typeof locale === "function" ? locale() : locale);
-    const notes = [];
-    const validated = entries.map(validateEntry);
-    const normalized = await mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes) }));
-    const groups = /* @__PURE__ */ new Map();
-    for (const entry of normalized) {
-      const group = groups.get(entry.word) ?? { ...entry, examples: [] };
-      if (entry.example && !group.examples.some((item) => item.example === entry.example && JSON.stringify(item.source) === JSON.stringify(entry.source))) {
-        group.examples.push({ example: entry.example, source: entry.source });
+    const bind = bindKnowledgeWrite ?? ((operation) => operation({ assertCurrent: () => void 0, wait: (promise) => promise }));
+    return bind(async (guard) => {
+      const entries = input?.entries;
+      if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
+        throw new Error("entries must contain 1-20 items");
       }
-      groups.set(entry.word, group);
-    }
-    const changes = [];
-    const accepted = [];
-    for (const entry of groups.values()) {
-      const existing = index.get(entry.word);
-      let path;
-      let doc;
-      if (existing) {
-        path = existing.path;
-        doc = unwrap2(await app.knowledge.readDocument({ path }));
-      } else {
-        ({ path, doc } = await availablePath(app, entry.word));
+      const notes = [];
+      const validated = entries.map(validateEntry);
+      const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes, guard) })));
+      const groups = /* @__PURE__ */ new Map();
+      for (const entry of normalized) {
+        const group = groups.get(entry.word) ?? { ...entry, examples: [] };
+        if (entry.example && !group.examples.some((item) => item.example === entry.example && JSON.stringify(item.source) === JSON.stringify(entry.source))) {
+          group.examples.push({ example: entry.example, source: entry.source });
+        }
+        groups.set(entry.word, group);
       }
-      let content;
-      if (doc) {
-        const parsed = parseNote(doc.content);
-        if (!parsed.ok) throw new Error(`frontmatter invalid for ${entry.word}: ${parsed.error}`);
-        if (parsed.entry.word !== entry.word) throw new Error(`frontmatter word mismatch for ${entry.word}`);
-        content = doc.content;
-      } else {
-        content = buildNote({ ...entry, example: void 0, source: void 0 });
+      const changes = [];
+      const accepted = [];
+      for (const entry of groups.values()) {
+        if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
+        const existing = index.get(entry.word);
+        let path;
+        let doc;
+        if (existing) {
+          path = existing.path;
+          doc = unwrap2(await guard.wait(app.knowledge.readDocument({ path })));
+        } else {
+          ({ path, doc } = await availablePath(app, entry.word, guard));
+        }
+        let content;
+        if (doc) {
+          const parsed = parseNote(doc.content);
+          if (!parsed.ok) throw new Error(`frontmatter invalid for ${entry.word}: ${parsed.error}`);
+          if (parsed.entry.word !== entry.word) throw new Error(`frontmatter word mismatch for ${entry.word}`);
+          content = doc.content;
+        } else {
+          content = buildNote({ ...entry, example: void 0, source: void 0 });
+        }
+        for (const item of entry.examples) content = appendExample(content, item.example, item.source);
+        if (doc && content === doc.content) continue;
+        changes.push({ path, newContent: content });
+        accepted.push(entry.word);
       }
-      for (const item of entry.examples) content = appendExample(content, item.example, item.source);
-      if (doc && content === doc.content) continue;
-      changes.push({ path, newContent: content });
-      accepted.push(entry.word);
-    }
-    if (!changes.length) return ["No vocabulary entries changed.", ...notes].join("\n");
-    const number = nextNumber();
-    const words = accepted;
-    const proposal = app.knowledge.propose({
-      description: t.proposalDescription(number, words.join(", ")),
-      changes
-    });
-    proposal.then(unwrap2).then((receipt) => {
-      notify(noticeText(receipt, number, words, t));
-      refresh?.();
-    }).catch(() => notify(t.proposalFailed(number)));
-    return [`Submitted for review #${number}: ${words.length} ${words.length === 1 ? "word" : "words"}.`, ...notes].join("\n");
+      if (!changes.length) return ["No vocabulary entries changed.", ...notes].join("\n");
+      const number = nextNumber();
+      const words = accepted;
+      guard.assertCurrent();
+      const proposal = app.knowledge.propose({
+        description: t.proposalDescription(number, words.join(", ")),
+        changes
+      });
+      proposal.then(unwrap2).then((receipt) => {
+        notify(noticeText(receipt, number, words, t));
+        refresh?.();
+      }).catch(() => notify(t.proposalFailed(number)));
+      return [`Submitted for review #${number}: ${words.length} ${words.length === 1 ? "word" : "words"}.`, ...notes].join("\n");
+    }, t.knowledgeWriteAborted);
   };
 }
 var LOOKUP_SCHEMA = {
@@ -34178,6 +34259,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.pendingMutations = 0;
     this.mutationSequence = 0;
+    this.operationNonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
@@ -34250,7 +34332,42 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   nextLogId() {
     this.mutationSequence += 1;
-    return `review-${Date.now().toString(36)}-${this.mutationSequence}`;
+    return `review-${this.operationNonce}-${Date.now().toString(36)}-${this.mutationSequence}`;
+  }
+  workspaceEpoch() {
+    try {
+      return this.app.workspace?.scope?.().epoch ?? "legacy";
+    } catch {
+      return "legacy";
+    }
+  }
+  async withRootBoundKnowledgeWrite(operation, abortedValue = { outcome: "aborted", summary: this.t.knowledgeWriteAborted }) {
+    const generation = this.rootGeneration;
+    const epoch = this.workspaceEpoch();
+    const current = () => generation === this.rootGeneration && epoch === this.workspaceEpoch();
+    const assertCurrent = () => {
+      if (!current()) throw Object.assign(new Error("knowledge root changed"), { code: "KNOWLEDGE_WRITE_ABORTED" });
+    };
+    const guard = {
+      assertCurrent,
+      wait: async (promise) => {
+        try {
+          const value = await promise;
+          assertCurrent();
+          return value;
+        } catch (error) {
+          assertCurrent();
+          throw error;
+        }
+      }
+    };
+    try {
+      assertCurrent();
+      return await operation(guard);
+    } catch (error) {
+      if (error?.code === "KNOWLEDGE_WRITE_ABORTED") return abortedValue;
+      throw error;
+    }
   }
   panelState() {
     return {
@@ -34363,6 +34480,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (generation !== this.rootGeneration) return;
       this.state.review = review;
       this.state.log = this.reviewStore.effectiveLog();
+      await this.recommender?.reload();
+      if (generation !== this.rootGeneration) return;
     }
     try {
       const result = await this.index.refresh();
@@ -34736,11 +34855,12 @@ var EnglishVocabPlugin = class extends BasePlugin {
       inputSchema: ADD_SCHEMA,
       run: makeVocabAdd({
         app: this.app,
-        index: { get: (word) => this.index?.get(word) },
+        index: { get: (word) => this.index?.get(word), isAmbiguous: (word) => this.index?.isAmbiguous(word) === true },
         nextNumber: () => ++this.submission,
         notify: (message) => this.notice(message),
         refresh: () => this.refreshIndex(),
-        locale: () => this.locale
+        locale: () => this.locale,
+        bindKnowledgeWrite: (operation, abortedValue) => this.withRootBoundKnowledgeWrite(operation, abortedValue)
       })
     });
   }
@@ -34777,78 +34897,86 @@ var EnglishVocabPlugin = class extends BasePlugin {
     return suggest(prefix, n);
   }
   async addExampleSentence(word, context = {}) {
-    const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
-    if (!entry?.path || !context.sentence) return { outcome: "aborted", summary: "missing vocabulary entry or sentence" };
-    let document2;
-    try {
-      document2 = await this.app.knowledge.readDocument({ path: entry.path });
-    } catch (error) {
-      return { outcome: "aborted", summary: proposalError(error) };
-    }
-    if (document2?._tag === "Err") return { outcome: "aborted", summary: proposalError(document2.error) };
-    const parsed = parseNote(document2.content);
-    if (!parsed.ok) return { outcome: "aborted", summary: parsed.error };
-    const target = normalizedSentence2(context.sentence);
-    const duplicate = parsed.entry.examples.some((line) => normalizedSentence2(parseExampleLine(line).sentence) === target);
-    if (duplicate) return { outcome: "exists", summary: this.t.exampleExists };
-    const newContent = appendExample(document2.content, context.sentence, readingSource(context.source));
-    if (newContent === document2.content) return { outcome: "exists", summary: this.t.exampleExists };
-    const receipt = await this.app.knowledge.propose({
-      description: this.t.addExampleDescription(word),
-      changes: [{ path: entry.path, newContent }]
-    });
-    if (receipt?._tag === "Err") return { outcome: "aborted", summary: proposalError(receipt.error) };
-    if (receipt?.outcome === "applied") await this.refreshIndex();
-    return receipt;
-  }
-  async collectDictionaryWord(result, context = {}) {
-    const lemma = result?.lemma;
-    const entry = result?.entry;
-    if (!lemma || !entry) return { outcome: "aborted", summary: "missing dictionary entry" };
-    if (this.index?.get(lemma)) return { outcome: "aborted", summary: this.t.collectedWord };
-    const slug = slugFor(lemma);
-    let path;
-    for (let number = 1; number < 1e3; number += 1) {
-      const candidate = `wiki/vocab/${slug}${number === 1 ? "" : `-${number}`}.md`;
-      let existing;
+    return this.withRootBoundKnowledgeWrite(async (guard) => {
+      const entry = this.state.entries.find((item) => item.word === word) ?? this.index?.get(word);
+      if (!entry?.path || !context.sentence) return { outcome: "aborted", summary: "missing vocabulary entry or sentence" };
+      let document2;
       try {
-        existing = await this.app.knowledge.readDocument({ path: candidate });
+        document2 = await guard.wait(this.app.knowledge.readDocument({ path: entry.path }));
       } catch (error) {
-        if (error?.code === "NOT_FOUND") {
-          path = candidate;
-          break;
-        }
+        if (error?.code === "KNOWLEDGE_WRITE_ABORTED") throw error;
         return { outcome: "aborted", summary: proposalError(error) };
       }
-      if (existing?._tag === "Err") {
-        if (existing.error?.code === "NOT_FOUND") {
-          path = candidate;
-          break;
+      if (document2?._tag === "Err") return { outcome: "aborted", summary: proposalError(document2.error) };
+      const parsed = parseNote(document2.content);
+      if (!parsed.ok) return { outcome: "aborted", summary: parsed.error };
+      const target = normalizedSentence2(context.sentence);
+      const duplicate = parsed.entry.examples.some((line) => normalizedSentence2(parseExampleLine(line).sentence) === target);
+      if (duplicate) return { outcome: "exists", summary: this.t.exampleExists };
+      const newContent = appendExample(document2.content, context.sentence, readingSource(context.source));
+      if (newContent === document2.content) return { outcome: "exists", summary: this.t.exampleExists };
+      guard.assertCurrent();
+      const receipt = await guard.wait(this.app.knowledge.propose({
+        description: this.t.addExampleDescription(word),
+        changes: [{ path: entry.path, newContent }]
+      }));
+      if (receipt?._tag === "Err") return { outcome: "aborted", summary: proposalError(receipt.error) };
+      if (receipt?.outcome === "applied") await guard.wait(this.refreshIndex());
+      return receipt;
+    });
+  }
+  async collectDictionaryWord(result, context = {}) {
+    return this.withRootBoundKnowledgeWrite(async (guard) => {
+      const lemma = result?.lemma;
+      const entry = result?.entry;
+      if (!lemma || !entry) return { outcome: "aborted", summary: "missing dictionary entry" };
+      if (this.index?.get(lemma)) return { outcome: "aborted", summary: this.t.collectedWord };
+      const slug = slugFor(lemma);
+      let path;
+      for (let number = 1; number < 1e3; number += 1) {
+        const candidate = `wiki/vocab/${slug}${number === 1 ? "" : `-${number}`}.md`;
+        let existing;
+        try {
+          existing = await guard.wait(this.app.knowledge.readDocument({ path: candidate }));
+        } catch (error) {
+          if (error?.code === "KNOWLEDGE_WRITE_ABORTED") throw error;
+          if (error?.code === "NOT_FOUND") {
+            path = candidate;
+            break;
+          }
+          return { outcome: "aborted", summary: proposalError(error) };
         }
-        return { outcome: "aborted", summary: proposalError(existing.error) };
+        if (existing?._tag === "Err") {
+          if (existing.error?.code === "NOT_FOUND") {
+            path = candidate;
+            break;
+          }
+          return { outcome: "aborted", summary: proposalError(existing.error) };
+        }
+        const parsed = parseNote(existing.content);
+        if (parsed.ok && parsed.entry.word === lemma) return { outcome: "aborted", summary: this.t.collectedWord };
       }
-      const parsed = parseNote(existing.content);
-      if (parsed.ok && parsed.entry.word === lemma) return { outcome: "aborted", summary: this.t.collectedWord };
-    }
-    if (!path) return { outcome: "aborted", summary: this.t.collectFailed };
-    const chinese = String(entry.t ?? "").split("\n").filter(Boolean).slice(0, 2);
-    const english = String(entry.d ?? "").split("\n").filter(Boolean).slice(0, 1);
-    const definition = [...chinese, ...english].join("\n") || dictionaryDefinition(entry, this.locale);
-    const newContent = buildNote({
-      word: lemma,
-      definition,
-      phonetic: entry.p,
-      pos: inferPos(entry),
-      example: context.sentence,
-      source: readingSource(context.source)
+      if (!path) return { outcome: "aborted", summary: this.t.collectFailed };
+      const chinese = String(entry.t ?? "").split("\n").filter(Boolean).slice(0, 2);
+      const english = String(entry.d ?? "").split("\n").filter(Boolean).slice(0, 1);
+      const definition = [...chinese, ...english].join("\n") || dictionaryDefinition(entry, this.locale);
+      const newContent = buildNote({
+        word: lemma,
+        definition,
+        phonetic: entry.p,
+        pos: inferPos(entry),
+        example: context.sentence,
+        source: readingSource(context.source)
+      });
+      guard.assertCurrent();
+      const receipt = await guard.wait(this.app.knowledge.propose({
+        description: this.t.proposalDescription(++this.submission, lemma),
+        changes: [{ path, newContent }]
+      }));
+      if (receipt?._tag === "Err") return { outcome: "aborted", summary: String(receipt.error ?? "proposal failed") };
+      if (receipt?.outcome === "applied") await guard.wait(this.refreshIndex());
+      return receipt;
     });
-    const receipt = await this.app.knowledge.propose({
-      description: this.t.proposalDescription(++this.submission, lemma),
-      changes: [{ path, newContent }]
-    });
-    if (receipt?._tag === "Err") return { outcome: "aborted", summary: String(receipt.error ?? "proposal failed") };
-    if (receipt?.outcome === "applied") await this.refreshIndex();
-    return receipt;
   }
   explainDictionaryWord(word, context = {}) {
     const text = this.t.request.short(word);

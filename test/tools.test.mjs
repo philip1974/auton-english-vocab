@@ -249,6 +249,18 @@ describe('tools', () => {
     expect(fake.proposals).toEqual([]);
   });
 
+  it('should refuse to append when duplicate vocabulary notes make the target ambiguous', async () => {
+    const fake = app();
+    const add = makeVocabAdd({
+      app: fake,
+      index: { get: () => null, isAmbiguous: () => true },
+      nextNumber: () => 1,
+      notify: () => undefined,
+    });
+    await expect(add({ entries: [{ word: 'run', definition: '跑', example: 'Run.' }] })).rejects.toThrow(/duplicate vocabulary notes/u);
+    expect(fake.proposals).toEqual([]);
+  });
+
   it('should verify wiki sources with no more than four concurrent reads', async () => {
     let active = 0;
     let maximum = 0;
