@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ReviewStore, mergeReview, normalizeReview } from '../src/review-store.mjs';
 import { activeReviewLog, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
 
@@ -567,6 +567,25 @@ describe('review store', () => {
     await expect(pending).resolves.toMatchObject({ rootChanged: true });
     expect(store.rootGeneration).toBe('root-b');
     expect(store.review.flags.alpha).toBeUndefined();
+  });
+
+  it('should not reread or replay a conflicted mutation after the store is cancelled', async () => {
+    const app = appWithStorage();
+    const store = new ReviewStore(app);
+    await store.load();
+    let rejectWrite;
+    const readsBefore = vi.fn(app.storage.read.bind(app.storage));
+    app.storage.read = readsBefore;
+    app.storage.write = () => new Promise((resolve, reject) => { rejectWrite = reject; });
+    const pending = store.mutateReview({ type: 'setFlag', word: 'alpha', flag: 'ignored' });
+    await vi.waitFor(() => expect(typeof rejectWrite).toBe('function'));
+    const readsAtCancel = readsBefore.mock.calls.length;
+    store.cancel();
+    rejectWrite(Object.assign(new Error('conflict'), { code: 'REVISION_CONFLICT' }));
+    await expect(pending).resolves.toMatchObject({ rootChanged: true, applied: false });
+    expect(readsBefore).toHaveBeenCalledTimes(readsAtCancel);
+    await expect(store.mutateReview({ type: 'setFlag', word: 'beta', flag: 'ignored' }))
+      .rejects.toMatchObject({ code: 'PLUGIN_CANCELLED' });
   });
 
   it('should reject conditional card restoration after a conflict changes the successor card', async () => {

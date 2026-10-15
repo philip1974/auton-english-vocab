@@ -3253,7 +3253,7 @@ describe('main plugin', () => {
     const cancelIndex = vi.spyOn(plugin.index, 'cancel');
     plugin.readingUndoSnapshots.set('run', {});
     const before = [plugin.rootGeneration, plugin.recommendationRequest, plugin.readingStatusRequest];
-    plugin.onunload();
+    await plugin.onunload();
     expect(cancel).toHaveBeenCalledOnce();
     expect(cancelIndex).toHaveBeenCalledOnce();
     expect(plugin.readingUndoSnapshots.size).toBe(0);
@@ -3289,11 +3289,197 @@ describe('main plugin', () => {
     const writesBefore = app.storage.writes.length;
     const refreshing = plugin.refreshRecommendations();
     await readStarted;
-    plugin.onunload();
+    await plugin.onunload();
     releaseRead();
     await refreshing;
     expect(readDocument).toHaveBeenCalledTimes(1);
     expect(app.storage.writes).toHaveLength(writesBefore);
+  });
+
+  it('should await an old rating during unload before the host enables and rates with a new instance', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const originalWrite = app.storage.write.bind(app.storage);
+    let releaseOldWrite;
+    let markOldWrite;
+    const oldWriteStarted = new Promise((resolve) => { markOldWrite = resolve; });
+    let pauseNextReviewWrite = true;
+    app.storage.write = async (...args) => {
+      if (pauseNextReviewWrite && args[1] === 'review.json') {
+        pauseNextReviewWrite = false;
+        markOldWrite();
+        await new Promise((resolve) => { releaseOldWrite = resolve; });
+      }
+      return originalWrite(...args);
+    };
+    const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await first.onload();
+    const oldRating = first.rateWord('alpha', 'Good', 'flip');
+    await oldWriteStarted;
+    const unloading = Promise.resolve(first.onunload());
+    let second;
+    const replacement = unloading.then(async () => {
+      second = new module.default(app, { id: 'dev.auton.english-vocab' });
+      await second.onload();
+      await second.rateWord('alpha', 'Again', 'flip');
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const activatedBeforeRelease = Boolean(second);
+    releaseOldWrite();
+    await Promise.all([oldRating, replacement]);
+    const review = JSON.parse((await app.storage.read('root', 'review.json')).text);
+    const log = JSON.parse((await app.storage.read('root', 'log.json')).text);
+    expect(activatedBeforeRelease).toBe(false);
+    expect(log.map((entry) => entry.rating)).toEqual(['Good', 'Again']);
+    expect(review.cards.alpha.reps).toBe(2);
+    expect(second.state.review.cards.alpha).toEqual(review.cards.alpha);
+  });
+
+  it('should await an old review-mode save before the host enables a new instance', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let persisted = { reviewMode: 'context' };
+    let releaseOldSave;
+    let markOldSave;
+    const oldSaveStarted = new Promise((resolve) => { markOldSave = resolve; });
+    const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+    first.loadData = async () => structuredClone(persisted);
+    first.saveData = async (value) => {
+      markOldSave();
+      await new Promise((resolve) => { releaseOldSave = resolve; });
+      persisted = structuredClone(value);
+    };
+    await first.onload();
+    const oldSave = first.setReviewMode('flip');
+    await oldSaveStarted;
+    const unloading = Promise.resolve(first.onunload());
+    let second;
+    const replacement = unloading.then(async () => {
+      second = new module.default(app, { id: 'dev.auton.english-vocab' });
+      second.loadData = async () => structuredClone(persisted);
+      second.saveData = async (value) => { persisted = structuredClone(value); };
+      await second.onload();
+      await second.setReviewMode('reverse');
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const activatedBeforeRelease = Boolean(second);
+    releaseOldSave();
+    await Promise.all([oldSave, replacement]);
+    expect(activatedBeforeRelease).toBe(false);
+    expect(persisted.reviewMode).toBe('reverse');
+    expect(second.state.reviewMode).toBe('reverse');
+  });
+
+  it('should await an old level-settings save before the host enables a new instance', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const oldSettings = { vocabularySize: 3000, easyMax: 2, goodMax: 5 };
+    const firstSettings = { vocabularySize: 5000, easyMax: 1, goodMax: 6 };
+    const secondSettings = { vocabularySize: 8000, easyMax: 2, goodMax: 4 };
+    let persisted = { levelSettings: oldSettings };
+    let releaseOldSave;
+    let markOldSave;
+    const oldSaveStarted = new Promise((resolve) => { markOldSave = resolve; });
+    const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+    first.loadData = async () => structuredClone(persisted);
+    first.saveData = async (value) => {
+      markOldSave();
+      await new Promise((resolve) => { releaseOldSave = resolve; });
+      persisted = structuredClone(value);
+    };
+    await first.onload();
+    first.refreshReadingLevelSurfaces = vi.fn(async () => true);
+    const oldSave = first.setLevelSettings(firstSettings);
+    await oldSaveStarted;
+    const unloading = Promise.resolve(first.onunload());
+    let second;
+    const replacement = unloading.then(async () => {
+      second = new module.default(app, { id: 'dev.auton.english-vocab' });
+      second.loadData = async () => structuredClone(persisted);
+      second.saveData = async (value) => { persisted = structuredClone(value); };
+      await second.onload();
+      second.refreshReadingLevelSurfaces = vi.fn(async () => true);
+      await second.setLevelSettings(secondSettings);
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const activatedBeforeRelease = Boolean(second);
+    releaseOldSave();
+    await Promise.all([oldSave, replacement]);
+    expect(activatedBeforeRelease).toBe(false);
+    expect(persisted.levelSettings).toEqual(secondSettings);
+    expect(second.state.levelSettings).toEqual(secondSettings);
+  });
+
+  it('should await an old highlight save before the host enables a new instance', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let persisted = { highlight: true };
+    let releaseOldSave;
+    let markOldSave;
+    const oldSaveStarted = new Promise((resolve) => { markOldSave = resolve; });
+    const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+    first.loadData = async () => structuredClone(persisted);
+    first.saveData = async (value) => {
+      markOldSave();
+      await new Promise((resolve) => { releaseOldSave = resolve; });
+      persisted = structuredClone(value);
+    };
+    await first.onload();
+    const oldSave = first.setHighlight(false);
+    await oldSaveStarted;
+    const unloading = Promise.resolve(first.onunload());
+    let second;
+    const replacement = unloading.then(async () => {
+      second = new module.default(app, { id: 'dev.auton.english-vocab' });
+      second.loadData = async () => structuredClone(persisted);
+      second.saveData = async (value) => { persisted = structuredClone(value); };
+      await second.onload();
+      await second.setHighlight(true);
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const activatedBeforeRelease = Boolean(second);
+    releaseOldSave();
+    await Promise.all([oldSave, replacement]);
+    expect(activatedBeforeRelease).toBe(false);
+    expect(persisted.highlight).toBe(true);
+    expect(second.state.highlight).toBe(true);
+  });
+
+  it('should cancel preference work still queued when the unload drain deadline expires', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context' };
+    plugin.loadData = async () => structuredClone(persisted);
+    plugin.saveData = async (value) => { persisted = structuredClone(value); };
+    await plugin.onload();
+    let releaseFirst;
+    let markFirst;
+    const firstStarted = new Promise((resolve) => { markFirst = resolve; });
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+    plugin.saveData = vi.fn(async (value) => {
+      markFirst();
+      await firstGate;
+      persisted = structuredClone(value);
+    });
+    const first = plugin.setReviewMode('flip');
+    const second = plugin.setReviewMode('reverse');
+    await firstStarted;
+    plugin.unloadDrainTimeoutMs = 0;
+    await plugin.onunload();
+    expect(plugin.saveData).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(plugin.saveData).toHaveBeenCalledTimes(1);
+    expect(plugin.unloaded).toBe(true);
   });
 
   it('should load a fresh index when the plugin is enabled after a prior instance unloads', async () => {
@@ -3303,7 +3489,7 @@ describe('main plugin', () => {
     app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
     const first = new module.default(app, { id: 'dev.auton.english-vocab' });
     await first.onload();
-    first.onunload();
+    await first.onunload();
     for (const disposable of first.registered) disposable.dispose?.();
     const second = new module.default(app, { id: 'dev.auton.english-vocab' });
     await second.onload();

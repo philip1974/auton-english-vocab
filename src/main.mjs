@@ -13,6 +13,14 @@ import { parseExampleLine } from './context-cloze.mjs';
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
 const emptyReview = () => ({ version: 1, cards: Object.create(null), flags: Object.create(null) });
 const REVIEW_MODES = new Set(['context', 'flip', 'reverse', 'listening']);
+const UNLOAD_DRAIN_TIMEOUT_MS = 8_000;
+
+async function settleWithin(promises, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); });
+  await Promise.race([Promise.allSettled(promises), timeout]);
+  clearTimeout(timer);
+}
 
 function normalizedSentence(value) {
   return String(value ?? '').trim().replace(/\s+/gu, ' ');
@@ -43,6 +51,7 @@ function readingSource(source) {
 export default class EnglishVocabPlugin extends BasePlugin {
   async onload() {
     this.unloaded = false;
+    this.stopping = false;
     this.locale = currentLocale();
     this.t = uiText(this.locale);
     this.state = {
@@ -73,6 +82,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.preferenceTail = Promise.resolve();
     this.preferenceSnapshot = {};
+    this.preferenceGeneration = 0;
+    this.unloadDrainTimeoutMs = UNLOAD_DRAIN_TIMEOUT_MS;
+    this.unloadPromise = null;
     this.reviewModeRequest = 0;
     this.levelSettingsRequest = 0;
     this.pendingMutations = 0;
@@ -142,6 +154,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   enqueueMutation(task, generation = this.rootGeneration) {
+    if (this.stopping || this.unloaded) return Promise.resolve(false);
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
@@ -335,9 +348,24 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async savePreferences(patch = {}) {
+    if (this.stopping || this.unloaded) {
+      throw Object.assign(new Error('plugin is stopping'), { code: 'PLUGIN_CANCELLED' });
+    }
+    const generation = this.preferenceGeneration;
+    const assertCurrent = () => {
+      if (generation === this.preferenceGeneration && !this.unloaded) return;
+      throw Object.assign(new Error('preference save is cancelled'), { code: 'PLUGIN_CANCELLED' });
+    };
     const save = async () => {
+      assertCurrent();
       let existing;
-      try { existing = await this.loadData?.() ?? {}; } catch { existing = this.preferenceSnapshot; }
+      try {
+        existing = await this.loadData?.() ?? {};
+      } catch {
+        assertCurrent();
+        existing = this.preferenceSnapshot;
+      }
+      assertCurrent();
       const next = {
         highlight: this.state.highlight,
         lookupAnyWord: this.state.lookupAnyWord,
@@ -347,7 +375,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
         ...existing,
         ...patch,
       };
+      assertCurrent();
       await this.saveData?.(next);
+      assertCurrent();
       this.preferenceSnapshot = { ...next };
       return next;
     };
@@ -908,9 +938,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   onunload() {
-    this.unloaded = true;
+    if (this.unloadPromise) return this.unloadPromise;
+    this.stopping = true;
     this.initialized = false;
-    this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
     this.index?.cancel?.();
@@ -922,6 +952,16 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.indexProjectionReady = false;
     this.rootChangedPending = false;
     this.indexChangedPending = false;
+    const mutationTail = this.mutationTail;
+    const preferenceTail = this.preferenceTail;
+    this.unloadPromise = (async () => {
+      await settleWithin([mutationTail, preferenceTail], this.unloadDrainTimeoutMs);
+      this.unloaded = true;
+      this.rootGeneration += 1;
+      this.preferenceGeneration += 1;
+      this.reviewStore?.cancel?.();
+    })();
+    return this.unloadPromise;
   }
 
   async handleLocaleChanged(event) {

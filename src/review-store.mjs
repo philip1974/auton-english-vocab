@@ -121,9 +121,11 @@ export class ReviewStore {
     this.introducedNeedsMigration = false;
     this.legacyIntroducedWords = [];
     this.generation = 0;
+    this.disposed = false;
   }
 
   async load() {
+    this.#assertActive();
     let rootChange;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const generation = ++this.generation;
@@ -167,6 +169,7 @@ export class ReviewStore {
   }
 
   async reloadForRootChange() {
+    this.#assertActive();
     this.generation += 1;
     this.#resetProjection();
     return this.load();
@@ -352,6 +355,7 @@ export class ReviewStore {
   }
 
   async saveReview(next = this.review) {
+    this.#assertActive();
     this.#assertReviewWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -387,6 +391,7 @@ export class ReviewStore {
   }
 
   async mutateReview(operation) {
+    this.#assertActive();
     this.#assertReviewWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -420,6 +425,7 @@ export class ReviewStore {
   }
 
   async appendLogs(entries) {
+    this.#assertActive();
     this.#assertLogWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -455,6 +461,7 @@ export class ReviewStore {
   }
 
   async flushPendingLogs() {
+    this.#assertActive();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     const pending = [...(this.review.pendingLogs ?? [])];
@@ -486,7 +493,18 @@ export class ReviewStore {
   }
 
   #stale(generation, rootGeneration) {
-    return generation !== this.generation || rootGeneration !== this.rootGeneration;
+    return this.disposed || generation !== this.generation || rootGeneration !== this.rootGeneration;
+  }
+
+  #assertActive() {
+    if (!this.disposed) return;
+    throw Object.assign(new Error('review store is cancelled'), { code: 'PLUGIN_CANCELLED' });
+  }
+
+  cancel() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.generation += 1;
   }
 }
 

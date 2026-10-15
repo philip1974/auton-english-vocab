@@ -1323,8 +1323,10 @@ var ReviewStore = class {
     this.introducedNeedsMigration = false;
     this.legacyIntroducedWords = [];
     this.generation = 0;
+    this.disposed = false;
   }
   async load() {
+    this.#assertActive();
     let rootChange;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const generation = ++this.generation;
@@ -1364,6 +1366,7 @@ var ReviewStore = class {
     throw rootChange;
   }
   async reloadForRootChange() {
+    this.#assertActive();
     this.generation += 1;
     this.#resetProjection();
     return this.load();
@@ -1536,6 +1539,7 @@ var ReviewStore = class {
     this.introducedNeedsMigration = false;
   }
   async saveReview(next = this.review) {
+    this.#assertActive();
     this.#assertReviewWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -1566,6 +1570,7 @@ var ReviewStore = class {
     }
   }
   async mutateReview(operation) {
+    this.#assertActive();
     this.#assertReviewWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -1597,6 +1602,7 @@ var ReviewStore = class {
     return this.appendLogs([entry]);
   }
   async appendLogs(entries) {
+    this.#assertActive();
     this.#assertLogWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
@@ -1630,6 +1636,7 @@ var ReviewStore = class {
     return retainLogHistory(uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]));
   }
   async flushPendingLogs() {
+    this.#assertActive();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     const pending = [...this.review.pendingLogs ?? []];
@@ -1658,7 +1665,16 @@ var ReviewStore = class {
     throw Object.assign(new Error("log storage is read-only"), { code: "LOG_READ_ONLY" });
   }
   #stale(generation, rootGeneration) {
-    return generation !== this.generation || rootGeneration !== this.rootGeneration;
+    return this.disposed || generation !== this.generation || rootGeneration !== this.rootGeneration;
+  }
+  #assertActive() {
+    if (!this.disposed) return;
+    throw Object.assign(new Error("review store is cancelled"), { code: "PLUGIN_CANCELLED" });
+  }
+  cancel() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.generation += 1;
   }
 };
 function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()) {
@@ -35237,6 +35253,15 @@ var BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {
 };
 var emptyReview = () => ({ version: 1, cards: /* @__PURE__ */ Object.create(null), flags: /* @__PURE__ */ Object.create(null) });
 var REVIEW_MODES = /* @__PURE__ */ new Set(["context", "flip", "reverse", "listening"]);
+var UNLOAD_DRAIN_TIMEOUT_MS = 8e3;
+async function settleWithin(promises, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  await Promise.race([Promise.allSettled(promises), timeout]);
+  clearTimeout(timer);
+}
 function normalizedSentence2(value) {
   return String(value ?? "").trim().replace(/\s+/gu, " ");
 }
@@ -35260,6 +35285,7 @@ function readingSource(source) {
 var EnglishVocabPlugin = class extends BasePlugin {
   async onload() {
     this.unloaded = false;
+    this.stopping = false;
     this.locale = currentLocale();
     this.t = uiText(this.locale);
     this.state = {
@@ -35290,6 +35316,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.preferenceTail = Promise.resolve();
     this.preferenceSnapshot = {};
+    this.preferenceGeneration = 0;
+    this.unloadDrainTimeoutMs = UNLOAD_DRAIN_TIMEOUT_MS;
+    this.unloadPromise = null;
     this.reviewModeRequest = 0;
     this.levelSettingsRequest = 0;
     this.pendingMutations = 0;
@@ -35356,6 +35385,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     for (const listener of this.listeners ?? []) listener();
   }
   enqueueMutation(task, generation = this.rootGeneration) {
+    if (this.stopping || this.unloaded) return Promise.resolve(false);
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
@@ -35541,13 +35571,24 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
   }
   async savePreferences(patch = {}) {
+    if (this.stopping || this.unloaded) {
+      throw Object.assign(new Error("plugin is stopping"), { code: "PLUGIN_CANCELLED" });
+    }
+    const generation = this.preferenceGeneration;
+    const assertCurrent = () => {
+      if (generation === this.preferenceGeneration && !this.unloaded) return;
+      throw Object.assign(new Error("preference save is cancelled"), { code: "PLUGIN_CANCELLED" });
+    };
     const save = async () => {
+      assertCurrent();
       let existing;
       try {
         existing = await this.loadData?.() ?? {};
       } catch {
+        assertCurrent();
         existing = this.preferenceSnapshot;
       }
+      assertCurrent();
       const next = {
         highlight: this.state.highlight,
         lookupAnyWord: this.state.lookupAnyWord,
@@ -35557,7 +35598,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
         ...existing,
         ...patch
       };
+      assertCurrent();
       await this.saveData?.(next);
+      assertCurrent();
       this.preferenceSnapshot = { ...next };
       return next;
     };
@@ -36085,9 +36128,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
     });
   }
   onunload() {
-    this.unloaded = true;
+    if (this.unloadPromise) return this.unloadPromise;
+    this.stopping = true;
     this.initialized = false;
-    this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
     this.index?.cancel?.();
@@ -36099,6 +36142,16 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.indexProjectionReady = false;
     this.rootChangedPending = false;
     this.indexChangedPending = false;
+    const mutationTail = this.mutationTail;
+    const preferenceTail = this.preferenceTail;
+    this.unloadPromise = (async () => {
+      await settleWithin([mutationTail, preferenceTail], this.unloadDrainTimeoutMs);
+      this.unloaded = true;
+      this.rootGeneration += 1;
+      this.preferenceGeneration += 1;
+      this.reviewStore?.cancel?.();
+    })();
+    return this.unloadPromise;
   }
   async handleLocaleChanged(event) {
     const locale = typeof event === "string" ? event : event?.locale;
