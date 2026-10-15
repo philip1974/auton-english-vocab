@@ -240,13 +240,13 @@ describe('dictionary', () => {
     for (const [word, rejected] of Object.entries({ felt: ['feels', 'feeling'], numb: ['number'], clothe: ['cloathing'], her: ['hering'], sheep: ['sheeps'] })) {
       for (const surface of rejected) expect(forms.get(word).has(surface)).toBe(false);
     }
-    for (const surface of ['emails', 'emailed', 'emailing']) expect(forms.get('email').has(surface)).toBe(true);
+    expect(forms.get('email').has('emailing')).toBe(true);
+    for (const surface of ['emails', 'emailed']) expect(forms.get('email').has(surface)).toBe(false);
     for (const surface of ['ran', 'running', 'runs']) expect(forms.get('run').has(surface)).toBe(true);
     for (const surface of ['went', 'gone', 'going', 'goes']) expect(forms.get('go').has(surface)).toBe(true);
     expect(forms.get('child').has('children')).toBe(true);
-    const before = new Set(buildSurfaceMap([{ word: 'email', pos: 'noun, verb' }]).keys());
     const after = new Set(buildSurfaceMap([entries.find((entry) => entry.word === 'email')]).keys());
-    for (const surface of before) expect(after.has(surface)).toBe(true);
+    expect(after).toEqual(new Set(['email', 'emailing']));
   });
 
   it('should ignore a foreign lemma exchange paradigm while retaining reliable forms', async () => {
@@ -290,6 +290,38 @@ describe('dictionary', () => {
     expect(entry.forms).toEqual(expect.arrayContaining(['good', 'better', 'best']));
   });
 
+  it('should accept reverse-validated regular comparisons when real exchange entries point back', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries(['big', 'happy', 'easy', 'new', 'great', 'fast'].map((word) => ({ word, definition: 'plain' })));
+    const forms = new Map(entries.map((entry) => [entry.word, new Set(entry.forms)]));
+    for (const [lemma, expected] of Object.entries({
+      big: ['bigger', 'biggest'], happy: ['happier', 'happiest'], easy: ['easier', 'easiest'],
+      new: ['newer', 'newest'], great: ['greater', 'greatest'], fast: ['faster', 'fastest'],
+    })) for (const surface of expected) expect(forms.get(lemma).has(surface)).toBe(true);
+  });
+
+  it('should prefer verified exchange spellings when dictionary paradigms replace local guesses', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries(['up', 'control', 'program', 'forget', 'radio', 'begin', 'transfer'].map((word) => ({ word, definition: 'plain' })));
+    const surfaces = new Set(entries.flatMap((entry) => entry.forms));
+    for (const surface of ['upped', 'controlled', 'controlling', 'programming', 'forgetting', 'radios', 'beginning', 'began', 'begun', 'transferred', 'transferring']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['uping', 'uped', 'controling', 'controled', 'programing', 'forgeting', 'radioes', 'begining', 'begined', 'transfering', 'transfered']) expect(surfaces.has(surface)).toBe(false);
+  });
+
+  it('should reject rule surfaces when real dictionary entries do not point back to the lemma', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([
+      { word: 'in', pos: 'noun', definition: 'inside' },
+      { word: 'at', pos: 'noun', definition: 'location' },
+      { word: 'http', pos: 'noun', definition: 'protocol' },
+      { word: 'more', pos: 'noun', definition: 'additional' },
+      { word: 'good', pos: 'noun, adjective', definition: 'positive' },
+    ]);
+    const forms = new Map(entries.map((entry) => [entry.word, new Set(entry.forms)]));
+    for (const [lemma, surface] of [['in', 'ins'], ['at', 'ats'], ['http', 'https'], ['more', 'mores'], ['good', 'goods']]) expect(forms.get(lemma).has(surface)).toBe(false);
+    expect(forms.get('good')).toEqual(new Set(['good', 'better', 'best']));
+  });
+
   it('should normalize a pure irregular plural to its noun lemma when looking up children', async () => {
     resetDictionaryCache();
     await expect(lookup('children')).resolves.toMatchObject({
@@ -298,5 +330,7 @@ describe('dictionary', () => {
       surfaceEntry: expect.objectContaining({ t: expect.stringMatching(/^pl\./u) }),
     });
     await expect(lookup('people')).resolves.toMatchObject({ surface: 'people', lemma: 'people' });
+    await expect(lookup('leaves')).resolves.toMatchObject({ surface: 'leaves', lemma: 'leaves' });
+    await expect(lookup('lives')).resolves.toMatchObject({ surface: 'lives', lemma: 'life' });
   });
 });

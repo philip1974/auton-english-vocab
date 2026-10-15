@@ -305,26 +305,70 @@ export function reliableFormsFor(wordValue, posValue) {
 }
 
 export function reliableRuleFormsFor(wordValue, posValue) {
-  const lemma = normalize(wordValue);
   const forms = new Set();
-  if (!isSurface(lemma)) return forms;
+  for (const surfaces of reliableRuleCandidatesByKind(wordValue, posValue).values()) {
+    for (const surface of surfaces) forms.add(surface);
+  }
+  for (const surfaces of reviewedIrregularCandidatesByKind(wordValue, posValue).values()) {
+    for (const surface of surfaces) forms.add(surface);
+  }
+  return forms;
+}
+
+function addKindCandidate(candidates, kind, surface, allowDenied = false) {
+  const surfaces = candidates.get(kind) ?? new Set();
+  addCandidate(surfaces, surface, allowDenied);
+  candidates.set(kind, surfaces);
+}
+
+export function reliableRuleCandidatesByKind(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const candidates = new Map();
+  if (!isSurface(lemma) || lemma.includes("'")) return candidates;
   const parts = partsOf(typeof posValue === 'object' && posValue !== null
     ? posValue
     : { pos: posValue });
   for (const part of parts) {
-    if (part === 'comparative') {
-      for (const surface of IRREGULAR_COMPARATIVES.get(lemma) ?? []) addCandidate(forms, surface, true);
+    if (part === 'noun') {
+      for (const surface of generatedForms(lemma, part)) addKindCandidate(candidates, 's', surface);
       continue;
     }
-    if (part === 'noun' && IRREGULAR_NOUNS.has(lemma)) continue;
-    if (part === 'verb' && IRREGULAR_VERBS.has(lemma)) {
-      addCandidate(forms, thirdPerson(lemma), lemma === 'be' || lemma === 'have');
-      addCandidate(forms, presentParticiple(lemma));
-      continue;
+    if (part !== 'verb') continue;
+    if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS.has(lemma)) continue;
+    addKindCandidate(candidates, '3', thirdPerson(lemma), lemma === 'be' || lemma === 'have');
+    addKindCandidate(candidates, 'i', presentParticiple(lemma));
+    const irregular = IRREGULAR_VERBS.get(lemma);
+    if (irregular) {
+      addKindCandidate(candidates, 'p', irregular[0], true);
+      addKindCandidate(candidates, 'd', irregular[1], true);
+    } else {
+      const past = regularPast(lemma);
+      addKindCandidate(candidates, 'p', past);
+      addKindCandidate(candidates, 'd', past);
     }
-    for (const surface of generatedForms(lemma, part)) forms.add(surface);
   }
-  return forms;
+  return candidates;
+}
+
+export function reviewedIrregularCandidatesByKind(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const candidates = new Map();
+  if (!isSurface(lemma)) return candidates;
+  const parts = partsOf(typeof posValue === 'object' && posValue !== null
+    ? posValue
+    : { pos: posValue });
+  if (parts.has('comparative')) {
+    const comparative = IRREGULAR_COMPARATIVES.get(lemma) ?? [];
+    if (comparative[0]) addKindCandidate(candidates, 'r', comparative[0], true);
+    if (comparative[1]) addKindCandidate(candidates, 't', comparative[1], true);
+  }
+  if (lemma === 'be' && parts.has('verb')) {
+    for (const surface of ['am', 'are', 'is']) addKindCandidate(candidates, '3', surface, true);
+    for (const surface of ['was', 'were']) addKindCandidate(candidates, 'p', surface, true);
+    addKindCandidate(candidates, 'd', 'been', true);
+    addKindCandidate(candidates, 'i', 'being', true);
+  }
+  return candidates;
 }
 
 const INFLECTED_VERB_SURFACES = new Set([

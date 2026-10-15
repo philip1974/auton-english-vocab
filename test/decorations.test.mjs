@@ -49,7 +49,8 @@ describe('reading decorations', () => {
       review: review(),
     });
     const surfaces = new Set(terms.map((term) => term.surface));
-    for (const surface of ['emails', 'emailed', 'emailing']) expect(surfaces.has(surface)).toBe(true);
+    expect(surfaces.has('emailing')).toBe(true);
+    for (const surface of ['emails', 'emailed']) expect(surfaces.has(surface)).toBe(false);
     for (const surface of ['number', 'feels', 'feeling']) expect(surfaces.has(surface)).toBe(false);
   });
 
@@ -58,6 +59,20 @@ describe('reading decorations', () => {
     const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
     for (const surface of ['better', 'best']) expect(surfaces.has(surface)).toBe(true);
     for (const surface of ['runner', 'runnest', 'dos', 'gos']) expect(surfaces.has(surface)).toBe(false);
+  });
+
+  it('should publish only corpus-validated terms when exchange spelling and collisions disagree with rules', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([
+      { word: 'big', definition: 'plain' },
+      { word: 'control', definition: 'plain' },
+      { word: 'in', pos: 'noun', definition: 'inside' },
+      { word: 'http', pos: 'noun', definition: 'protocol' },
+      { word: 'good', pos: 'noun, adjective', definition: 'positive' },
+    ]);
+    const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
+    for (const surface of ['bigger', 'biggest', 'controlled', 'controlling', 'better', 'best']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['controling', 'controled', 'ins', 'https', 'goods']) expect(surfaces.has(surface)).toBe(false);
   });
 
   it('should publish reliable terms when one exchange validation chunk fails', async () => {
@@ -69,7 +84,7 @@ describe('reading decorations', () => {
       },
     });
     const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
-    expect(surfaces).toEqual(new Set(['go', 'goes', 'going']));
+    expect(surfaces).toEqual(new Set(['go', 'gone', 'goes', 'going']));
   });
 
   it('should publish prototype-shaped collected words without inherited review state', () => {

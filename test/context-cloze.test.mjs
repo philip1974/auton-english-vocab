@@ -154,6 +154,22 @@ describe('context cloze', () => {
     expect(clozeSentence('The gos label is uncommon.', byWord.get('go')).hits).toEqual([]);
   });
 
+  it('should cloze only corpus-validated forms when exchange spelling and collisions disagree with rules', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([
+      { word: 'big', definition: 'plain' },
+      { word: 'control', definition: 'plain' },
+      { word: 'in', pos: 'noun', definition: 'inside' },
+      { word: 'http', pos: 'noun', definition: 'protocol' },
+    ]);
+    const byWord = new Map(entries.map((entry) => [entry.word, entry]));
+    expect(clozeSentence('A bigger and biggest box.', byWord.get('big')).text).toBe('A _____ and _____ box.');
+    expect(clozeSentence('They controlled it while controlling access.', byWord.get('control')).text).toBe('They _____ it while _____ access.');
+    expect(clozeSentence('They controled it while controling access.', byWord.get('control')).hits).toEqual([]);
+    expect(clozeSentence('INS uses HTTPS.', byWord.get('in')).hits).toEqual([]);
+    expect(clozeSentence('HTTPS is secure.', byWord.get('http')).hits).toEqual([]);
+  });
+
   it('should keep reliable cloze forms when one exchange validation chunk fails', async () => {
     resetDictionaryCache();
     const [entry] = await enrichVocabularyEntries([{ word: 'go', definition: 'move' }], {

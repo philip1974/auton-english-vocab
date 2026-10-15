@@ -6,9 +6,9 @@ describe('inflections', () => {
     expect(reliableFormsFor('run', 'verb')).toEqual(expect.objectContaining({ size: expect.any(Number) }));
     expect([...reliableFormsFor('run', 'verb')]).toEqual(expect.arrayContaining(['ran', 'running', 'runs']));
     expect([...reliableRuleFormsFor('run', { pos: 'verb' })]).toEqual(expect.arrayContaining(['running', 'runs']));
-    expect(reliableRuleFormsFor('run', { pos: 'verb' }).has('ran')).toBe(false);
+    expect(reliableRuleFormsFor('run', { pos: 'verb' }).has('ran')).toBe(true);
     expect([...reliableRuleFormsFor('good', 'adjective')]).toEqual(expect.arrayContaining(['better', 'best']));
-    expect([...reliableRuleFormsFor('child', 'noun')]).toEqual([]);
+    expect([...reliableRuleFormsFor('child', 'noun')]).toEqual(['children']);
     expect([...reliableFormsFor('not valid!', 'verb')]).toEqual([]);
     expect([...reliableRuleFormsFor('not valid!', 'verb')]).toEqual([]);
   });

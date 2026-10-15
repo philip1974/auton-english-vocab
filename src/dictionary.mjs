@@ -1,5 +1,6 @@
 import { assertEnglishWord, isEnglishWordPrefix, normalizeWord } from './note-format.mjs';
-import { inflectionKindsFor, reliableRuleFormsFor } from './inflections.mjs';
+import { inflectionKindsFor } from './inflections.mjs';
+import { decideInflectionForms, dictionaryExchangeLemma, inflectionCandidateSurfaces } from './inflection-policy.mjs';
 
 const LETTER_RE = /^[a-z]$/u;
 const cache = new Map();
@@ -53,10 +54,7 @@ async function entryFor(word, importer) {
 }
 
 function exchangeLemma(entry) {
-  const exchange = String(entry?.x ?? '');
-  const match = exchange.match(/(?:^|\/)0:([^/]+)/u);
-  if (!match) return null;
-  return match[1].split(',')[0]?.trim().toLowerCase() || null;
+  return dictionaryExchangeLemma(entry);
 }
 
 function exchangeKinds(entry) {
@@ -74,10 +72,19 @@ function translatedLemma(entry) {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-function isPureInflection(entry) {
+function isPurePluralInflection(entry, lemmaEntry) {
+  const lines = String(entry?.t ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!lines.length || !lines.every((line) => /^pl\.\s+/iu.test(line))) return false;
+  const lemmas = [...String(entry?.x ?? '').matchAll(/(?:^|\/)0:([^/]+)/gu)];
+  const kinds = exchangeKinds(entry);
+  return lemmas.length === 1 && kinds.size === 1 && kinds.has('plural') && entrySupportsKinds(lemmaEntry, new Set(['plural']));
+}
+
+function isPureInflection(entry, lemmaEntry) {
   const lines = String(entry?.t ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
   if (!lines.length || !exchangeLemma(entry)) return false;
-  return lines.every((line) => /^pl\.\s+/iu.test(line) || line
+  if (lines.every((line) => /^pl\.\s+/iu.test(line))) return isPurePluralInflection(entry, lemmaEntry);
+  return lines.every((line) => line
     .replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, '')
     .match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
 }
@@ -175,9 +182,9 @@ export async function lookup(word, { importer = defaultImporter } = {}) {
         break;
       }
     }
-    if (lemma && lemma !== surface && isPureInflection(direct)) {
+    if (lemma && lemma !== surface) {
       const lemmaEntry = await entryFor(lemma, importer);
-      if (lemmaEntry) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
+      if (lemmaEntry && isPureInflection(direct, lemmaEntry)) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
     }
     const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma, surface, verifiedKinds) : '';
     const inflection = kind ? { lemma, kind } : undefined;
@@ -262,40 +269,18 @@ export function inferPos(entry) {
   return found.size ? [...found].join(', ') : undefined;
 }
 
-function exchangeCandidates(entry) {
-  const candidates = [];
-  for (const match of String(entry?.x ?? '').matchAll(/(?:^|\/)(s|d|p|i|3|r|t):([^/]+)/gu)) {
-    for (const value of match[2].split(',')) {
-      try { candidates.push({ kind: match[1], surface: assertEnglishWord(value) }); } catch { /* Ignore malformed upstream exchange values. */ }
-    }
-  }
-  return candidates;
-}
-
-function reverseInflectionPointsTo(entry, lemma) {
-  return exchangeLemma(entry) === lemma;
-}
-
-async function verifiedForms(word, entry, dictionaryPos, importer) {
-  const reliable = reliableRuleFormsFor(word, { pos: dictionaryPos });
-  const forms = new Set([word, ...reliable]);
+async function verifiedForms(word, entry, pos, importer) {
+  const candidates = inflectionCandidateSurfaces({ lemma: word, entry, pos });
+  const surfaceEntries = new Map();
   let incomplete = false;
-  const ownLemma = exchangeLemma(entry);
-  if (ownLemma && ownLemma !== word) return { forms: [...forms], incomplete };
-  for (const candidate of exchangeCandidates(entry)) {
-    let surfaceEntry;
+  for (const surface of candidates) {
     try {
-      surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
+      surfaceEntries.set(surface, await entryFor(surface, importer));
     } catch {
       incomplete = true;
-      continue;
     }
-    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
-    const reviewedComparative = ['r', 't'].includes(candidate.kind) && reliable.has(candidate.surface);
-    const verifiedExchange = !['r', 't'].includes(candidate.kind) && reversed;
-    if (reviewedComparative || verifiedExchange || (reliable.has(candidate.surface) && !surfaceEntry)) forms.add(candidate.surface);
   }
-  return { forms: [...forms], incomplete };
+  return { ...decideInflectionForms({ lemma: word, entry, pos, surfaceEntries }), incomplete };
 }
 
 export async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
@@ -322,7 +307,7 @@ export async function enrichVocabularyEntries(entries, { importer = defaultImpor
     }
     if (!dictionaryEntry) return entry;
     const dictionaryPos = inferPos(dictionaryEntry);
-    const verified = await verifiedForms(word, dictionaryEntry, dictionaryPos, importer);
+    const verified = await verifiedForms(word, dictionaryEntry, { pos: entry.pos, dictionaryPos }, importer);
     if (verified.incomplete) incomplete = true;
     return {
       ...entry,

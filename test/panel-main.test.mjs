@@ -1209,6 +1209,28 @@ describe('panel', () => {
 });
 
 describe('main plugin', () => {
+  it('should publish unified dictionary decisions when plugin indexing reaches reading decorations', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const notes = new Map([
+      ['wiki/vocab/big.md', buildNote({ word: 'big', definition: 'large' })],
+      ['wiki/vocab/control.md', buildNote({ word: 'control', definition: 'manage' })],
+      ['wiki/vocab/in.md', buildNote({ word: 'in', definition: 'inside', pos: 'noun' })],
+    ]);
+    app.knowledge.listDocuments = async () => [...notes.keys()].map((path) => ({ path, title: path, revision: { contentHash: path } }));
+    app.knowledge.readDocument = async ({ path }) => notes.has(path)
+      ? { meta: { path, title: path, revision: { contentHash: path } }, content: notes.get(path) }
+      : { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
+    const published = [];
+    app.readingDecorations = { register: () => ({ setTerms: (terms) => { published.push(terms); return true; }, dispose() {} }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const surfaces = new Set(published.at(-1).map((term) => term.surface));
+    for (const surface of ['bigger', 'biggest', 'controlled', 'controlling']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['controling', 'controled', 'ins']) expect(surfaces.has(surface)).toBe(false);
+  });
+
   it('should republish every consumer and clear loading when dictionary enrichment retry recovers', async () => {
     vi.useFakeTimers();
     try {
@@ -2171,6 +2193,24 @@ describe('main plugin', () => {
     await expect(plugin.collectDictionaryWord(result)).resolves.toMatchObject({ outcome: 'applied' });
     expect(proposals[0].changes[0]).toMatchObject({ path: 'wiki/vocab/child.md' });
     expect(proposals[0].changes[0].newContent).toContain('word: "child"');
+  });
+
+  it('should preserve the surface when collecting a plural with conflicting exchange kinds', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const proposals = [];
+    const app = fullApp();
+    app.knowledge.propose = async (proposal) => {
+      proposals.push(proposal);
+      return appliedProposal(app, proposal, 'accepted');
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const result = await lookup('leaves');
+    expect(result).toMatchObject({ surface: 'leaves', lemma: 'leaves' });
+    await expect(plugin.collectDictionaryWord(result)).resolves.toMatchObject({ outcome: 'applied' });
+    expect(proposals[0].changes[0]).toMatchObject({ path: 'wiki/vocab/leaves.md' });
+    expect(proposals[0].changes[0].newContent).toContain('word: "leaves"');
   });
 
   it('should abort dictionary collection when the real vocabulary index contains duplicate notes', async () => {

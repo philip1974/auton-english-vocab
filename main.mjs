@@ -2020,25 +2020,54 @@ function partsOf(value) {
   }
   return parts;
 }
-function reliableRuleFormsFor(wordValue, posValue) {
+function addKindCandidate(candidates, kind, surface, allowDenied = false) {
+  const surfaces = candidates.get(kind) ?? /* @__PURE__ */ new Set();
+  addCandidate(surfaces, surface, allowDenied);
+  candidates.set(kind, surfaces);
+}
+function reliableRuleCandidatesByKind(wordValue, posValue) {
   const lemma = normalize(wordValue);
-  const forms = /* @__PURE__ */ new Set();
-  if (!isSurface(lemma)) return forms;
+  const candidates = /* @__PURE__ */ new Map();
+  if (!isSurface(lemma) || lemma.includes("'")) return candidates;
   const parts = partsOf(typeof posValue === "object" && posValue !== null ? posValue : { pos: posValue });
   for (const part of parts) {
-    if (part === "comparative") {
-      for (const surface of IRREGULAR_COMPARATIVES.get(lemma) ?? []) addCandidate(forms, surface, true);
+    if (part === "noun") {
+      for (const surface of generatedForms(lemma, part)) addKindCandidate(candidates, "s", surface);
       continue;
     }
-    if (part === "noun" && IRREGULAR_NOUNS.has(lemma)) continue;
-    if (part === "verb" && IRREGULAR_VERBS.has(lemma)) {
-      addCandidate(forms, thirdPerson(lemma), lemma === "be" || lemma === "have");
-      addCandidate(forms, presentParticiple(lemma));
-      continue;
+    if (part !== "verb") continue;
+    if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS.has(lemma)) continue;
+    addKindCandidate(candidates, "3", thirdPerson(lemma), lemma === "be" || lemma === "have");
+    addKindCandidate(candidates, "i", presentParticiple(lemma));
+    const irregular = IRREGULAR_VERBS.get(lemma);
+    if (irregular) {
+      addKindCandidate(candidates, "p", irregular[0], true);
+      addKindCandidate(candidates, "d", irregular[1], true);
+    } else {
+      const past = regularPast(lemma);
+      addKindCandidate(candidates, "p", past);
+      addKindCandidate(candidates, "d", past);
     }
-    for (const surface of generatedForms(lemma, part)) forms.add(surface);
   }
-  return forms;
+  return candidates;
+}
+function reviewedIrregularCandidatesByKind(wordValue, posValue) {
+  const lemma = normalize(wordValue);
+  const candidates = /* @__PURE__ */ new Map();
+  if (!isSurface(lemma)) return candidates;
+  const parts = partsOf(typeof posValue === "object" && posValue !== null ? posValue : { pos: posValue });
+  if (parts.has("comparative")) {
+    const comparative = IRREGULAR_COMPARATIVES.get(lemma) ?? [];
+    if (comparative[0]) addKindCandidate(candidates, "r", comparative[0], true);
+    if (comparative[1]) addKindCandidate(candidates, "t", comparative[1], true);
+  }
+  if (lemma === "be" && parts.has("verb")) {
+    for (const surface of ["am", "are", "is"]) addKindCandidate(candidates, "3", surface, true);
+    for (const surface of ["was", "were"]) addKindCandidate(candidates, "p", surface, true);
+    addKindCandidate(candidates, "d", "been", true);
+    addKindCandidate(candidates, "i", "being", true);
+  }
+  return candidates;
 }
 var INFLECTED_VERB_SURFACES = /* @__PURE__ */ new Set([
   ...[...IRREGULAR_VERBS.values()].flat(),
@@ -2813,6 +2842,146 @@ function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
   return { band: "hard", tone: "warning" };
 }
 
+// src/inflection-policy.mjs
+var SURFACE_RE2 = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
+var EXCHANGE_KINDS = /* @__PURE__ */ new Set(["p", "d", "i", "3", "s", "r", "t"]);
+function normalize2(value) {
+  return String(value ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
+}
+function dictionaryExchangeLemma(entry) {
+  const match = String(entry?.x ?? "").match(/(?:^|\/)0:([^/]+)/u);
+  return match?.[1]?.split(",")[0]?.trim().toLowerCase() || null;
+}
+function dictionaryExchangeByKind(entry) {
+  const candidates = /* @__PURE__ */ new Map();
+  for (const match of String(entry?.x ?? "").matchAll(/(?:^|\/)(s|d|p|i|3|r|t):([^/]+)/gu)) {
+    if (!EXCHANGE_KINDS.has(match[1])) continue;
+    const surfaces = candidates.get(match[1]) ?? /* @__PURE__ */ new Set();
+    for (const value of match[2].split(",")) {
+      const surface = normalize2(value);
+      if (SURFACE_RE2.test(surface)) surfaces.add(surface);
+    }
+    if (surfaces.size) candidates.set(match[1], surfaces);
+  }
+  return candidates;
+}
+function mergeCandidateSurfaces(target, candidates) {
+  for (const surfaces of candidates.values()) for (const surface of surfaces) target.add(surface);
+}
+function dictionaryRelationKinds(entry) {
+  const code = String(entry?.x ?? "").match(/(?:^|\/)1:([^/]+)/u)?.[1] ?? "";
+  const kinds = /* @__PURE__ */ new Set();
+  for (const kind of EXCHANGE_KINDS) if (code.includes(kind)) kinds.add(kind);
+  return kinds;
+}
+function paradigmFor({ lemma, entry, pos }) {
+  const rules = reliableRuleCandidatesByKind(lemma, pos);
+  const reviewed = reviewedIrregularCandidatesByKind(lemma, pos);
+  const ownLemma = dictionaryExchangeLemma(entry);
+  const exchange = ownLemma && ownLemma !== lemma ? /* @__PURE__ */ new Map() : dictionaryExchangeByKind(entry);
+  if (ownLemma && ownLemma !== lemma) {
+    const relationKinds = dictionaryRelationKinds(entry);
+    if (["p", "d", "i", "3"].some((kind) => relationKinds.has(kind))) for (const kind of ["p", "d", "i", "3"]) rules.delete(kind);
+    if (relationKinds.has("s")) rules.delete("s");
+    if (["r", "t"].some((kind) => relationKinds.has(kind))) for (const kind of ["r", "t"]) rules.delete(kind);
+  }
+  return { rules, reviewed, exchange };
+}
+function inflectionCandidateSurfaces({ lemma: lemmaValue, entry = null, pos = {} }) {
+  const lemma = normalize2(lemmaValue);
+  const candidates = /* @__PURE__ */ new Set();
+  if (!SURFACE_RE2.test(lemma)) return candidates;
+  const { rules, reviewed, exchange } = paradigmFor({ lemma, entry, pos });
+  for (const [kind, surfaces] of rules) if (!exchange.has(kind)) for (const surface of surfaces) candidates.add(surface);
+  mergeCandidateSurfaces(candidates, exchange);
+  mergeCandidateSurfaces(candidates, reviewed);
+  candidates.delete(lemma);
+  return candidates;
+}
+function addAccepted(accepted, surface, kind, reason, rule) {
+  if (!accepted.has(surface)) accepted.set(surface, { surface, kind, reason, rule });
+}
+function addRejected(rejected, surface, kind, reason, rule) {
+  rejected.push({ surface, kind, reason, rule });
+}
+function surfaceState(surfaceEntries, surface) {
+  if (!surfaceEntries.has(surface)) return { available: false, entry: null };
+  return { available: true, entry: surfaceEntries.get(surface) };
+}
+function hasIndependentComparativeConflict(entry) {
+  const definitions = `${String(entry?.t ?? "")}
+${String(entry?.d ?? "")}`;
+  const nounOrVerb = /(?:^|\n)\s*(?:n|v|vt|vi)\.\s/imu.test(definitions);
+  const adjective = /(?:^|\n)\s*(?:a|adj)\.\s/imu.test(definitions);
+  return nounOrVerb && !adjective;
+}
+function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {}, surfaceEntries = /* @__PURE__ */ new Map() }) {
+  const lemma = normalize2(lemmaValue);
+  if (!SURFACE_RE2.test(lemma)) return { forms: [], accepted: [], rejected: [] };
+  const { rules, reviewed, exchange } = paradigmFor({ lemma, entry, pos });
+  const accepted = /* @__PURE__ */ new Map();
+  const rejected = [];
+  for (const [kind, surfaces] of exchange) {
+    const ruleSurfaces = rules.get(kind) ?? /* @__PURE__ */ new Set();
+    const reviewedSurfaces = reviewed.get(kind) ?? /* @__PURE__ */ new Set();
+    for (const surface of surfaces) {
+      if (surface === lemma) continue;
+      if (reviewedSurfaces.has(surface)) {
+        addAccepted(accepted, surface, kind, "reviewed-irregular", 3);
+        continue;
+      }
+      const state = surfaceState(surfaceEntries, surface);
+      if (!state.available) {
+        addRejected(rejected, surface, kind, "exchange-lookup-unavailable", 1);
+      } else if (state.entry && dictionaryExchangeLemma(state.entry) === lemma && !(["r", "t"].includes(kind) && hasIndependentComparativeConflict(state.entry))) {
+        addAccepted(accepted, surface, kind, "exchange-reversed", 1);
+      } else if (!state.entry && ruleSurfaces.has(surface)) {
+        addAccepted(accepted, surface, kind, "exchange-rule-no-entry", 1);
+      } else {
+        addRejected(rejected, surface, kind, state.entry ? "exchange-conflict" : "exchange-unverified", 1);
+      }
+    }
+  }
+  for (const [kind, surfaces] of rules) {
+    if (exchange.has(kind)) continue;
+    const reviewedSurfaces = reviewed.get(kind) ?? /* @__PURE__ */ new Set();
+    for (const surface of surfaces) {
+      if (surface === lemma) continue;
+      if (reviewedSurfaces.has(surface)) {
+        addAccepted(accepted, surface, kind, "reviewed-irregular", 3);
+        continue;
+      }
+      if (!entry) {
+        addAccepted(accepted, surface, kind, "rule-no-dictionary", 2);
+        continue;
+      }
+      const state = surfaceState(surfaceEntries, surface);
+      if (!state.available) {
+        addRejected(rejected, surface, kind, "rule-lookup-unavailable", 2);
+      } else if (!state.entry) {
+        addAccepted(accepted, surface, kind, "rule-no-entry", 2);
+      } else if (dictionaryExchangeLemma(state.entry) === lemma) {
+        addAccepted(accepted, surface, kind, "rule-reversed", 2);
+      } else {
+        addRejected(rejected, surface, kind, "rule-conflict", 2);
+      }
+    }
+  }
+  for (const [kind, surfaces] of reviewed) {
+    for (const surface of surfaces) if (surface !== lemma) addAccepted(accepted, surface, kind, "reviewed-irregular", 3);
+  }
+  for (const [surface, item] of [...accepted]) {
+    if (!AMBIGUOUS_INFLECTION_SURFACES2.has(surface)) continue;
+    accepted.delete(surface);
+    addRejected(rejected, surface, item.kind, "reviewed-homograph", 4);
+  }
+  return {
+    forms: [lemma, ...accepted.keys()],
+    accepted: [...accepted.values()],
+    rejected
+  };
+}
+
 // src/dictionary.mjs
 var LETTER_RE = /^[a-z]$/u;
 var cache = /* @__PURE__ */ new Map();
@@ -2856,10 +3025,7 @@ async function entryFor(word, importer) {
   return chunk && Object.hasOwn(chunk, word) ? chunk[word] : null;
 }
 function exchangeLemma(entry) {
-  const exchange = String(entry?.x ?? "");
-  const match = exchange.match(/(?:^|\/)0:([^/]+)/u);
-  if (!match) return null;
-  return match[1].split(",")[0]?.trim().toLowerCase() || null;
+  return dictionaryExchangeLemma(entry);
 }
 function exchangeKinds(entry) {
   const code = String(entry?.x ?? "").match(/(?:^|\/)1:([^/]+)/u)?.[1] ?? "";
@@ -2879,10 +3045,18 @@ function translatedLemma(entry) {
   const match = String(entry?.t ?? "").match(/([a-z][a-z'-]*)\s*的?\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)/iu);
   return match?.[1]?.toLowerCase() ?? null;
 }
-function isPureInflection(entry) {
+function isPurePluralInflection(entry, lemmaEntry) {
+  const lines = String(entry?.t ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!lines.length || !lines.every((line) => /^pl\.\s+/iu.test(line))) return false;
+  const lemmas = [...String(entry?.x ?? "").matchAll(/(?:^|\/)0:([^/]+)/gu)];
+  const kinds = exchangeKinds(entry);
+  return lemmas.length === 1 && kinds.size === 1 && kinds.has("plural") && entrySupportsKinds(lemmaEntry, /* @__PURE__ */ new Set(["plural"]));
+}
+function isPureInflection(entry, lemmaEntry) {
   const lines = String(entry?.t ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
   if (!lines.length || !exchangeLemma(entry)) return false;
-  return lines.every((line) => /^pl\.\s+/iu.test(line) || line.replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, "").match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
+  if (lines.every((line) => /^pl\.\s+/iu.test(line))) return isPurePluralInflection(entry, lemmaEntry);
+  return lines.every((line) => line.replace(/^(?:n|v|vt|vi|a|adj|adv|prep|conj|pron)\.\s*/iu, "").match(/^[a-z][a-z'-]*\s*的\s*(?:过去式|过去分词|现在分词|复数|第三人称单数|比较级|最高级)(?:\b|$|[，。,；;])/iu));
 }
 function entrySupportsKinds(entry, kinds) {
   const definitions = `${String(entry?.t ?? "")}
@@ -2990,9 +3164,9 @@ async function lookup(word, { importer = defaultImporter } = {}) {
         break;
       }
     }
-    if (lemma && lemma !== surface && isPureInflection(direct)) {
+    if (lemma && lemma !== surface) {
       const lemmaEntry = await entryFor(lemma, importer);
-      if (lemmaEntry) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
+      if (lemmaEntry && isPureInflection(direct, lemmaEntry)) return { surface: displaySurface, lemma, entry: lemmaEntry, surfaceEntry: direct };
     }
     const kind = lemma && lemma !== surface ? inflectionKind(direct, lemma, surface, verifiedKinds) : "";
     const inflection = kind ? { lemma, kind } : void 0;
@@ -3070,41 +3244,18 @@ ${String(entry?.d ?? "")}`.split("\n")) {
   }
   return found.size ? [...found].join(", ") : void 0;
 }
-function exchangeCandidates(entry) {
-  const candidates = [];
-  for (const match of String(entry?.x ?? "").matchAll(/(?:^|\/)(s|d|p|i|3|r|t):([^/]+)/gu)) {
-    for (const value of match[2].split(",")) {
-      try {
-        candidates.push({ kind: match[1], surface: assertEnglishWord(value) });
-      } catch {
-      }
-    }
-  }
-  return candidates;
-}
-function reverseInflectionPointsTo(entry, lemma) {
-  return exchangeLemma(entry) === lemma;
-}
-async function verifiedForms(word, entry, dictionaryPos, importer) {
-  const reliable = reliableRuleFormsFor(word, { pos: dictionaryPos });
-  const forms = /* @__PURE__ */ new Set([word, ...reliable]);
+async function verifiedForms(word, entry, pos, importer) {
+  const candidates = inflectionCandidateSurfaces({ lemma: word, entry, pos });
+  const surfaceEntries = /* @__PURE__ */ new Map();
   let incomplete = false;
-  const ownLemma = exchangeLemma(entry);
-  if (ownLemma && ownLemma !== word) return { forms: [...forms], incomplete };
-  for (const candidate of exchangeCandidates(entry)) {
-    let surfaceEntry;
+  for (const surface of candidates) {
     try {
-      surfaceEntry = candidate.surface === word ? entry : await entryFor(candidate.surface, importer);
+      surfaceEntries.set(surface, await entryFor(surface, importer));
     } catch {
       incomplete = true;
-      continue;
     }
-    const reversed = reverseInflectionPointsTo(surfaceEntry, word);
-    const reviewedComparative = ["r", "t"].includes(candidate.kind) && reliable.has(candidate.surface);
-    const verifiedExchange = !["r", "t"].includes(candidate.kind) && reversed;
-    if (reviewedComparative || verifiedExchange || reliable.has(candidate.surface) && !surfaceEntry) forms.add(candidate.surface);
   }
-  return { forms: [...forms], incomplete };
+  return { ...decideInflectionForms({ lemma: word, entry, pos, surfaceEntries }), incomplete };
 }
 async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
   let incomplete = false;
@@ -3128,7 +3279,7 @@ async function enrichVocabularyEntries(entries, { importer = defaultImporter } =
     }
     if (!dictionaryEntry) return entry;
     const dictionaryPos = inferPos(dictionaryEntry);
-    const verified = await verifiedForms(word, dictionaryEntry, dictionaryPos, importer);
+    const verified = await verifiedForms(word, dictionaryEntry, { pos: entry.pos, dictionaryPos }, importer);
     if (verified.incomplete) incomplete = true;
     return {
       ...entry,
@@ -34407,7 +34558,7 @@ var COMPARATIVE_BASES = /* @__PURE__ */ new Set([
   "clever",
   "quiet"
 ]);
-function normalize2(value) {
+function normalize3(value) {
   return String(value ?? "").normalize("NFC").toLowerCase().replaceAll("’", "'");
 }
 function isConsonant2(char) {
@@ -34420,7 +34571,7 @@ function rankMapFromWords(words) {
   return new Map(words.map((word, index) => [word, index + 1]));
 }
 function rankCandidates(surface) {
-  const word = normalize2(surface);
+  const word = normalize3(surface);
   const candidates = /* @__PURE__ */ new Set([word]);
   const singularPossessive = /^(?<stem>[a-z]+)'s$/u.exec(word);
   const pluralPossessive = /^(?<stem>[a-z]+s)'$/u.exec(word);
@@ -34468,7 +34619,7 @@ function rankCandidates(surface) {
 }
 function rankOf(surface, table) {
   const ranks = table instanceof Map ? table : rankMapFromWords(table);
-  let best = ranks.get(normalize2(surface)) ?? Infinity;
+  let best = ranks.get(normalize3(surface)) ?? Infinity;
   for (const candidate of rankCandidates(surface)) {
     const rank = ranks.get(candidate);
     if (rank && rank < best) best = rank;
@@ -34478,7 +34629,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
-var ANALYSIS_VERSION = 5;
+var ANALYSIS_VERSION = 6;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {

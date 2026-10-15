@@ -41,7 +41,7 @@ function storage() {
 
 describe('level cache and novel word scoring', () => {
   it('should invalidate prior analysis when dictionary surface semantics change', () => {
-    expect(ANALYSIS_VERSION).toBe(5);
+    expect(ANALYSIS_VERSION).toBe(6);
   });
   it('should score rank boundaries and collected mastered states without rereading text when vocabulary size changes', () => {
     const table = rankMapFromWords(['the', 'and', ...Array.from({ length: 998 }, (_, index) => `filler${index}`), 'alpha', 'beta', 'gamma']);
@@ -102,7 +102,7 @@ describe('level cache and novel word scoring', () => {
     const review = { cards: {}, flags: { email: 'mastered', numb: 'mastered', felt: 'mastered', child: 'mastered', go: 'mastered' } };
     const entries = await enrichVocabularyEntries(['email', 'numb', 'felt', 'child', 'go'].map((word) => ({ word, definition: 'plain' })));
     const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
-    expect(scored).toMatchObject({ novel: 2, topWords: ['feeling', 'number'] });
+    expect(scored).toMatchObject({ novel: 3, topWords: ['emailed', 'feeling', 'number'] });
   });
 
   it('should inherit familiarity through reviewed comparatives without generated collision surfaces', async () => {
@@ -113,6 +113,23 @@ describe('level cache and novel word scoring', () => {
     const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
     expect(scored).toMatchObject({ novel: 3 });
     expect(new Set(scored.topWords)).toEqual(new Set(['dos', 'gos', 'runner']));
+  });
+
+  it('should inherit familiarity only through corpus-validated exchange and rule surfaces', async () => {
+    resetDictionaryCache();
+    const entries = await enrichVocabularyEntries([
+      { word: 'big', definition: 'plain' },
+      { word: 'control', definition: 'plain' },
+      { word: 'in', pos: 'noun', definition: 'inside' },
+      { word: 'http', pos: 'noun', definition: 'protocol' },
+      { word: 'good', pos: 'noun, adjective', definition: 'positive' },
+    ]);
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('bigger biggest controlled controlling controling controled ins https goods', table, 1);
+    const review = { cards: {}, flags: { big: 'mastered', control: 'mastered', in: 'mastered', http: 'mastered', good: 'mastered' } };
+    const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
+    expect(scored.novel).toBe(5);
+    expect(new Set(scored.topWords)).toEqual(new Set(['controling', 'controled', 'ins', 'https', 'goods']));
   });
 
   it('should score with reliable forms when one exchange validation chunk fails', async () => {
