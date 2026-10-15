@@ -17,6 +17,7 @@ export function serializeCard(card) {
     scheduled_days: card.scheduled_days,
     reps: card.reps,
     lapses: card.lapses,
+    learning_steps: Number.isInteger(card.learning_steps) && card.learning_steps >= 0 ? card.learning_steps : 0,
     state: stateName(card.state),
     last_review: card.last_review ? new Date(card.last_review).toISOString() : null,
   };
@@ -27,6 +28,7 @@ export function deserializeCard(value) {
   const states = { New: 0, Learning: 1, Review: 2, Relearning: 3 };
   return {
     ...value,
+    learning_steps: value.learning_steps ?? 0,
     due: new Date(value.due),
     state: states[value.state] ?? value.state,
     last_review: value.last_review ? new Date(value.last_review) : undefined,

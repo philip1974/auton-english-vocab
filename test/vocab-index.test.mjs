@@ -210,6 +210,32 @@ describe('vocab index', () => {
     expect(index.get('beta')).toBeTruthy();
   });
 
+  it('should rebuild and publish at most once per batch plus the enriched final result', async () => {
+    const nameFor = (index) => {
+      let value = index;
+      let suffix = '';
+      do {
+        suffix = String.fromCharCode(97 + (value % 26)) + suffix;
+        value = Math.floor(value / 26) - 1;
+      } while (value >= 0);
+      return `word${suffix}`;
+    };
+    const names = Array.from({ length: 10_000 }, (_, index) => nameFor(index));
+    const metas = names.map((word, index) => ({ path: `wiki/vocab/${word}.md`, revision: { contentHash: `h-${index}` } }));
+    const updates = [];
+    const index = new VocabIndex({
+      async listDocuments() { return metas; },
+      async readDocument({ path }) {
+        const word = path.match(/([^/]+)\.md$/u)[1];
+        return { content: buildNote({ word, definition: 'x' }) };
+      },
+    }, { onUpdate: (result) => updates.push(result.entries.length) });
+    await index.refresh();
+    expect(updates).toHaveLength(201);
+    expect(updates.slice(0, 2)).toEqual([50, 100]);
+    expect(updates.slice(-2)).toEqual([10_000, 10_000]);
+  });
+
   it('should rerun the current root refresh when a coalesced old root scan fails', async () => {
     let rejectFirst;
     let calls = 0;

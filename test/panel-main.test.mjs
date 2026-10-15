@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendSelectionRequest, renderPanel } from '../src/panel.mjs';
-import { buildNote } from '../src/note-format.mjs';
+import { buildNote, parseNote } from '../src/note-format.mjs';
 import { activeReviewLog, newSerializedCard } from '../src/scheduler.mjs';
 import { lookup } from '../src/dictionary.mjs';
 
@@ -2175,6 +2175,33 @@ describe('main plugin', () => {
     expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
     expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });
     expect(proposals).toHaveLength(1);
+  });
+
+  it.each([
+    ['en', 'move fast'],
+    ['zh', 'v. 跑'],
+    ['ja', 'move fast'],
+    ['ko', 'move fast'],
+  ])('should store dictionary definitions in locale order when collecting in %s', async (locale, firstLine) => {
+    vi.resetModules();
+    document.documentElement.lang = locale;
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let proposal;
+    app.knowledge.propose = async (request) => {
+      proposal = request;
+      return appliedProposal(app, request, 'accepted');
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.collectDictionaryWord({
+      surface: 'run',
+      lemma: 'run',
+      entry: { t: 'v. 跑\nn. 路程', d: 'move fast\na journey' },
+    })).resolves.toMatchObject({ outcome: 'applied' });
+    const parsed = parseNote(proposal.changes[0].newContent);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.entry.definition.split('\n')[0]).toBe(firstLine);
   });
 
   it('should collect the noun lemma when a dictionary card starts from a pure irregular plural', async () => {

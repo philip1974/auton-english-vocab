@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStore, mergeReview, normalizeReview } from '../src/review-store.mjs';
-import { activeReviewLog, newSerializedCard } from '../src/scheduler.mjs';
+import { activeReviewLog, dueQueue, newSerializedCard } from '../src/scheduler.mjs';
 
 function appWithStorage(files = {}, failures = {}) {
   const revisions = {};
@@ -221,6 +221,19 @@ describe('review store', () => {
     expect(store.log[0].id).toBe('old-1');
   });
 
+  it('should retain every current local-day log when trimming older history', async () => {
+    const old = Array.from({ length: 2001 }, (_, i) => ({ id: `old-${i}`, word: `old-${i}`, rating: 'Good', reviewedAt: '2026-10-14T12:00:00.000Z' }));
+    const introduced = Array.from({ length: 50 }, (_, i) => ({ id: `introduced-${i}`, word: `new-${i}`, rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T00:01:00.000Z' }));
+    const reviews = Array.from({ length: 2000 }, (_, i) => ({ id: `review-${i}`, word: `review-${i}`, rating: 'Good', previousState: 'Review', reviewedAt: '2026-10-15T01:00:00.000Z' }));
+    const app = appWithStorage({ 'log.json': JSON.stringify([...old, ...introduced, ...reviews]) });
+    const store = new ReviewStore(app, { now: () => new Date('2026-10-15T12:00:00.000Z') });
+    await store.load();
+    expect(store.log.filter((entry) => entry.reviewedAt?.startsWith('2026-10-15'))).toHaveLength(2050);
+    expect(store.log.filter((entry) => entry.id.startsWith('old-'))).toHaveLength(2000);
+    const words = Array.from({ length: 50 }, (_, i) => ({ word: `candidate-${i}`, definition: 'x' }));
+    expect(dueQueue(words, store.review, { newLimit: 50, log: store.effectiveLog() }, new Date('2026-10-15T12:00:00.000Z'))).toEqual([]);
+  });
+
   it('should project pending logs without dropping conflicting legacy entries when a flush is pending', async () => {
     const store = new ReviewStore(appWithStorage({
       'log.json': JSON.stringify([{ id: 'same', word: 'old', rating: 'Good' }]),
@@ -306,6 +319,15 @@ describe('review store', () => {
     expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
     await store.mutateReview({ type: 'setFlag', word: 'valid', flag: 'ignored' });
     expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
+  });
+
+  it('should migrate a missing learning step to zero and isolate invalid learning steps', () => {
+    const legacy = newSerializedCard(new Date('2026-10-14T00:00:00Z'));
+    delete legacy.learning_steps;
+    const invalid = { ...legacy, learning_steps: 0.5 };
+    const review = normalizeReview({ version: 1, cards: { legacy, invalid }, flags: {} });
+    expect(review.cards.legacy.learning_steps).toBe(0);
+    expect(review.cards.invalid).toBeUndefined();
   });
 
   it('should store prototype-shaped card and flag keys as own properties', async () => {

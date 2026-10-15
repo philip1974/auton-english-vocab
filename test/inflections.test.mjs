@@ -81,7 +81,7 @@ describe('inflections', () => {
   });
 
   it('should not map ambiguous independent words to an inflection lemma', () => {
-    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['bit', 'bound', 'does', 'feed', 'fell', 'felt', 'found', 'ground', 'lay', 'left', 'pants', 'rent', 'rose', 'saw', 'shot', 'spoke', 'wound']);
+    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['bit', 'bound', 'does', 'feed', 'fell', 'felt', 'found', 'ground', 'lay', 'left', 'number', 'pants', 'rent', 'rose', 'saw', 'shot', 'spoke', 'wound']);
     const cases = [
       ['do', 'does'], ['leave', 'left'], ['see', 'saw'], ['rise', 'rose'],
       ['find', 'found'], ['lie', 'lay'], ['wind', 'wound'], ['fall', 'fell'],

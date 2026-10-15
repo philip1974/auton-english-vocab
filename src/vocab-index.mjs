@@ -107,9 +107,9 @@ export class VocabIndex {
         done += 1;
         if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
         this.onProgress(done, metas.length);
-        const partial = this.rebuild(readFailures);
-        this.onUpdate(partial);
       }
+      const partial = this.rebuild(readFailures);
+      this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
     }
     const result = this.rebuild(readFailures);

@@ -38,6 +38,7 @@ export const AMBIGUOUS_INFLECTION_DECISIONS = Object.freeze([
   ['feeding', false, 'feed/fee 的规则屈折或语义透明名词化。'],
   ['wound', true, 'wind 的过去式和过去分词，同时是常用名词“伤口”。'],
   ['rangers', false, '词典 exchange 指回 ranger 的规则复数。'],
+  ['number', true, 'numb 的错误比较级关系，同时是高频独立名词和动词“数字、编号”。'],
 ].map(([surface, include, reason]) => Object.freeze({ surface, include, reason })));
 
 export const AMBIGUOUS_INFLECTION_REVIEWS = Object.freeze(

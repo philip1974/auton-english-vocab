@@ -41,7 +41,7 @@ function storage() {
 
 describe('level cache and novel word scoring', () => {
   it('should invalidate prior analysis when dictionary surface semantics change', () => {
-    expect(ANALYSIS_VERSION).toBe(6);
+    expect(ANALYSIS_VERSION).toBe(7);
   });
   it('should score rank boundaries and collected mastered states without rereading text when vocabulary size changes', () => {
     const table = rankMapFromWords(['the', 'and', ...Array.from({ length: 998 }, (_, index) => `filler${index}`), 'alpha', 'beta', 'gamma']);
@@ -113,6 +113,22 @@ describe('level cache and novel word scoring', () => {
     const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
     expect(scored).toMatchObject({ novel: 3 });
     expect(new Set(scored.topWords)).toEqual(new Set(['dos', 'gos', 'runner']));
+  });
+
+  it('should inherit familiarity through reverse-validated comparatives but not impossible function-word forms', async () => {
+    const lemmas = ['long', 'close', 'light', 'cool', 'clean', 'would', 'over', 'many', 'why', 'much', 'all', 'or'];
+    const entries = await enrichVocabularyEntries(lemmas.map((word) => ({ word, definition: 'plain' })));
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('longer closer lighter cooler cleaner woulding overing manies whies muches alls ors', table, 1);
+    const flags = Object.fromEntries(lemmas.map((word) => [word, 'mastered']));
+    const scored = scoreCachedEntry(cached, {
+      table,
+      review: { cards: {}, flags },
+      entries,
+      settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 },
+    });
+    expect(scored.novel).toBe(7);
+    expect(new Set(scored.topWords)).toEqual(new Set(['woulding', 'overing', 'manies', 'whies', 'muches', 'alls', 'ors']));
   });
 
   it('should inherit familiarity only through corpus-validated exchange and rule surfaces', async () => {

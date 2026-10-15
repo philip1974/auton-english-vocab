@@ -6,6 +6,11 @@ import {
 
 const SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 const EXCHANGE_KINDS = new Set(['p', 'd', 'i', '3', 's', 'r', 't']);
+const VERB_KINDS = ['p', 'd', 'i', '3'];
+const MODAL_AUXILIARIES = new Set(['would', 'should', 'could', 'might', 'must', 'shall', 'may', 'can', 'will']);
+export const OBVIOUS_INVALID_INFLECTION_SURFACES = new Set([
+  'woulding', 'woulded', 'overing', 'overed', 'manies', 'whies', 'muches', 'alls', 'ors',
+]);
 
 function normalize(value) {
   return String(value ?? '').normalize('NFC').trim().toLowerCase().replaceAll('’', "'");
@@ -46,6 +51,14 @@ function paradigmFor({ lemma, entry, pos }) {
   const reviewed = reviewedIrregularCandidatesByKind(lemma, pos);
   const ownLemma = dictionaryExchangeLemma(entry);
   const exchange = ownLemma && ownLemma !== lemma ? new Map() : dictionaryExchangeByKind(entry);
+  if (MODAL_AUXILIARIES.has(lemma)) for (const kind of VERB_KINDS) rules.delete(kind);
+  const primaryDefinitions = String(entry?.t ?? '');
+  const functionWord = /(?:^|\n)\s*(?:aux|pron|prep|conj|det)\.\s/imu.test(primaryDefinitions);
+  if (functionWord) {
+    for (const kind of VERB_KINDS) if (!exchange.has(kind)) rules.delete(kind);
+    const hasNounSense = /(?:^|\n)\s*n\.\s/imu.test(primaryDefinitions);
+    if (!hasNounSense && !exchange.has('s')) rules.delete('s');
+  }
   if (ownLemma && ownLemma !== lemma) {
     const relationKinds = dictionaryRelationKinds(entry);
     if (['p', 'd', 'i', '3'].some((kind) => relationKinds.has(kind))) for (const kind of ['p', 'd', 'i', '3']) rules.delete(kind);
@@ -80,13 +93,6 @@ function surfaceState(surfaceEntries, surface) {
   return { available: true, entry: surfaceEntries.get(surface) };
 }
 
-function hasIndependentComparativeConflict(entry) {
-  const definitions = `${String(entry?.t ?? '')}\n${String(entry?.d ?? '')}`;
-  const nounOrVerb = /(?:^|\n)\s*(?:n|v|vt|vi)\.\s/imu.test(definitions);
-  const adjective = /(?:^|\n)\s*(?:a|adj)\.\s/imu.test(definitions);
-  return nounOrVerb && !adjective;
-}
-
 export function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {}, surfaceEntries = new Map() }) {
   const lemma = normalize(lemmaValue);
   if (!SURFACE_RE.test(lemma)) return { forms: [], accepted: [], rejected: [] };
@@ -106,7 +112,7 @@ export function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {
       const state = surfaceState(surfaceEntries, surface);
       if (!state.available) {
         addRejected(rejected, surface, kind, 'exchange-lookup-unavailable', 1);
-      } else if (state.entry && dictionaryExchangeLemma(state.entry) === lemma && !(['r', 't'].includes(kind) && hasIndependentComparativeConflict(state.entry))) {
+      } else if (state.entry && dictionaryExchangeLemma(state.entry) === lemma) {
         addAccepted(accepted, surface, kind, 'exchange-reversed', 1);
       } else if (!state.entry && ruleSurfaces.has(surface)) {
         addAccepted(accepted, surface, kind, 'exchange-rule-no-entry', 1);
@@ -147,9 +153,9 @@ export function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {
   }
 
   for (const [surface, item] of [...accepted]) {
-    if (!AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;
+    if (!AMBIGUOUS_INFLECTION_SURFACES.has(surface) && !OBVIOUS_INVALID_INFLECTION_SURFACES.has(surface)) continue;
     accepted.delete(surface);
-    addRejected(rejected, surface, item.kind, 'reviewed-homograph', 4);
+    addRejected(rejected, surface, item.kind, AMBIGUOUS_INFLECTION_SURFACES.has(surface) ? 'reviewed-homograph' : 'reviewed-invalid-surface', 4);
   }
 
   return {

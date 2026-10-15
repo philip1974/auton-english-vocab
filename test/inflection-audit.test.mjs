@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { inferPos } from '../src/dictionary.mjs';
-import { decideInflectionForms, inflectionCandidateSurfaces } from '../src/inflection-policy.mjs';
+import { decideInflectionForms, inflectionCandidateSurfaces, OBVIOUS_INVALID_INFLECTION_SURFACES } from '../src/inflection-policy.mjs';
+import { AMBIGUOUS_INFLECTION_DECISIONS } from '../src/ambiguous-inflections.reviewed.mjs';
 
 const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -54,7 +55,26 @@ describe('corpus inflection audit', () => {
     for (const [lemma, forms] of Object.entries({
       big: ['bigger', 'biggest'], happy: ['happier', 'happiest'], easy: ['easier', 'easiest'],
       new: ['newer', 'newest'], great: ['greater', 'greatest'], fast: ['faster', 'fastest'],
+      long: ['longer', 'longest'], close: ['closer', 'closest'], light: ['lighter'],
+      cool: ['cooler', 'coolest'], clean: ['cleaner'],
     })) for (const surface of forms) expect(published.get(lemma)?.forms).toContain(surface);
+
+    for (const surface of OBVIOUS_INVALID_INFLECTION_SURFACES) expect(derived.has(surface)).toBe(false);
+
+    const reviewedReasons = new Map(AMBIGUOUS_INFLECTION_DECISIONS.filter((item) => item.include).map((item) => [item.surface, item.reason]));
+    const unauditedComparatives = [];
+    for (const lemma of words) {
+      const entry = dictionary.get(lemma);
+      if (!entry) continue;
+      for (const match of String(entry.x ?? '').matchAll(/(?:^|\/)(r|t):([^/]+)/gu)) {
+        for (const surface of match[2].split(',').map((value) => value.trim().toLowerCase()).filter(Boolean)) {
+          const reverse = String(dictionary.get(surface)?.x ?? '').match(/(?:^|\/)0:([^/]+)/u)?.[1]?.split(',')[0]?.trim().toLowerCase();
+          if (reverse !== lemma) continue;
+          if (!published.get(lemma)?.forms.includes(surface) && !reviewedReasons.has(surface)) unauditedComparatives.push(`${lemma}->${surface}`);
+        }
+      }
+    }
+    expect(unauditedComparatives).toEqual([]);
 
     expect(rejected.filter((item) => item.rule === 1 || item.rule === 2).length).toBeGreaterThan(0);
     expect(missingRuleAccepted).toBeGreaterThan(0);

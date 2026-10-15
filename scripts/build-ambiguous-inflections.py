@@ -22,7 +22,7 @@ PAREN_INFLECTION_TEXT = re.compile(
     re.IGNORECASE,
 )
 POS_LINE = re.compile(r"(?:^|\n)\s*(n|v|vt|vi|a|adj|adv)\.\s*", re.IGNORECASE)
-PARADIGM_KEYS = ("s", "d", "p", "i", "3")
+PARADIGM_KEYS = ("s", "d", "p", "i", "3", "r", "t")
 
 
 def load_chunk(path: Path) -> dict[str, dict[str, object]]:
@@ -73,13 +73,16 @@ def build(frequency_limit: int) -> list[dict[str, object]]:
             target_lemma = exchange_parts(target.get("x")).get("0")
             competing_lemma = bool(target_lemma and target_lemma != lemma)
             irregular_past = kind in {"d", "p"} and not surface.endswith("ed")
-            if competing_lemma or irregular_past:
+            independent_comparative = kind in {"r", "t"}
+            if competing_lemma or irregular_past or independent_comparative:
                 reasons = candidates.setdefault(surface, set())
                 reasons.add(f"{lemma}:{kind}")
                 if competing_lemma:
                     reasons.add(f"surface-lemma:{target_lemma}")
                 if irregular_past:
                     reasons.add("irregular-past-or-participle")
+                if independent_comparative:
+                    reasons.add("comparative-or-superlative-with-independent-entry")
     return [
         {"surface": surface, "rank": ranks[surface] + 1, "reasons": sorted(candidates[surface])}
         for surface in sorted(candidates, key=lambda word: (ranks[word], word))

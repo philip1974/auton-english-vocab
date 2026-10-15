@@ -70,6 +70,20 @@ function codeOf(error) {
   return error && typeof error === 'object' && typeof error.code === 'string' ? error.code : '';
 }
 
+function localDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function retainLogHistory(entries, now) {
+  const today = localDay(now);
+  const current = new Set(entries.filter((entry) => localDay(entry?.reviewedAt) === today));
+  const older = entries.filter((entry) => !current.has(entry)).slice(-2000);
+  const retained = new Set([...older, ...current]);
+  return entries.filter((entry) => retained.has(entry));
+}
+
 function newestCard(a, b) {
   const at = a?.last_review ? Date.parse(a.last_review) : 0;
   const bt = b?.last_review ? Date.parse(b.last_review) : 0;
@@ -209,7 +223,7 @@ export class ReviewStore {
         invalidItems += 1;
         return false;
       });
-      this.log = uniqueLogEntries(valid, () => { collisions += 1; }).slice(-2000);
+      this.log = retainLogHistory(uniqueLogEntries(valid, () => { collisions += 1; }), this.now());
       if (collisions > 0 || invalidItems > 0) {
         await this.#preserveCorrupt('log', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
@@ -356,14 +370,15 @@ export class ReviewStore {
       const idMap = new Map();
       const next = uniqueLogEntries([...this.log, ...entries], () => undefined, (entry, id) => {
         if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
-      }).slice(-2000);
-      Object.defineProperty(next, 'idMap', { value: idMap, enumerable: false });
+      });
+      const retained = retainLogHistory(next, this.now());
+      Object.defineProperty(retained, 'idMap', { value: idMap, enumerable: false });
       try {
-        const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(next), {
+        const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(retained), {
           expectedRevision: this.logRevision,
         });
         if (this.#stale(generation, rootGeneration)) return this.log;
-        this.log = next;
+        this.log = retained;
         this.logRevision = written.revision;
         return this.log;
       } catch (error) {
@@ -378,7 +393,7 @@ export class ReviewStore {
   }
 
   effectiveLog() {
-    return uniqueLogEntries([...this.log, ...(this.review.pendingLogs ?? [])]).slice(-2000);
+    return retainLogHistory(uniqueLogEntries([...this.log, ...(this.review.pendingLogs ?? [])]), this.now());
   }
 
   async flushPendingLogs() {
@@ -464,6 +479,7 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
       for (const key of ['elapsed_days', 'scheduled_days', 'reps', 'lapses']) {
         if (!Number.isInteger(card[key])) throw new Error('invalid card');
       }
+      if (card.learning_steps !== undefined && (!Number.isInteger(card.learning_steps) || card.learning_steps < 0)) throw new Error('invalid card');
       if (card.difficulty > 10) throw new Error('invalid card');
       if (!['New', 'Learning', 'Review', 'Relearning'].includes(card.state)) throw new Error('invalid card');
       if (card.state !== 'New' && !card.last_review) throw new Error('invalid card');
@@ -487,7 +503,7 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
       if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem('pendingLog');
     }
-    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2000);
+    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision);
   }
   return review;
 }
@@ -501,7 +517,7 @@ export function mergeReview(base, incoming) {
   }
   for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    merged.pendingLogs = uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]).slice(-2000);
+    merged.pendingLogs = uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]);
   }
   return merged;
 }

@@ -61,6 +61,13 @@ describe('reading decorations', () => {
     for (const surface of ['runner', 'runnest', 'dos', 'gos']) expect(surfaces.has(surface)).toBe(false);
   });
 
+  it('should publish reverse-validated comparatives without impossible function-word terms', async () => {
+    const entries = await enrichVocabularyEntries(['long', 'close', 'light', 'cool', 'clean', 'would', 'over', 'many', 'why', 'much', 'all', 'or'].map((word) => ({ word, definition: 'plain' })));
+    const surfaces = new Set(buildReadingTerms({ entries, review: review() }).map((term) => term.surface));
+    for (const surface of ['longer', 'closer', 'lighter', 'cooler', 'cleaner']) expect(surfaces.has(surface)).toBe(true);
+    for (const surface of ['woulding', 'overing', 'manies', 'whies', 'muches', 'alls', 'ors']) expect(surfaces.has(surface)).toBe(false);
+  });
+
   it('should publish only corpus-validated terms when exchange spelling and collisions disagree with rules', async () => {
     resetDictionaryCache();
     const entries = await enrichVocabularyEntries([

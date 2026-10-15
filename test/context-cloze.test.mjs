@@ -154,6 +154,19 @@ describe('context cloze', () => {
     expect(clozeSentence('The gos label is uncommon.', byWord.get('go')).hits).toEqual([]);
   });
 
+  it('should cloze reverse-validated comparatives and reject impossible function-word forms', async () => {
+    const entries = await enrichVocabularyEntries(['long', 'close', 'light', 'cool', 'clean', 'would', 'over', 'many', 'why', 'much', 'all', 'or'].map((word) => ({ word, definition: 'plain' })));
+    const byWord = new Map(entries.map((entry) => [entry.word, entry]));
+    for (const [word, sentence] of [
+      ['long', 'A longer trip.'], ['close', 'A closer look.'], ['light', 'A lighter bag.'],
+      ['cool', 'A cooler room.'], ['clean', 'A cleaner floor.'],
+    ]) expect(clozeSentence(sentence, byWord.get(word)).hits).toHaveLength(1);
+    for (const [word, sentence] of [
+      ['would', 'Woulding is impossible.'], ['over', 'Overing is impossible.'], ['many', 'Manies is impossible.'],
+      ['why', 'Whies is impossible.'], ['much', 'Muches is impossible.'], ['all', 'Alls is impossible.'], ['or', 'Ors is impossible.'],
+    ]) expect(clozeSentence(sentence, byWord.get(word)).hits).toEqual([]);
+  });
+
   it('should cloze only corpus-validated forms when exchange spelling and collisions disagree with rules', async () => {
     resetDictionaryCache();
     const entries = await enrichVocabularyEntries([

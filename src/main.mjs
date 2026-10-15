@@ -968,9 +968,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         if (parsed.ok && parsed.entry.word === lemma) return { outcome: 'aborted', summary: this.t.collectedWord };
       }
       if (!path) return { outcome: 'aborted', summary: this.t.collectFailed };
-      const chinese = String(entry.t ?? '').split('\n').filter(Boolean).slice(0, 2);
-      const english = String(entry.d ?? '').split('\n').filter(Boolean).slice(0, 1);
-      const definition = [...chinese, ...english].join('\n') || dictionaryDefinition(entry, this.locale);
+      const definition = dictionaryDefinition(entry, this.locale);
       const newContent = buildNote({
         word: lemma,
         definition,

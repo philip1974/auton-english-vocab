@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { createEmptyCard, fsrs, generatorParameters, Rating } from 'ts-fsrs';
 import { familiarityFor } from '../src/familiarity.mjs';
-import { activeReviewLog, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
+import { activeReviewLog, deserializeCard, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
+
+function expectRoundTripSequence(sequence) {
+  const engine = fsrs(generatorParameters());
+  const start = new Date('2026-10-14T00:00:00Z');
+  let original = createEmptyCard(start);
+  let serialized = newSerializedCard(start);
+  for (const [rating, minutes] of sequence) {
+    const now = new Date(start.getTime() + minutes * 60_000);
+    original = engine.repeat(original, now)[Rating[rating]].card;
+    serialized = rateCard(serialized, rating, now);
+    expect(deserializeCard(serialized)).toEqual(original);
+  }
+}
 
 describe('scheduler and familiarity', () => {
   it('should advance a card when a rating is applied', () => {
@@ -8,6 +22,15 @@ describe('scheduler and familiarity', () => {
     const rated = rateCard(first, 'Good', new Date('2026-10-14T00:00:00Z'));
     expect(rated.reps).toBeGreaterThan(0);
     expect(rated.due).toMatch(/^2026-/);
+  });
+
+  it.each([
+    ['Good then Hard', [['Good', 0], ['Hard', 10]]],
+    ['Good then Good', [['Good', 0], ['Good', 10]]],
+    ['Again then Good', [['Again', 0], ['Good', 1]]],
+    ['Relearning', [['Easy', 0], ['Again', 1440], ['Good', 1450]]],
+  ])('should preserve the original FSRS card across serialized %s ratings', (_label, sequence) => {
+    expectRoundTripSequence(sequence);
   });
 
   it('should map cards to familiarity when states and flags differ', () => {

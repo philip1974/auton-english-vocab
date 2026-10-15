@@ -1129,6 +1129,7 @@ function serializeCard(card) {
     scheduled_days: card.scheduled_days,
     reps: card.reps,
     lapses: card.lapses,
+    learning_steps: Number.isInteger(card.learning_steps) && card.learning_steps >= 0 ? card.learning_steps : 0,
     state: stateName(card.state),
     last_review: card.last_review ? new Date(card.last_review).toISOString() : null
   };
@@ -1138,6 +1139,7 @@ function deserializeCard(value) {
   const states = { New: 0, Learning: 1, Review: 2, Relearning: 3 };
   return {
     ...value,
+    learning_steps: value.learning_steps ?? 0,
     due: new Date(value.due),
     state: states[value.state] ?? value.state,
     last_review: value.last_review ? new Date(value.last_review) : void 0
@@ -1183,12 +1185,12 @@ function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date())
     else if (new Date(card.due) <= now) dueReview.push({ ...item, familiarity, due: card.due });
   }
   dueReview.sort((a, b2) => String(a.due).localeCompare(String(b2.due)));
-  const localDay = (date) => {
+  const localDay2 = (date) => {
     const value = new Date(date);
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
   };
-  const today2 = localDay(now);
-  const introduced = new Set(activeReviewLog(options.log).filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word)).size;
+  const today2 = localDay2(now);
+  const introduced = new Set(activeReviewLog(options.log).filter((entry) => entry?.word && entry.reviewedAt && localDay2(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word)).size;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];
 }
 
@@ -1256,6 +1258,18 @@ function uniqueLogEntries(values, onCollision = () => void 0, onAssigned = () =>
 }
 function codeOf(error) {
   return error && typeof error === "object" && typeof error.code === "string" ? error.code : "";
+}
+function localDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function retainLogHistory(entries, now) {
+  const today2 = localDay(now);
+  const current = new Set(entries.filter((entry) => localDay(entry?.reviewedAt) === today2));
+  const older = entries.filter((entry) => !current.has(entry)).slice(-2e3);
+  const retained = /* @__PURE__ */ new Set([...older, ...current]);
+  return entries.filter((entry) => retained.has(entry));
 }
 function newestCard(a, b2) {
   const at = a?.last_review ? Date.parse(a.last_review) : 0;
@@ -1390,9 +1404,9 @@ var ReviewStore = class {
         invalidItems += 1;
         return false;
       });
-      this.log = uniqueLogEntries(valid, () => {
+      this.log = retainLogHistory(uniqueLogEntries(valid, () => {
         collisions += 1;
-      }).slice(-2e3);
+      }), this.now());
       if (collisions > 0 || invalidItems > 0) {
         await this.#preserveCorrupt("log", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
@@ -1522,14 +1536,15 @@ var ReviewStore = class {
       const idMap = /* @__PURE__ */ new Map();
       const next = uniqueLogEntries([...this.log, ...entries], () => void 0, (entry, id) => {
         if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
-      }).slice(-2e3);
-      Object.defineProperty(next, "idMap", { value: idMap, enumerable: false });
+      });
+      const retained = retainLogHistory(next, this.now());
+      Object.defineProperty(retained, "idMap", { value: idMap, enumerable: false });
       try {
-        const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(next), {
+        const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(retained), {
           expectedRevision: this.logRevision
         });
         if (this.#stale(generation, rootGeneration)) return this.log;
-        this.log = next;
+        this.log = retained;
         this.logRevision = written.revision;
         return this.log;
       } catch (error) {
@@ -1543,7 +1558,7 @@ var ReviewStore = class {
     return this.log;
   }
   effectiveLog() {
-    return uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]).slice(-2e3);
+    return retainLogHistory(uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]), this.now());
   }
   async flushPendingLogs() {
     const generation = this.generation;
@@ -1618,6 +1633,7 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
       for (const key of ["elapsed_days", "scheduled_days", "reps", "lapses"]) {
         if (!Number.isInteger(card[key])) throw new Error("invalid card");
       }
+      if (card.learning_steps !== void 0 && (!Number.isInteger(card.learning_steps) || card.learning_steps < 0)) throw new Error("invalid card");
       if (card.difficulty > 10) throw new Error("invalid card");
       if (!["New", "Learning", "Review", "Relearning"].includes(card.state)) throw new Error("invalid card");
       if (card.state !== "New" && !card.last_review) throw new Error("invalid card");
@@ -1641,7 +1657,7 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
       if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem("pendingLog");
     }
-    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2e3);
+    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision);
   }
   return review;
 }
@@ -1654,7 +1670,7 @@ function mergeReview(base, incoming) {
   }
   for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    merged.pendingLogs = uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]).slice(-2e3);
+    merged.pendingLogs = uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]);
   }
   return merged;
 }
@@ -1698,7 +1714,8 @@ var AMBIGUOUS_INFLECTION_DECISIONS = Object.freeze([
   ["timing", false, "time 的规则屈折及语义透明名词化。"],
   ["feeding", false, "feed/fee 的规则屈折或语义透明名词化。"],
   ["wound", true, "wind 的过去式和过去分词，同时是常用名词“伤口”。"],
-  ["rangers", false, "词典 exchange 指回 ranger 的规则复数。"]
+  ["rangers", false, "词典 exchange 指回 ranger 的规则复数。"],
+  ["number", true, "numb 的错误比较级关系，同时是高频独立名词和动词“数字、编号”。"]
 ].map(([surface, include, reason]) => Object.freeze({ surface, include, reason })));
 var AMBIGUOUS_INFLECTION_REVIEWS = Object.freeze(
   AMBIGUOUS_INFLECTION_DECISIONS.filter((item) => item.include)
@@ -2664,9 +2681,9 @@ var VocabIndex = class {
         done += 1;
         if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
         this.onProgress(done, metas.length);
-        const partial = this.rebuild(readFailures);
-        this.onUpdate(partial);
       }
+      const partial = this.rebuild(readFailures);
+      this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
     }
     const result = this.rebuild(readFailures);
@@ -2845,6 +2862,19 @@ function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
 // src/inflection-policy.mjs
 var SURFACE_RE2 = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 var EXCHANGE_KINDS = /* @__PURE__ */ new Set(["p", "d", "i", "3", "s", "r", "t"]);
+var VERB_KINDS = ["p", "d", "i", "3"];
+var MODAL_AUXILIARIES = /* @__PURE__ */ new Set(["would", "should", "could", "might", "must", "shall", "may", "can", "will"]);
+var OBVIOUS_INVALID_INFLECTION_SURFACES = /* @__PURE__ */ new Set([
+  "woulding",
+  "woulded",
+  "overing",
+  "overed",
+  "manies",
+  "whies",
+  "muches",
+  "alls",
+  "ors"
+]);
 function normalize2(value) {
   return String(value ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
 }
@@ -2879,6 +2909,14 @@ function paradigmFor({ lemma, entry, pos }) {
   const reviewed = reviewedIrregularCandidatesByKind(lemma, pos);
   const ownLemma = dictionaryExchangeLemma(entry);
   const exchange = ownLemma && ownLemma !== lemma ? /* @__PURE__ */ new Map() : dictionaryExchangeByKind(entry);
+  if (MODAL_AUXILIARIES.has(lemma)) for (const kind of VERB_KINDS) rules.delete(kind);
+  const primaryDefinitions = String(entry?.t ?? "");
+  const functionWord = /(?:^|\n)\s*(?:aux|pron|prep|conj|det)\.\s/imu.test(primaryDefinitions);
+  if (functionWord) {
+    for (const kind of VERB_KINDS) if (!exchange.has(kind)) rules.delete(kind);
+    const hasNounSense = /(?:^|\n)\s*n\.\s/imu.test(primaryDefinitions);
+    if (!hasNounSense && !exchange.has("s")) rules.delete("s");
+  }
   if (ownLemma && ownLemma !== lemma) {
     const relationKinds = dictionaryRelationKinds(entry);
     if (["p", "d", "i", "3"].some((kind) => relationKinds.has(kind))) for (const kind of ["p", "d", "i", "3"]) rules.delete(kind);
@@ -2908,13 +2946,6 @@ function surfaceState(surfaceEntries, surface) {
   if (!surfaceEntries.has(surface)) return { available: false, entry: null };
   return { available: true, entry: surfaceEntries.get(surface) };
 }
-function hasIndependentComparativeConflict(entry) {
-  const definitions = `${String(entry?.t ?? "")}
-${String(entry?.d ?? "")}`;
-  const nounOrVerb = /(?:^|\n)\s*(?:n|v|vt|vi)\.\s/imu.test(definitions);
-  const adjective = /(?:^|\n)\s*(?:a|adj)\.\s/imu.test(definitions);
-  return nounOrVerb && !adjective;
-}
 function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {}, surfaceEntries = /* @__PURE__ */ new Map() }) {
   const lemma = normalize2(lemmaValue);
   if (!SURFACE_RE2.test(lemma)) return { forms: [], accepted: [], rejected: [] };
@@ -2933,7 +2964,7 @@ function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {}, surf
       const state = surfaceState(surfaceEntries, surface);
       if (!state.available) {
         addRejected(rejected, surface, kind, "exchange-lookup-unavailable", 1);
-      } else if (state.entry && dictionaryExchangeLemma(state.entry) === lemma && !(["r", "t"].includes(kind) && hasIndependentComparativeConflict(state.entry))) {
+      } else if (state.entry && dictionaryExchangeLemma(state.entry) === lemma) {
         addAccepted(accepted, surface, kind, "exchange-reversed", 1);
       } else if (!state.entry && ruleSurfaces.has(surface)) {
         addAccepted(accepted, surface, kind, "exchange-rule-no-entry", 1);
@@ -2971,9 +3002,9 @@ function decideInflectionForms({ lemma: lemmaValue, entry = null, pos = {}, surf
     for (const surface of surfaces) if (surface !== lemma) addAccepted(accepted, surface, kind, "reviewed-irregular", 3);
   }
   for (const [surface, item] of [...accepted]) {
-    if (!AMBIGUOUS_INFLECTION_SURFACES2.has(surface)) continue;
+    if (!AMBIGUOUS_INFLECTION_SURFACES2.has(surface) && !OBVIOUS_INVALID_INFLECTION_SURFACES.has(surface)) continue;
     accepted.delete(surface);
-    addRejected(rejected, surface, item.kind, "reviewed-homograph", 4);
+    addRejected(rejected, surface, item.kind, AMBIGUOUS_INFLECTION_SURFACES2.has(surface) ? "reviewed-homograph" : "reviewed-invalid-surface", 4);
   }
   return {
     forms: [lemma, ...accepted.keys()],
@@ -34629,7 +34660,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
-var ANALYSIS_VERSION = 6;
+var ANALYSIS_VERSION = 7;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {
@@ -35889,9 +35920,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         if (parsed.ok && parsed.entry.word === lemma) return { outcome: "aborted", summary: this.t.collectedWord };
       }
       if (!path) return { outcome: "aborted", summary: this.t.collectFailed };
-      const chinese = String(entry.t ?? "").split("\n").filter(Boolean).slice(0, 2);
-      const english = String(entry.d ?? "").split("\n").filter(Boolean).slice(0, 1);
-      const definition = [...chinese, ...english].join("\n") || dictionaryDefinition(entry, this.locale);
+      const definition = dictionaryDefinition(entry, this.locale);
       const newContent = buildNote({
         word: lemma,
         definition,
