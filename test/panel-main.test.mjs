@@ -606,6 +606,19 @@ describe('panel', () => {
     expect(notices.at(-1)).toContain('生词率设置保存失败');
   });
 
+  it('should hide the skipped summary when every empty-result count is zero', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }) } }, locale: 'zh', entries: [], review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendations: { items: [], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } },
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    expect(container.textContent).toContain('没有可推荐的英文文章');
+    expect(container.textContent).not.toContain('已跳过');
+  });
+
   it('should render disabled recommendation titles and default skipped counts when opening is unavailable', () => {
     const container = document.createElement('div');
     renderPanel(container, {
@@ -1748,6 +1761,7 @@ describe('main plugin', () => {
     }) };
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
+    plugin.state.recommendations = { items: [{ title: 'Hard read', path: 'wiki/hard.md', band: 'hard', rate: 9, topWords: [] }], skipped: {} };
     const rendered = document.createElement('div');
     app.panels.at(-1).render(rendered);
     expect(rendered.textContent).toContain('今日复习');
@@ -1759,7 +1773,10 @@ describe('main plugin', () => {
     expect(readingHandles).toHaveLength(2);
     expect(suggestionHandles[0].dispose).toHaveBeenCalledOnce();
     expect(suggestionHandles).toHaveLength(2);
+    expect(suggestionHandles.at(-1).set.mock.calls.at(-1)[1][0].detail).toBe('Hard · 9.0%');
     expect(rendered.textContent).toContain('Today');
+    [...rendered.querySelectorAll('button')].find((node) => node.textContent === 'Recommended reading').click();
+    expect(rendered.textContent).toContain('Hard · 9.0%');
     const card = document.createElement('div');
     readingSpecs.at(-1).renderCard(card, { word: 'alpha', key: 'alpha', tone: 'learning' });
     expect(card.textContent).toContain('I know it');
@@ -1769,6 +1786,17 @@ describe('main plugin', () => {
     expect(app.notices.some((item) => item.message.includes('Vocabulary proposal'))).toBe(true);
     await app.events.find((event) => event.name === 'appearance.locale-changed').listener('unsupported');
     expect(plugin.locale).toBe('en');
+  });
+
+  it('should fall back to complete default level settings when persisted settings are partial or invalid', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    for (const levelSettings of [{}, { vocabularySize: 3000, easyMax: Number.NaN, goodMax: 5 }, { vocabularySize: 3000, easyMax: 8, goodMax: 5 }]) {
+      const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+      plugin.loadData = async () => ({ levelSettings });
+      await plugin.onload();
+      expect(plugin.state.levelSettings).toEqual({ vocabularySize: 3000, easyMax: 2, goodMax: 5 });
+    }
   });
 
   it('should restore the previous card when undoing a reading-card rating on a reviewed word', async () => {
@@ -2392,6 +2420,9 @@ describe('main plugin', () => {
     plugin.state = { entries: [], review: { version: 1, cards: {}, flags: {} }, levelSettings: { vocabularySize: 1000, easyMax: 0, goodMax: 5 } };
     plugin.readingStatusHandle = app.readingStatus.register();
     await expect(plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'h' })).resolves.toBe(false);
+    plugin.rootGeneration = 0;
+    plugin.reviewStore = { rootGeneration: 'root' };
+    plugin.indexBinding = { generation: 0, epoch: 'epoch-1', storageRootGeneration: 'root' };
     plugin.initializeReadingLevel();
     plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2409,6 +2440,7 @@ describe('main plugin', () => {
 
     app.workspace = { epoch: 'e1', scope() { return { epoch: this.epoch }; } };
     app.readingStatus = { register: () => ({ set: vi.fn(() => true), dispose() {} }) };
+    plugin.indexBinding = { generation: plugin.rootGeneration, epoch: 'e1', storageRootGeneration: plugin.reviewStore.rootGeneration };
     plugin.initializeReadingLevel();
     app.knowledge.readDocument = async () => ({ content: 'short text', meta: {} });
     await expect(plugin.updateReadingStatus({ documentPath: 'wiki/short.md' })).resolves.toBe(true);
@@ -2436,6 +2468,46 @@ describe('main plugin', () => {
     release({ content: `${'the '.repeat(80)}run`, meta: { title: 'Old' }, revision: { contentHash: 'same' } });
     await expect(pending).resolves.toBe(false);
     expect(plugin.recommender.scoreDocument).not.toHaveBeenCalled();
+  });
+
+  it('should defer a new-root reading status until the matching review projection has loaded', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const statusSet = vi.fn(() => true);
+    app.readingStatus = { register: () => ({ set: statusSet, dispose() {} }) };
+    app.knowledge.readDocument = async ({ path }) => path.startsWith('wiki/vocab/')
+      ? { content: buildNote({ word: 'alpha', definition: 'letter' }), meta: { title: 'Alpha' }, revision: { contentHash: 'v' } }
+      : { content: `${'the '.repeat(80)}zorbleflux`, meta: { title: 'Probe' }, revision: { contentHash: 'probe' } };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const score = vi.spyOn(plugin.recommender, 'scoreDocument');
+    score.mockClear();
+    statusSet.mockClear();
+
+    const originalRead = app.storage.read.bind(app.storage);
+    let releaseReview;
+    let blocked = true;
+    app.storage.read = async (root, name) => {
+      if (root === 'root-b' && name === 'review.json' && blocked) {
+        await new Promise((resolve) => { releaseReview = resolve; });
+        blocked = false;
+      }
+      return originalRead(root, name);
+    };
+    app.storage.setRoot('root-b');
+    epoch = 'epoch-b';
+    const switching = app.events.find((event) => event.name === 'knowledge.root-changed').listener();
+    await vi.waitFor(() => expect(releaseReview).toBeTypeOf('function'));
+    await expect(plugin.updateReadingStatus({ path: 'wiki/sources/probe.md', contentHash: 'probe' })).resolves.toBe(false);
+    expect(score).not.toHaveBeenCalled();
+    expect(statusSet).not.toHaveBeenCalled();
+    releaseReview();
+    await switching;
+    expect(score).toHaveBeenCalled();
+    expect(statusSet).toHaveBeenCalled();
   });
 
   it('should keep a saved rating successful when reading level refresh fails', async () => {

@@ -78,7 +78,7 @@ describe('reading recommendations', () => {
     expect(progress.at(-1)).toEqual([4, 4]);
     expect(result.items.map((item) => item.title)).toEqual(['Good', 'Easy', 'Hard']);
     expect(result.items[0].topWords).toEqual(['rarefive', 'rarefour', 'rareone', 'raresix', 'rarethree']);
-    const suggestions = learningSuggestionsFromRecommendations(result.items);
+    const suggestions = learningSuggestionsFromRecommendations(result.items, 'zh');
     expect(suggestions).toHaveLength(3);
     expect(suggestions[0]).toMatchObject({ id: 'reading:wiki/good.md', documentPath: 'wiki/good.md' });
     expect(suggestions[1].detail).toContain('偏易');
@@ -199,8 +199,8 @@ describe('reading recommendations', () => {
     });
     await recommender.reload();
     const result = await recommender.recommend();
-    expect(result.items[0].bandLabel).toBe('Good');
-    expect(result.items[0].bandLabel).not.toMatch(/[适偏难易合]/u);
+    expect(result.items[0].bandLabel).toBeUndefined();
+    expect(learningSuggestionsFromRecommendations(result.items, 'en')[0].detail).toMatch(/Good|%/u);
   });
 
   it('should discard recommendation results when the workspace epoch changes during async work', async () => {

@@ -11,6 +11,15 @@ describe('reading level text processing', () => {
     expect(tokens.filter((token) => token.counted).map((token) => token.word)).toEqual(['hello', 'reader', 'visit', 'alice', 'studies', 'quietly', 'running', 'helps', 'shown', 'plain']);
   });
 
+  it('should exclude backtick and tilde fences of different lengths from language and token analysis', () => {
+    const code = many('identifier', 60);
+    for (const [open, close] of [['~~~js', '~~~'], ['````js', '````']]) {
+      const markdown = `中文正文内容\n${open}\n${code}\n${close}\n中文结尾`;
+      expect(detectEnglish(markdown)).toMatchObject({ english: false, reason: 'too-short' });
+      expect(extractReadingTokens(markdown).map((token) => token.word)).toEqual([]);
+    }
+  });
+
   it('should ignore sentence-internal title case words when they look like proper nouns', () => {
     const tokens = extractReadingTokens('Alice met Bob. Bob met Carol: Alice smiled.\n\n- London trains move.');
     expect(tokens.filter((token) => token.counted).map((token) => token.word)).toEqual(['alice', 'met', 'bob', 'met', 'alice', 'smiled', 'london', 'trains', 'move']);
@@ -36,5 +45,7 @@ describe('reading level text processing', () => {
     expect(validateLevelSettings({ vocabularySize: 3000, easyMax: 6, goodMax: 6 })).toMatchObject({ ok: false });
     expect(validateLevelSettings({ vocabularySize: 3000, easyMax: -1, goodMax: 6 })).toMatchObject({ ok: false });
     expect(validateLevelSettings({ vocabularySize: 3000, easyMax: 1, goodMax: 21 })).toMatchObject({ ok: false });
+    expect(validateLevelSettings({})).toMatchObject({ ok: false });
+    expect(validateLevelSettings({ vocabularySize: 3000, easyMax: Number.NaN, goodMax: 5 })).toMatchObject({ ok: false });
   });
 });

@@ -33,10 +33,11 @@ function isValidCacheEntry(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.hash !== 'string') return false;
   if (entry.title !== undefined && typeof entry.title !== 'string') return false;
   if (entry.usedAt !== undefined && (!Number.isFinite(entry.usedAt) || entry.usedAt < 0)) return false;
-  if (entry.english === false) return typeof entry.reason === 'string';
+  if (entry.english === false) return ['too-short', 'not-english'].includes(entry.reason);
   if (entry.english !== true || !isNonNegativeInteger(entry.counted) || !isNonNegativeInteger(entry.base)) return false;
   if (!entry.words || typeof entry.words !== 'object' || Array.isArray(entry.words)) return false;
-  return Object.values(entry.words).every(isNonNegativeInteger);
+  const counts = Object.values(entry.words);
+  return counts.every(isNonNegativeInteger) && entry.base + counts.reduce((sum, count) => sum + count, 0) === entry.counted;
 }
 
 function familiarityForCollected(review, word, surfaceMap) {

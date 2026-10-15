@@ -136,6 +136,14 @@ describe('note format', () => {
     }
   });
 
+  it('should ignore list items inside fenced code within the real examples section', () => {
+    const note = '---\ntype: vocab\nword: run\ndefinition: move\n---\n# run\n\n## Examples\n\n```md\n- Run this command.\n```\n';
+    expect(parseNote(note)).toMatchObject({ ok: true, entry: { examples: [] } });
+    const appended = appendExample(note, 'Run this command.');
+    expect(appended).not.toBe(note);
+    expect(parseNote(appended)).toMatchObject({ ok: true, entry: { examples: ['Run this command.'] } });
+  });
+
   it('should encode markdown source paths containing spaces unicode and parentheses', () => {
     const note = buildNote({ word: 'source', definition: '来源', example: 'Source line.', source: { path: '../sources/资料 a)b.md', title: 'A source' } });
     expect(parseNote(note).entry.examples[0]).toContain('../sources/资料%20a%29b.md');

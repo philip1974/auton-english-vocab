@@ -72,6 +72,11 @@ describe('scheduler and familiarity', () => {
     expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'))).toHaveLength(2);
   });
 
+  it('should require a current undo to match both rating id and word', () => {
+    const rating = { id: 'r1', word: 'alpha', rating: 'Good' };
+    expect(activeReviewLog([rating, { id: 'undo', word: 'beta', undoOf: 'r1' }])).toEqual([rating]);
+  });
+
   it('should pair a legacy undo with the latest unmatched same-word rating when ids are absent', () => {
     const log = [
       { word: 'old', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T01:00:00Z' },

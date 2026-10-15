@@ -4,7 +4,7 @@ import { VocabIndex } from './vocab-index.mjs';
 import { renderPanel, hasRequiredHost, appendSelectionRequest } from './panel.mjs';
 import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tools.mjs';
 import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
-import { DEFAULT_LEVEL_SETTINGS, detectEnglish } from './reading-level.mjs';
+import { DEFAULT_LEVEL_SETTINGS, detectEnglish, validateLevelSettings } from './reading-level.mjs';
 import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
 import { inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
 import { appendExample, buildNote, parseNote, slugFor, normalizeWord, normalizeSourceTitle } from './note-format.mjs';
@@ -226,7 +226,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
       this.state.reviewMode = REVIEW_MODES.has(data?.reviewMode) ? data.reviewMode : null;
-      this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
+      const levelSettings = validateLevelSettings(data?.levelSettings);
+      this.state.levelSettings = levelSettings.ok ? levelSettings.settings : DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
@@ -693,7 +694,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       });
       if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return null;
       this.state.recommendations = result;
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items));
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
       return result;
     } catch {
       if (request === this.recommendationRequest && !silent) this.notice(this.t.recommendationFailed);
@@ -711,6 +712,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     if (!path) return false;
     this.latestReadingEvent = { ...event, path };
     if (!this.readingStatusHandle || !this.recommender) return false;
+    const generation = this.rootGeneration;
     const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
     let doc;
     try {
@@ -718,14 +720,23 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } catch {
       return false;
     }
-    if (this.workspaceEpoch() !== epoch) return false;
+    if (this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
     if (doc?._tag === 'Err') return false;
+    let binding;
+    try { binding = await this.captureRootBinding(); } catch { return false; }
+    if (generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch
+      || this.reviewStore?.rootGeneration !== binding.storageRootGeneration
+      || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch
+      || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
+    const review = this.state.review;
+    const entries = this.state.entries;
     const detected = detectEnglish(doc.content);
     if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? '' } };
-    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries, epoch);
+    const item = await this.recommender.scoreDocument(meta, doc, review, entries, epoch);
     if (!item) return false;
-    if ((this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return false;
+    if ((this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch || generation !== this.rootGeneration
+      || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
     return this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
       tone: item.tone,
@@ -775,7 +786,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.learningSuggestionsHandle?.dispose?.();
       this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: 'reading-recommendations', heading: this.t.recommendations }));
       const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? []));
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
     }
     this.emitState();
     await this.refreshLatestReadingStatus();

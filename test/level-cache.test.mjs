@@ -168,6 +168,8 @@ describe('level cache and novel word scoring', () => {
       'wiki/bad-count.md': { hash: 'count', english: true, counted: 0.5, base: 0, words: {} },
       'wiki/bad-reason.md': { hash: 'reason', english: false, reason: null },
       'wiki/bad-words.md': { hash: 'words', english: true, counted: 1, base: 0, words: [] },
+      'wiki/bad-total.md': { hash: 'total', english: true, counted: 1, base: 0, words: { rare: 2 } },
+      'wiki/bad-skip.md': { hash: 'skip', english: false, reason: 'garbage' },
     } }));
     const cache = new LevelCache(io);
     await cache.load();

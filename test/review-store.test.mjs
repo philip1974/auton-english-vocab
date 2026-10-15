@@ -99,10 +99,10 @@ describe('review store', () => {
     const first = store.review.cards.run;
     await store.mutateReview({ type: 'rateCard', word: 'run', rating: 'Again' });
     expect(store.review.cards.run.reps).toBe(first.reps + 1);
-    await store.appendLog({ id: 'one', word: 'run' });
-    app.files['log.json'] = JSON.stringify([{ id: 'external', word: 'run' }]);
+    await store.appendLog({ id: 'one', word: 'run', rating: 'Good' });
+    app.files['log.json'] = JSON.stringify([{ id: 'external', word: 'run', rating: 'Good' }]);
     failures.conflictOnce = true;
-    await store.appendLog({ id: 'two', word: 'run' });
+    await store.appendLog({ id: 'two', word: 'run', rating: 'Good' });
     expect(store.log.map((entry) => entry.id)).toEqual(['external', 'two']);
   });
 
@@ -137,27 +137,27 @@ describe('review store', () => {
   });
 
   it('should trim log to two thousand entries when appending', async () => {
-    const store = new ReviewStore(appWithStorage({ 'log.json': JSON.stringify(Array.from({ length: 2000 }, (_, i) => i)) }));
+    const store = new ReviewStore(appWithStorage({ 'log.json': JSON.stringify(Array.from({ length: 2000 }, (_, i) => ({ id: `old-${i}`, word: 'run', rating: 'Good' }))) }));
     await store.load();
-    await store.appendLog(2000);
+    await store.appendLog({ id: 'new', word: 'run', rating: 'Good' });
     expect(store.log).toHaveLength(2000);
-    expect(store.log[0]).toBe(1);
+    expect(store.log[0].id).toBe('old-1');
   });
 
   it('should project pending logs without dropping conflicting legacy entries when a flush is pending', async () => {
     const store = new ReviewStore(appWithStorage({
-      'log.json': JSON.stringify([{ id: 'same', word: 'old' }, 1]),
+      'log.json': JSON.stringify([{ id: 'same', word: 'old', rating: 'Good' }]),
     }));
     await store.load();
-    store.review.pendingLogs = [{ id: 'same', word: 'new' }];
-    expect(store.effectiveLog()).toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
-    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
-    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
-    expect(normalizeReview({ version: 1, cards: {}, flags: {}, pendingLogs: [null, { word: 'missing-id' }, { id: 'valid' }] }).pendingLogs).toEqual([{ id: 'valid' }]);
+    store.review.pendingLogs = [{ id: 'same', word: 'new', rating: 'Good' }];
+    expect(store.effectiveLog().map((entry) => entry.id)).toEqual(['same', 'same~recovered-1']);
+    await expect(store.flushPendingLogs()).resolves.toHaveLength(2);
+    await expect(store.flushPendingLogs()).resolves.toHaveLength(2);
+    expect(normalizeReview({ version: 1, cards: {}, flags: {}, pendingLogs: [null, { word: 'missing-id' }, { id: 'valid', word: 'run', rating: 'Good' }] }).pendingLogs).toEqual([{ id: 'valid', word: 'run', rating: 'Good' }]);
     expect(mergeReview(
-      { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first' }] },
-      { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', value: 'new' }, { id: 'second' }] },
-    ).pendingLogs).toEqual([{ id: 'first' }, { id: 'first~recovered-1', value: 'new' }, { id: 'second' }]);
+      { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', word: 'alpha', rating: 'Good' }] },
+      { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', word: 'beta', rating: 'Again' }, { id: 'second', word: 'gamma', rating: 'Hard' }] },
+    ).pendingLogs.map((entry) => entry.id)).toEqual(['first', 'first~recovered-1', 'second']);
   });
 
   it('should merge review flags when merging reviews directly', () => {
@@ -234,6 +234,35 @@ describe('review store', () => {
     expect(activeReviewLog(store.effectiveLog()).map((entry) => entry.word)).toEqual(['alpha']);
   });
 
+  it('should rewrite a pending undo when its colliding rating is flushed as one batch', async () => {
+    const app = appWithStorage({
+      'log.json': JSON.stringify([{ id: 'same', word: 'alpha', rating: 'Good', previousState: 'New' }]),
+      'review.json': JSON.stringify({ version: 1, cards: {}, flags: {}, pendingLogs: [
+        { id: 'same', word: 'beta', rating: 'Good', previousState: 'New' },
+        { id: 'undo', word: 'beta', undoOf: 'same' },
+      ] }),
+    });
+    const store = new ReviewStore(app);
+    await store.load();
+    expect(store.log.at(-1)).toMatchObject({ word: 'beta', undoOf: 'same~recovered-1' });
+    expect(activeReviewLog(store.log).map((entry) => entry.word)).toEqual(['alpha']);
+    expect(store.review.pendingLogs).toEqual([]);
+  });
+
+  it('should back up and isolate malformed current undo records without changing another word history', async () => {
+    const app = appWithStorage({ 'log.json': JSON.stringify([
+      { id: 'r1', word: 'alpha', rating: 'Good' },
+      { id: 'junk', undoOf: 'r1' },
+    ]) });
+    const notices = [];
+    const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
+    await store.load();
+    expect(store.log).toEqual([{ id: 'r1', word: 'alpha', rating: 'Good' }]);
+    expect(activeReviewLog(store.log).map((entry) => entry.word)).toEqual(['alpha']);
+    expect(Object.keys(app.files).some((name) => name.startsWith('log.corrupt-'))).toBe(true);
+    expect(notices.length).toBeGreaterThan(0);
+  });
+
   it('should preserve colliding pending log ids when reviews are merged', () => {
     const base = { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'same', word: 'alpha', rating: 'Good' }] };
     const incoming = { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'same', word: 'beta', rating: 'Again' }] };
@@ -248,9 +277,9 @@ describe('review store', () => {
       cards: {},
       flags: {},
       pendingLogs: [
-        { id: 'same', word: 'alpha' },
-        { id: 'same~recovered-1', word: 'legacy' },
-        { id: 'same', word: 'beta' },
+        { id: 'same', word: 'alpha', rating: 'Good' },
+        { id: 'same~recovered-1', word: 'legacy', rating: 'Good' },
+        { id: 'same', word: 'beta', rating: 'Again' },
       ],
     }) });
     const originalWrite = app.storage.write;
@@ -341,7 +370,7 @@ describe('review store', () => {
       version: 1,
       cards: {},
       flags: { run: 'ignored', bad: true },
-      pendingLogs: [{ id: 'ok', word: 'run' }, null, { word: 'missing-id' }],
+      pendingLogs: [{ id: 'ok', word: 'run', rating: 'Good' }, null, { word: 'missing-id' }],
     }) });
     const originalWrite = app.storage.write;
     app.storage.write = async (...args) => {
@@ -351,12 +380,12 @@ describe('review store', () => {
     const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
     await store.load();
     expect(store.review.flags).toEqual({ run: 'ignored' });
-    expect(store.review.pendingLogs).toEqual([{ id: 'ok', word: 'run' }]);
+    expect(store.review.pendingLogs).toEqual([{ id: 'ok', word: 'run', rating: 'Good' }]);
     expect(notices.join('\n')).toMatch(/3/u);
   });
 
   it('should keep activation usable and pending logs intact when startup log recovery fails', async () => {
-    const pending = { id: 'pending-1', word: 'run' };
+    const pending = { id: 'pending-1', word: 'run', rating: 'Good' };
     const app = appWithStorage({ 'review.json': JSON.stringify({ version: 1, cards: {}, flags: {}, pendingLogs: [pending] }) });
     const originalWrite = app.storage.write;
     app.storage.write = async (...args) => {

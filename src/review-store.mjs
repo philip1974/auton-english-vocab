@@ -8,6 +8,16 @@ function sameLogEntry(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function isValidLogEntry(entry, requireId = false) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  if (requireId && (typeof entry.id !== 'string' || !entry.id)) return false;
+  if (entry.id !== undefined && (typeof entry.id !== 'string' || !entry.id)) return false;
+  if (typeof entry.word !== 'string' || !entry.word) return false;
+  if (entry.undoOf !== undefined) return typeof entry.undoOf === 'string' && Boolean(entry.undoOf) && typeof entry.id === 'string';
+  if (entry.undo !== undefined) return entry.undo === true;
+  return ['Again', 'Hard', 'Good', 'Easy'].includes(entry.rating);
+}
+
 function uniqueLogEntries(values, onCollision = () => undefined) {
   const entries = [];
   const byId = new Map();
@@ -163,11 +173,18 @@ export class ReviewStore {
       const parsed = JSON.parse(result.text);
       if (!Array.isArray(parsed)) throw new Error('log must be an array');
       let collisions = 0;
-      this.log = uniqueLogEntries(parsed, () => { collisions += 1; }).slice(-2000);
-      if (collisions > 0) {
+      let invalidItems = 0;
+      const valid = parsed.filter((entry) => {
+        if (isValidLogEntry(entry)) return true;
+        invalidItems += 1;
+        return false;
+      });
+      this.log = uniqueLogEntries(valid, () => { collisions += 1; }).slice(-2000);
+      if (collisions > 0 || invalidItems > 0) {
         await this.#backupCorrupt('log', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
-        this.notify(this.t.logIdCollisions(collisions));
+        if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
+        if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
     } catch {
       await this.#backupCorrupt('log', result.text, rootGeneration, generation);
@@ -272,10 +289,14 @@ export class ReviewStore {
   }
 
   async appendLog(entry) {
+    return this.appendLogs([entry]);
+  }
+
+  async appendLogs(entries) {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const next = uniqueLogEntries([...this.log, entry]).slice(-2000);
+      const next = uniqueLogEntries([...this.log, ...entries]).slice(-2000);
       try {
         const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(next), {
           expectedRevision: this.logRevision,
@@ -302,10 +323,8 @@ export class ReviewStore {
     const rootGeneration = this.rootGeneration;
     const pending = [...(this.review.pendingLogs ?? [])];
     if (pending.length === 0) return this.log;
-    for (const entry of pending) {
-      await this.appendLog(entry);
-      if (this.#stale(generation, rootGeneration)) return this.log;
-    }
+    await this.appendLogs(pending);
+    if (this.#stale(generation, rootGeneration)) return this.log;
     const ids = pending.map((entry) => entry.id);
     await this.mutateReview({ type: 'removePendingLogs', ids });
     return this.log;
@@ -388,7 +407,7 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
   if (Array.isArray(value.pendingLogs)) {
     const pendingLogs = [];
     for (const entry of value.pendingLogs) {
-      if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.id === 'string') pendingLogs.push(entry);
+      if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem('pendingLog');
     }
     review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2000);

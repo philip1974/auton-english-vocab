@@ -1128,7 +1128,8 @@ function rateCard(serialized, ratingName, now = /* @__PURE__ */ new Date()) {
   return serializeCard(scheduler.repeat(card, now)[rating].card);
 }
 function activeReviewLog(log = []) {
-  const undone = new Set(log.filter((entry) => entry?.undoOf).map((entry) => entry.undoOf));
+  const undoKey = (id, word) => `${id}\0${word}`;
+  const undone = new Set(log.filter((entry) => entry?.undoOf && entry.word).map((entry) => undoKey(entry.undoOf, entry.word)));
   const legacyUndone = /* @__PURE__ */ new Set();
   for (let index = 0; index < log.length; index += 1) {
     const entry = log[index];
@@ -1136,12 +1137,12 @@ function activeReviewLog(log = []) {
     for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
       const rating = log[candidate];
       if (rating?.word !== entry.word || rating?.undo || rating?.undoOf || legacyUndone.has(candidate)) continue;
-      if (rating.id && undone.has(rating.id)) continue;
+      if (rating.id && undone.has(undoKey(rating.id, rating.word))) continue;
       legacyUndone.add(candidate);
       break;
     }
   }
-  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(entry.id)));
+  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(undoKey(entry.id, entry.word))));
 }
 function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date()) {
   const newLimit = options.newLimit ?? 50;
@@ -1172,6 +1173,15 @@ var wordRecord = () => /* @__PURE__ */ Object.create(null);
 var EMPTY = () => ({ version: 1, cards: wordRecord(), flags: wordRecord() });
 function sameLogEntry(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+function isValidLogEntry(entry, requireId = false) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  if (requireId && (typeof entry.id !== "string" || !entry.id)) return false;
+  if (entry.id !== void 0 && (typeof entry.id !== "string" || !entry.id)) return false;
+  if (typeof entry.word !== "string" || !entry.word) return false;
+  if (entry.undoOf !== void 0) return typeof entry.undoOf === "string" && Boolean(entry.undoOf) && typeof entry.id === "string";
+  if (entry.undo !== void 0) return entry.undo === true;
+  return ["Again", "Hard", "Good", "Easy"].includes(entry.rating);
 }
 function uniqueLogEntries(values, onCollision = () => void 0) {
   const entries = [];
@@ -1325,13 +1335,20 @@ var ReviewStore = class {
       const parsed = JSON.parse(result.text);
       if (!Array.isArray(parsed)) throw new Error("log must be an array");
       let collisions = 0;
-      this.log = uniqueLogEntries(parsed, () => {
+      let invalidItems = 0;
+      const valid = parsed.filter((entry) => {
+        if (isValidLogEntry(entry)) return true;
+        invalidItems += 1;
+        return false;
+      });
+      this.log = uniqueLogEntries(valid, () => {
         collisions += 1;
       }).slice(-2e3);
-      if (collisions > 0) {
+      if (collisions > 0 || invalidItems > 0) {
         await this.#backupCorrupt("log", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
-        this.notify(this.t.logIdCollisions(collisions));
+        if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
+        if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
     } catch {
       await this.#backupCorrupt("log", result.text, rootGeneration, generation);
@@ -1420,10 +1437,13 @@ var ReviewStore = class {
     return { ...applied, review: this.review, rootChanged: false };
   }
   async appendLog(entry) {
+    return this.appendLogs([entry]);
+  }
+  async appendLogs(entries) {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const next = uniqueLogEntries([...this.log, entry]).slice(-2e3);
+      const next = uniqueLogEntries([...this.log, ...entries]).slice(-2e3);
       try {
         const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(next), {
           expectedRevision: this.logRevision
@@ -1448,10 +1468,8 @@ var ReviewStore = class {
     const rootGeneration = this.rootGeneration;
     const pending = [...this.review.pendingLogs ?? []];
     if (pending.length === 0) return this.log;
-    for (const entry of pending) {
-      await this.appendLog(entry);
-      if (this.#stale(generation, rootGeneration)) return this.log;
-    }
+    await this.appendLogs(pending);
+    if (this.#stale(generation, rootGeneration)) return this.log;
     const ids = pending.map((entry) => entry.id);
     await this.mutateReview({ type: "removePendingLogs", ids });
     return this.log;
@@ -1525,7 +1543,7 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
   if (Array.isArray(value.pendingLogs)) {
     const pendingLogs = [];
     for (const entry of value.pendingLogs) {
-      if (entry && typeof entry === "object" && !Array.isArray(entry) && typeof entry.id === "string") pendingLogs.push(entry);
+      if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem("pendingLog");
     }
     review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2e3);
@@ -1669,6 +1687,24 @@ function examplesSection(body) {
   }
   return start === null ? null : { start, end: body.length, content: body.slice(start) };
 }
+function listItemsOutsideFences(content) {
+  const items = [];
+  let fence = null;
+  for (const line of content.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      continue;
+    }
+    const item = /^- (.+)$/u.exec(line);
+    if (item) items.push(item[1].trim());
+  }
+  return items;
+}
 function parseNote(text) {
   const normalized = String(text).replace(/\r\n/g, "\n");
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
@@ -1687,7 +1723,7 @@ function parseNote(text) {
     const definition = String(fields.definition ?? "").trim();
     if (!definition) return { ok: false, error: "missing definition" };
     const section = examplesSection(match[2]);
-    const examples = section ? [...section.content.matchAll(/^- (.+)$/gm)].map((item) => item[1].trim()) : [];
+    const examples = section ? listItemsOutsideFences(section.content) : [];
     return { ok: true, entry: { ...fields, word, definition, examples, body: match[2] } };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "invalid frontmatter" };
@@ -1889,8 +1925,27 @@ var DEFAULT_LEVEL_SETTINGS = Object.freeze({
 });
 var WORD_RE2 = /[A-Za-z]+(?:['’][A-Za-z]+)*/gu;
 var CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+function stripFencedCode(markdown) {
+  const kept = [];
+  let fence = null;
+  for (const line of String(markdown ?? "").split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      kept.push("");
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      kept.push("");
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
 function stripMarkdownNoise(markdown) {
-  return String(markdown ?? "").replace(/^---[\s\S]*?\n---\s*/u, "").replace(/```[\s\S]*?```/gu, " ").replace(/`[^`]*`/gu, " ").replace(/!\[[^\]]*\]\([^)]*\)/gu, " ").replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1").replace(/https?:\/\/\S+/gu, " ").replace(/!\[\[.*?\]\]/gu, " ").replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/gu, "$1").replace(/<[^>]+>/gu, " ");
+  return stripFencedCode(markdown).replace(/^---[\s\S]*?\n---\s*/u, "").replace(/`[^`]*`/gu, " ").replace(/!\[[^\]]*\]\([^)]*\)/gu, " ").replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1").replace(/https?:\/\/\S+/gu, " ").replace(/!\[\[.*?\]\]/gu, " ").replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/gu, "$1").replace(/<[^>]+>/gu, " ");
 }
 function isHeading(line) {
   return /^\s{0,3}#{1,6}\s+/u.test(line);
@@ -1937,7 +1992,9 @@ function detectEnglish(markdown) {
   return { english: true, latinWords, cjkChars };
 }
 function validateLevelSettings(value) {
-  const next = { ...DEFAULT_LEVEL_SETTINGS, ...value };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, reason: "schema" };
+  const next = { vocabularySize: value.vocabularySize, easyMax: value.easyMax, goodMax: value.goodMax };
+  if (![next.vocabularySize, next.easyMax, next.goodMax].every(Number.isFinite)) return { ok: false, reason: "schema" };
   const allowed = /* @__PURE__ */ new Set([1e3, 2e3, 3e3, 5e3, 8e3, 12e3, 2e4]);
   if (!allowed.has(next.vocabularySize)) return { ok: false, reason: "vocabulary-size" };
   if (next.easyMax < 0 || next.easyMax >= next.goodMax || next.goodMax > 20) {
@@ -3284,7 +3341,7 @@ function renderPanel(container, controls) {
     };
     if (!result?.items?.length) {
       body.append(el("p", "ev-empty", t.noRecommendations));
-      if (result) appendSkipped();
+      if (result && Object.values(skipped).some((count) => count > 0)) appendSkipped();
       return;
     }
     const list = el("div", "ev-list");
@@ -3293,7 +3350,8 @@ function renderPanel(container, controls) {
       const head = el("div", "ev-row-head");
       const title = button(item.title, () => controls.openReadingDocument?.(item.path), "ev-link-button");
       title.disabled = !controls.canOpenReadingDocument?.();
-      head.append(title, el("small", "ev-badge", `${item.bandLabel} · ${item.rate.toFixed(1)}%`));
+      const bandLabel = item.band === "good" ? t.bandGood : item.band === "easy" ? t.bandEasy : t.bandHard;
+      head.append(title, el("small", "ev-badge", `${bandLabel} · ${item.rate.toFixed(1)}%`));
       const detail = el("div", "ev-row-definition", `${t.novelRate}: ${item.topWords.join(", ") || "-"}`);
       row.append(head, detail);
       list.append(row);
@@ -34086,10 +34144,11 @@ function isValidCacheEntry(entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.hash !== "string") return false;
   if (entry.title !== void 0 && typeof entry.title !== "string") return false;
   if (entry.usedAt !== void 0 && (!Number.isFinite(entry.usedAt) || entry.usedAt < 0)) return false;
-  if (entry.english === false) return typeof entry.reason === "string";
+  if (entry.english === false) return ["too-short", "not-english"].includes(entry.reason);
   if (entry.english !== true || !isNonNegativeInteger(entry.counted) || !isNonNegativeInteger(entry.base)) return false;
   if (!entry.words || typeof entry.words !== "object" || Array.isArray(entry.words)) return false;
-  return Object.values(entry.words).every(isNonNegativeInteger);
+  const counts = Object.values(entry.words);
+  return counts.every(isNonNegativeInteger) && entry.base + counts.reduce((sum, count) => sum + count, 0) === entry.counted;
 }
 function familiarityForCollected(review, word, surfaceMap) {
   if (!surfaceMap.has(word)) return null;
@@ -34251,11 +34310,17 @@ function sortRecommendations(items, settings = DEFAULT_LEVEL_SETTINGS) {
   const bandOrder = { good: 0, easy: 1, hard: 2 };
   return [...items].sort((a, b2) => bandOrder[a.band] - bandOrder[b2.band] || Math.abs(a.rate - midpoint) - Math.abs(b2.rate - midpoint) || a.title.localeCompare(b2.title));
 }
-function learningSuggestionsFromRecommendations(items) {
+function localizedBand(t, band) {
+  if (band === "good") return t.bandGood;
+  if (band === "easy") return t.bandEasy;
+  return t.bandHard;
+}
+function learningSuggestionsFromRecommendations(items, locale = "en") {
+  const t = uiText(locale);
   return items.slice(0, 3).map((item) => ({
     id: `reading:${item.path}`,
     title: item.title.slice(0, 120),
-    detail: item.band === "good" ? `${item.rate.toFixed(1)}%` : `${item.bandLabel} · ${item.rate.toFixed(1)}%`,
+    detail: item.band === "good" ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
     documentPath: item.path
   }));
 }
@@ -34296,7 +34361,6 @@ var ReadingRecommender = class {
       title: cached.title || meta.title || meta.path.split("/").pop().replace(/\.md$/u, ""),
       topWords: scored.topWords.slice(0, 5),
       band: scored.band,
-      bandLabel: this.bandLabel(scored.band),
       tone: scored.tone,
       rate: scored.rate,
       counted: scored.counted
@@ -34593,7 +34657,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
       this.state.reviewMode = REVIEW_MODES.has(data?.reviewMode) ? data.reviewMode : null;
-      this.state.levelSettings = data?.levelSettings ?? DEFAULT_LEVEL_SETTINGS;
+      const levelSettings = validateLevelSettings(data?.levelSettings);
+      this.state.levelSettings = levelSettings.ok ? levelSettings.settings : DEFAULT_LEVEL_SETTINGS;
     } catch {
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
@@ -35031,7 +35096,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       });
       if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch) return null;
       this.state.recommendations = result;
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items));
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
       return result;
     } catch {
       if (request === this.recommendationRequest && !silent) this.notice(this.t.recommendationFailed);
@@ -35048,6 +35113,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     if (!path) return false;
     this.latestReadingEvent = { ...event, path };
     if (!this.readingStatusHandle || !this.recommender) return false;
+    const generation = this.rootGeneration;
     const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
     let doc;
     try {
@@ -35055,14 +35121,23 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } catch {
       return false;
     }
-    if (this.workspaceEpoch() !== epoch) return false;
+    if (this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
     if (doc?._tag === "Err") return false;
+    let binding;
+    try {
+      binding = await this.captureRootBinding();
+    } catch {
+      return false;
+    }
+    if (generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch || this.reviewStore?.rootGeneration !== binding.storageRootGeneration || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
+    const review = this.state.review;
+    const entries = this.state.entries;
     const detected = detectEnglish(doc.content);
     if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? "" } };
-    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries, epoch);
+    const item = await this.recommender.scoreDocument(meta, doc, review, entries, epoch);
     if (!item) return false;
-    if ((this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch) return false;
+    if ((this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch || generation !== this.rootGeneration || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
     return this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
       tone: item.tone,
@@ -35110,7 +35185,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       this.learningSuggestionsHandle?.dispose?.();
       this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: "reading-recommendations", heading: this.t.recommendations }));
       const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? []));
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
     }
     this.emitState();
     await this.refreshLatestReadingStatus();

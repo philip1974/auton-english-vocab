@@ -7,10 +7,29 @@ export const DEFAULT_LEVEL_SETTINGS = Object.freeze({
 const WORD_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/gu;
 const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
 
+function stripFencedCode(markdown) {
+  const kept = [];
+  let fence = null;
+  for (const line of String(markdown ?? '').split('\n')) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      kept.push('');
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      kept.push('');
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 function stripMarkdownNoise(markdown) {
-  return String(markdown ?? '')
+  return stripFencedCode(markdown)
     .replace(/^---[\s\S]*?\n---\s*/u, '')
-    .replace(/```[\s\S]*?```/gu, ' ')
     .replace(/`[^`]*`/gu, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
@@ -70,7 +89,9 @@ export function detectEnglish(markdown) {
 }
 
 export function validateLevelSettings(value) {
-  const next = { ...DEFAULT_LEVEL_SETTINGS, ...value };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, reason: 'schema' };
+  const next = { vocabularySize: value.vocabularySize, easyMax: value.easyMax, goodMax: value.goodMax };
+  if (![next.vocabularySize, next.easyMax, next.goodMax].every(Number.isFinite)) return { ok: false, reason: 'schema' };
   const allowed = new Set([1000, 2000, 3000, 5000, 8000, 12000, 20000]);
   if (!allowed.has(next.vocabularySize)) return { ok: false, reason: 'vocabulary-size' };
   if (next.easyMax < 0 || next.easyMax >= next.goodMax || next.goodMax > 20) {

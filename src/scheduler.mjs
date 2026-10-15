@@ -44,7 +44,8 @@ export function rateCard(serialized, ratingName, now = new Date()) {
 }
 
 export function activeReviewLog(log = []) {
-  const undone = new Set(log.filter((entry) => entry?.undoOf).map((entry) => entry.undoOf));
+  const undoKey = (id, word) => `${id}\u0000${word}`;
+  const undone = new Set(log.filter((entry) => entry?.undoOf && entry.word).map((entry) => undoKey(entry.undoOf, entry.word)));
   const legacyUndone = new Set();
   for (let index = 0; index < log.length; index += 1) {
     const entry = log[index];
@@ -52,12 +53,12 @@ export function activeReviewLog(log = []) {
     for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
       const rating = log[candidate];
       if (rating?.word !== entry.word || rating?.undo || rating?.undoOf || legacyUndone.has(candidate)) continue;
-      if (rating.id && undone.has(rating.id)) continue;
+      if (rating.id && undone.has(undoKey(rating.id, rating.word))) continue;
       legacyUndone.add(candidate);
       break;
     }
   }
-  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(entry.id)));
+  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(undoKey(entry.id, entry.word))));
 }
 
 export function dueQueue(words, review, options = {}, now = new Date()) {

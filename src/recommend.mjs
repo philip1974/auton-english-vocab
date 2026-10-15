@@ -30,11 +30,18 @@ export function sortRecommendations(items, settings = DEFAULT_LEVEL_SETTINGS) {
   ));
 }
 
-export function learningSuggestionsFromRecommendations(items) {
+function localizedBand(t, band) {
+  if (band === 'good') return t.bandGood;
+  if (band === 'easy') return t.bandEasy;
+  return t.bandHard;
+}
+
+export function learningSuggestionsFromRecommendations(items, locale = 'en') {
+  const t = uiText(locale);
   return items.slice(0, 3).map((item) => ({
     id: `reading:${item.path}`,
     title: item.title.slice(0, 120),
-    detail: item.band === 'good' ? `${item.rate.toFixed(1)}%` : `${item.bandLabel} · ${item.rate.toFixed(1)}%`,
+    detail: item.band === 'good' ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
     documentPath: item.path,
   }));
 }
@@ -80,7 +87,6 @@ export class ReadingRecommender {
       title: cached.title || meta.title || meta.path.split('/').pop().replace(/\.md$/u, ''),
       topWords: scored.topWords.slice(0, 5),
       band: scored.band,
-      bandLabel: this.bandLabel(scored.band),
       tone: scored.tone,
       rate: scored.rate,
       counted: scored.counted,

@@ -123,6 +123,25 @@ function examplesSection(body) {
   return start === null ? null : { start, end: body.length, content: body.slice(start) };
 }
 
+function listItemsOutsideFences(content) {
+  const items = [];
+  let fence = null;
+  for (const line of content.split('\n')) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      continue;
+    }
+    const item = /^- (.+)$/u.exec(line);
+    if (item) items.push(item[1].trim());
+  }
+  return items;
+}
+
 export function parseNote(text) {
   const normalized = String(text).replace(/\r\n/g, '\n');
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
@@ -141,7 +160,7 @@ export function parseNote(text) {
     const definition = String(fields.definition ?? '').trim();
     if (!definition) return { ok: false, error: 'missing definition' };
     const section = examplesSection(match[2]);
-    const examples = section ? [...section.content.matchAll(/^- (.+)$/gm)].map((item) => item[1].trim()) : [];
+    const examples = section ? listItemsOutsideFences(section.content) : [];
     return { ok: true, entry: { ...fields, word, definition, examples, body: match[2] } };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'invalid frontmatter' };

@@ -510,7 +510,7 @@ export function renderPanel(container, controls) {
     };
     if (!result?.items?.length) {
       body.append(el('p', 'ev-empty', t.noRecommendations));
-      if (result) appendSkipped();
+      if (result && Object.values(skipped).some((count) => count > 0)) appendSkipped();
       return;
     }
     const list = el('div', 'ev-list');
@@ -519,7 +519,8 @@ export function renderPanel(container, controls) {
       const head = el('div', 'ev-row-head');
       const title = button(item.title, () => controls.openReadingDocument?.(item.path), 'ev-link-button');
       title.disabled = !controls.canOpenReadingDocument?.();
-      head.append(title, el('small', 'ev-badge', `${item.bandLabel} · ${item.rate.toFixed(1)}%`));
+      const bandLabel = item.band === 'good' ? t.bandGood : item.band === 'easy' ? t.bandEasy : t.bandHard;
+      head.append(title, el('small', 'ev-badge', `${bandLabel} · ${item.rate.toFixed(1)}%`));
       const detail = el('div', 'ev-row-definition', `${t.novelRate}: ${item.topWords.join(', ') || '-'}`);
       row.append(head, detail);
       list.append(row);
