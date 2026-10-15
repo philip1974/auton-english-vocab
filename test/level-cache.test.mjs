@@ -80,6 +80,18 @@ describe('level cache and novel word scoring', () => {
     expect(scored.novel).toBe(1);
   });
 
+  it('should inherit familiarity through dictionary forms but not reviewed ambiguous homographs', () => {
+    const table = rankMapFromWords(['the']);
+    const cached = buildLevelCacheEntry('ran running ground', table, 1);
+    const review = { cards: {}, flags: { run: 'mastered', grind: 'mastered' } };
+    const entries = [
+      { word: 'run', forms: ['run', 'ran', 'running'], dictionaryPos: 'verb' },
+      { word: 'grind', forms: ['grind', 'ground'], dictionaryPos: 'verb' },
+    ];
+    const scored = scoreCachedEntry(cached, { table, review, entries, settings: { vocabularySize: 1, easyMax: 2, goodMax: 5 } });
+    expect(scored).toMatchObject({ novel: 1, topWords: ['ground'] });
+  });
+
   it('should expose only legal cache shard names when persisting split cache files', () => {
     expect(cacheShardNames()).toEqual(['level-cache-0.json', 'level-cache-1.json', 'level-cache-2.json', 'level-cache-3.json']);
   });

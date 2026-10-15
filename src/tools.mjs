@@ -5,6 +5,10 @@ import { uiText } from './ui-text.mjs';
 const MAX_ENTRIES = 20;
 const DOCUMENT_SOURCE_RE = /^(?:wiki|docs)\/[^\\\r\n]+$/u;
 
+function toolFailure(code, word = '') {
+  throw Object.assign(new Error(code), { code, word });
+}
+
 function isSafeDocumentSourcePath(path) {
   return DOCUMENT_SOURCE_RE.test(path) && !String(path).split('/').some((part) => part === '.' || part === '..' || part === '');
 }
@@ -25,22 +29,22 @@ function noticeText(receipt, number, words, t) {
 
 function validateEntry(entry) {
   let word;
-  try { word = assertEnglishWord(entry.word); } catch { throw new Error(`invalid word: ${entry.word}`); }
+  try { word = assertEnglishWord(entry.word); } catch { toolFailure('INVALID_WORD', String(entry?.word ?? '')); }
   const definition = String(entry.definition ?? '').trim();
-  if (!definition || definition.length > 500) throw new Error(`invalid definition for ${word}`);
+  if (!definition || definition.length > 500) toolFailure('INVALID_DEFINITION', word);
   const example = entry.example === undefined ? undefined : String(entry.example).trim().replace(/\s+/g, ' ');
-  if (example && example.length > 600) throw new Error(`example too long for ${word}`);
+  if (example && example.length > 600) toolFailure('EXAMPLE_TOO_LONG', word);
   const source = entry.source;
   if (source) {
     if (source.path) {
-      if (!isSafeDocumentSourcePath(source.path)) throw new Error(`invalid source for ${word}`);
+      if (!isSafeDocumentSourcePath(source.path)) toolFailure('INVALID_SOURCE', word);
     } else if (source.url) {
-      if (/[\s<>]/.test(source.url)) throw new Error(`invalid source for ${word}`);
+      if (/[\s<>]/.test(source.url)) toolFailure('INVALID_SOURCE', word);
       let parsed;
-      try { parsed = new URL(source.url); } catch { throw new Error(`invalid source for ${word}`); }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error(`invalid source for ${word}`);
+      try { parsed = new URL(source.url); } catch { toolFailure('INVALID_SOURCE', word); }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') toolFailure('INVALID_SOURCE', word);
     } else {
-      throw new Error(`invalid source for ${word}`);
+      toolFailure('INVALID_SOURCE', word);
     }
   }
   const normalizedSource = source ? { ...source, ...(source.title === undefined ? {} : { title: normalizeSourceTitle(source.title) }) } : source;
@@ -98,12 +102,16 @@ async function availablePath(app, word, guard, reservedPaths) {
   for (let number = 1; number < 1000; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
     if (reservedPaths.has(path)) continue;
-    const doc = await readOptional(app, path, guard);
+    let doc;
+    try { doc = await readOptional(app, path, guard); } catch (error) {
+      if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') throw error;
+      toolFailure('READ_FAILED', word);
+    }
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
     if (parsed.ok && parsed.entry.word === word) return { path, doc };
   }
-  throw new Error(`no available note path for ${word}`);
+  toolFailure('NO_AVAILABLE_PATH', word);
 }
 
 export function makeVocabLookup({ index, review, getReview = () => review, bindRootRead = (operation) => operation() }) {
@@ -130,10 +138,11 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
   return async function vocabAdd(input) {
     const t = uiText(typeof locale === 'function' ? locale() : locale);
     const bind = bindKnowledgeWrite ?? ((operation) => operation({ assertCurrent: () => undefined, wait: (promise) => promise }));
-    return bind(async (guard) => {
+    try {
+      return await bind(async (guard) => {
     const entries = input?.entries;
     if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
-      throw new Error('entries must contain 1-20 items');
+      toolFailure('INVALID_ENTRY_COUNT');
     }
     const notes = [];
     const validated = entries.map(validateEntry);
@@ -153,14 +162,17 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     const accepted = [];
     const reservedPaths = new Set();
     for (const entry of groups.values()) {
-      if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
+      if (index.isAmbiguous?.(entry.word)) toolFailure('DUPLICATE_NOTES', entry.word);
       const existing = index.get(entry.word);
       let path;
       let doc;
       if (existing) {
         path = existing.path;
-        if (reservedPaths.has(path)) throw new Error(`duplicate vocabulary path for ${entry.word}`);
-        doc = unwrap(await guard.wait(app.knowledge.readDocument({ path })));
+        if (reservedPaths.has(path)) toolFailure('DUPLICATE_PATH', entry.word);
+        try { doc = unwrap(await guard.wait(app.knowledge.readDocument({ path }))); } catch (error) {
+          if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') throw error;
+          toolFailure('READ_FAILED', entry.word);
+        }
       } else {
         ({ path, doc } = await availablePath(app, entry.word, guard, reservedPaths));
       }
@@ -168,8 +180,8 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       let content;
       if (doc) {
         const parsed = parseNote(doc.content);
-        if (!parsed.ok) throw new Error(`frontmatter invalid for ${entry.word}: ${parsed.error}`);
-        if (parsed.entry.word !== entry.word) throw new Error(`frontmatter word mismatch for ${entry.word}`);
+        if (!parsed.ok) toolFailure('INVALID_FRONTMATTER', entry.word);
+        if (parsed.entry.word !== entry.word) toolFailure('FRONTMATTER_WORD_MISMATCH', entry.word);
         content = doc.content;
       } else {
         content = buildNote({ ...entry, example: undefined, source: undefined });
@@ -180,7 +192,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       accepted.push(entry.word);
     }
     if (!changes.length) return [t.toolNoChanges, ...notes].join('\n');
-    if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error('duplicate vocabulary proposal path');
+    if (new Set(changes.map((change) => change.path)).size !== changes.length) toolFailure('DUPLICATE_PATH');
     const number = nextNumber();
     const words = accepted;
     await guard.assertCurrent();
@@ -193,7 +205,13 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       refresh?.();
     }).catch(() => notify(t.proposalFailed(number)));
     return [t.toolSubmitted(number, words.length), ...notes].join('\n');
-    }, t.knowledgeWriteAborted);
+      }, t.knowledgeWriteAborted);
+    } catch (error) {
+      if (typeof error?.code === 'string' && ['INVALID_WORD', 'INVALID_DEFINITION', 'EXAMPLE_TOO_LONG', 'INVALID_SOURCE', 'INVALID_ENTRY_COUNT', 'NO_AVAILABLE_PATH', 'DUPLICATE_NOTES', 'DUPLICATE_PATH', 'INVALID_FRONTMATTER', 'FRONTMATTER_WORD_MISMATCH', 'READ_FAILED'].includes(error.code)) {
+        throw Object.assign(new Error(t.toolFailure(error.code, error.word)), { code: error.code });
+      }
+      throw error;
+    }
   };
 }
 

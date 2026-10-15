@@ -91,6 +91,16 @@ describe('context cloze', () => {
     expect(clozeSentence('Lay the book down.', { word: 'lie', pos: 'verb' }).hits).toEqual([]);
     expect(clozeSentence('The wound healed.', { word: 'wind', pos: 'verb' }).hits).toEqual([]);
     expect(clozeSentence('They fell the tree.', { word: 'fall', pos: 'verb' }).hits).toEqual([]);
+    for (const [sentence, word, form] of [
+      ['The ground was wet.', 'grind', 'ground'], ['Wait a bit.', 'bite', 'bit'],
+      ['A spoke broke on the wheel.', 'speak', 'spoke'], ['The parcel was bound tightly.', 'bind', 'bound'],
+      ['The rent is due.', 'rend', 'rent'],
+    ]) expect(clozeSentence(sentence, { word, forms: [word, form], dictionaryPos: 'verb' }).hits).toEqual([]);
+  });
+
+  it('should conservatively skip reviewed homographs even in genuine inflection sentences', () => {
+    expect(clozeSentence('The beans were ground finely.', { word: 'grind', forms: ['grind', 'ground'], dictionaryPos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('She spoke clearly.', { word: 'speak', forms: ['speak', 'spoke'], dictionaryPos: 'verb' }).hits).toEqual([]);
   });
 
   it('should cloze straight and curly possessive stems without splitting contractions', () => {
@@ -110,6 +120,14 @@ describe('context cloze', () => {
     expect(clozeSentence('She was running late.', run).hits).toEqual([]);
     expect(clozeSentence('He ran home.', run).hits).toEqual([]);
     expect(clozeSentence('I ate herring.', { word: 'her', definition: 'pronoun' }).hits).toEqual([]);
+  });
+
+  it('should cloze dictionary-confirmed forms for notes without pos or definition prefixes', () => {
+    const run = { word: 'run', definition: 'to move fast on foot', forms: ['run', 'ran', 'running'], dictionaryPos: 'verb' };
+    expect(clozeSentence('She was running late.', run).text).toBe('She was _____ late.');
+    expect(clozeSentence('He ran home.', run).text).toBe('He _____ home.');
+    const record = { word: 'record', pos: 'noun', forms: ['record', 'records', 'recorded', 'recording'], dictionaryPos: 'noun, verb' };
+    expect(clozeSentence('They recorded it.', record).text).toBe('They _____ it.');
   });
 
   it('should constrain known noun entries and infer explicit definition prefixes', () => {

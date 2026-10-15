@@ -437,6 +437,24 @@ describe('reading decorations', () => {
     expect(container.textContent).toContain('Marked as learning');
   });
 
+  it('should update the reading badge tone from the latest review state after rating', async () => {
+    const container = document.createElement('div');
+    const state = { entries: [entry('alpha')], review: review({ alpha: { due: '2026-10-20T00:00:00.000Z', stability: 2, difficulty: 5, state: 'Review', reps: 3, lapses: 0, last_review: '2026-10-01T00:00:00.000Z' } }) };
+    createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => state,
+      onReview: async () => {
+        state.review = review({ alpha: { due: '2026-10-15T00:00:00.000Z', stability: 0.2, difficulty: 8, state: 'Learning', reps: 4, lapses: 1, last_review: '2026-10-15T00:00:00.000Z' } });
+        return true;
+      },
+    }).renderCard(container, { word: 'alpha', key: 'alpha', tone: 'familiar' });
+    expect(container.querySelector('.ev-reading-badge').classList.contains('ev-reading-familiar')).toBe(true);
+    container.querySelector('[data-rating="Again"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('.ev-reading-badge').classList.contains('ev-reading-learning')).toBe(true);
+    expect(container.querySelector('.ev-reading-badge').classList.contains('ev-reading-familiar')).toBe(false);
+  });
+
   it('should leave the card unchanged when rating or undo callbacks decline', async () => {
     const container = document.createElement('div');
     const spec = createReadingDecorationSpec({

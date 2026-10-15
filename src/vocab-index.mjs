@@ -14,11 +14,12 @@ function unwrap(result) {
 }
 
 export class VocabIndex {
-  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => undefined, onUpdate = () => undefined, enrichEntries = async (entries) => entries } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
+    this.enrichEntries = enrichEntries;
     this.cache = new Map();
     this.entries = new Map();
     this.duplicateWords = new Set();
@@ -104,7 +105,12 @@ export class VocabIndex {
       }
       if (i + this.batchSize < metas.length) await sleep();
     }
-    return this.rebuild(readFailures);
+    const result = this.rebuild(readFailures);
+    result.entries = await this.enrichEntries(result.entries);
+    if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
+    this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.onUpdate(result);
+    return result;
   }
 
   rebuild(readFailures = []) {

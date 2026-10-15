@@ -2108,7 +2108,7 @@ describe('main plugin', () => {
     expect(proposals[0].changes[0].path).toBe('wiki/vocab/run.md');
     expect(proposals[0].changes[0].newContent).toContain('word: "run"');
     expect(proposals[0].changes[0].newContent).toContain('phonetic: "rʌn"');
-    expect(proposals[0].changes[0].newContent).toContain('pos: "verb"');
+    expect(proposals[0].changes[0].newContent).toContain('pos: "verb, noun"');
     expect(proposals[0].changes[0].newContent).toContain('I ran home.');
     expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
     expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });

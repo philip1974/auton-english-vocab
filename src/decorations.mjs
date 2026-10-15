@@ -157,7 +157,8 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
         const cardState = state.review?.cards && Object.hasOwn(state.review.cards, context.key) ? state.review.cards[context.key] : undefined;
         const flagState = state.review?.flags && Object.hasOwn(state.review.flags, context.key) ? state.review.flags[context.key] : undefined;
         const familiarity = familiarityFor(cardState, flagState);
-        heading.append(word, el('span', `ev-reading-badge ev-reading-${context.tone}`, t[familiarity] || t[context.tone] || context.tone));
+        const currentTone = TONE_BY_FAMILIARITY[familiarity] ?? context.tone;
+        heading.append(word, el('span', `ev-reading-badge ev-reading-${currentTone}`, t[familiarity] || t[currentTone] || currentTone));
         card.append(heading);
         if (context.tone === null) card.append(el('p', 'ev-reading-note', t.collectedWord));
         if (entry?.definition) card.append(el('p', 'ev-reading-definition', entry.definition));

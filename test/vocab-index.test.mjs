@@ -3,6 +3,15 @@ import { VocabIndex } from '../src/vocab-index.mjs';
 import { buildNote } from '../src/note-format.mjs';
 
 describe('vocab index', () => {
+  it('should enrich final indexed entries after reading notes', async () => {
+    const index = new VocabIndex({
+      async listDocuments() { return [{ path: 'wiki/vocab/run.md', revision: { contentHash: 'h' } }]; },
+      async readDocument() { return { content: '---\ntype: vocab\nword: run\ndefinition: move\n---\n# run\n' }; },
+    }, { enrichEntries: async (entries) => entries.map((entry) => ({ ...entry, forms: ['run', 'ran'] })) });
+    const result = await index.refresh();
+    expect(result.entries[0].forms).toEqual(['run', 'ran']);
+    expect(index.get('run').forms).toEqual(['run', 'ran']);
+  });
   it('should read changed vocab documents by content hash when refreshing', async () => {
     const reads = [];
     const docs = new Map([

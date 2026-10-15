@@ -6,7 +6,7 @@ import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tool
 import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
 import { DEFAULT_LEVEL_SETTINGS, detectEnglish, validateLevelSettings } from './reading-level.mjs';
 import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
-import { inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
+import { enrichVocabularyEntries, inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
 import { appendExample, buildNote, parseNote, slugFor, normalizeWord, normalizeSourceTitle } from './note-format.mjs';
 import { parseExampleLine } from './context-cloze.mjs';
 
@@ -348,6 +348,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.index = new VocabIndex(this.app.knowledge, {
       onProgress: (done, total) => { this.state.loading = { done, total }; this.emitState(); },
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
+      enrichEntries: (entries) => enrichVocabularyEntries(entries),
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();

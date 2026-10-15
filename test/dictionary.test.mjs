@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dictionaryDefinition, inferPos, loadChunk, lookup, resetDictionaryCache, suggest } from '../src/dictionary.mjs';
+import { dictionaryDefinition, enrichVocabularyEntries, inferPos, loadChunk, lookup, resetDictionaryCache, suggest } from '../src/dictionary.mjs';
 
 const chunks = {
   r: {
@@ -211,7 +211,28 @@ describe('dictionary', () => {
     expect(inferPos({ t: 'conj. 和' })).toBe('conjunction');
     expect(inferPos({ t: 'pron. 你' })).toBe('pronoun');
     expect(inferPos({ t: '无前缀' })).toBeUndefined();
+    expect(inferPos({ t: 'n. 记录\nvt. 记录\nvi. 录音\na. 创纪录的' })).toBe('noun, verb, adjective');
     expect(dictionaryDefinition(null, 'zh')).toBe('');
     expect(dictionaryDefinition({ d: 'n an undivided whole\ns in complete agreement\na unanimous vote\nv join together\nr completely' }, 'en')).toBe('n. an undivided whole\nadj. in complete agreement\nadj. unanimous vote\nv. join together\nadv. completely');
+  });
+
+  it('should enrich collected entries with dictionary exchange forms and all parts of speech', async () => {
+    const importerWithForms = async () => ({ default: {
+      record: { t: 'n. 记录\nvt. 记录\na. 创纪录的', x: 's:records/d:recorded/p:recorded/i:recording/3:records' },
+      run: { t: 'vi. 跑', x: 'd:ran/p:run/i:running/3:runs' },
+    } });
+    const entries = await enrichVocabularyEntries([
+      { word: 'record', pos: 'noun', definition: 'n. 记录' },
+      { word: 'run', definition: 'to move fast on foot' },
+    ], { importer: importerWithForms });
+    expect(entries[0]).toMatchObject({ dictionaryPos: 'noun, verb, adjective', forms: ['record', 'records', 'recorded', 'recording'] });
+    expect(entries[1]).toMatchObject({ dictionaryPos: 'verb', forms: ['run', 'ran', 'running', 'runs'] });
+  });
+
+  it('should keep original entries when dictionary enrichment is missing or temporarily fails', async () => {
+    const entries = [{ word: 'missing', definition: 'plain' }];
+    await expect(enrichVocabularyEntries(entries, { importer: async () => ({ default: {} }) })).resolves.toEqual(entries);
+    await expect(enrichVocabularyEntries(entries, { importer: async () => { throw new Error('chunk failed'); } })).resolves.toEqual(entries);
+    await expect(enrichVocabularyEntries([{ word: 'broken', definition: 'plain' }], { importer: async () => ({ default: { broken: { t: 'n. bad', x: 's:not a word' } } }) })).resolves.toMatchObject([{ forms: ['broken'] }]);
   });
 });

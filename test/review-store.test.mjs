@@ -7,6 +7,10 @@ function appWithStorage(files = {}, failures = {}) {
   let rootGeneration = 'root-a';
   return {
     setRoot(value) { rootGeneration = value; },
+    externalWrite(name, text) {
+      files[name] = text;
+      revisions[name] = `external-${String(text).length}`;
+    },
     storage: {
       async scope() { return { rootGeneration }; },
       async read(root, name) {
@@ -100,6 +104,47 @@ describe('review store', () => {
     await store.mutateReview({ type: 'removeFlag', word: 'old' });
     expect(store.review.cards.old).toBeUndefined();
     expect(store.review.flags.old).toBeUndefined();
+  });
+
+  it('should preserve a future review version when a save reloads after a revision conflict', async () => {
+    const original = JSON.stringify({ version: 1, cards: {}, flags: {} });
+    const future = JSON.stringify({ version: 2, cards: { future: true }, flags: {} });
+    const app = appWithStorage({ 'review.json': original });
+    const store = new ReviewStore(app);
+    await store.load();
+    app.externalWrite('review.json', future);
+    await expect(store.saveReview({ version: 1, cards: {}, flags: { beta: 'ignored' } })).rejects.toMatchObject({ code: 'UNSUPPORTED_REVIEW_VERSION' });
+    expect(app.files['review.json']).toBe(future);
+  });
+
+  it('should preserve corrupt review bytes when backup fails during conflict reload', async () => {
+    const corrupt = '{bad json';
+    const app = appWithStorage({ 'review.json': JSON.stringify({ version: 1, cards: {}, flags: {} }) });
+    const store = new ReviewStore(app);
+    await store.load();
+    app.externalWrite('review.json', corrupt);
+    const write = app.storage.write.bind(app.storage);
+    app.storage.write = async (root, name, text, options) => {
+      if (name.startsWith('review.corrupt-')) throw Object.assign(new Error('full'), { code: 'STORAGE_TOO_MANY_FILES' });
+      return write(root, name, text, options);
+    };
+    await expect(store.mutateReview({ type: 'setFlag', word: 'beta', flag: 'ignored' })).rejects.toMatchObject({ code: 'REVIEW_READ_ONLY' });
+    expect(app.files['review.json']).toBe(corrupt);
+  });
+
+  it('should preserve corrupt log bytes when backup fails during conflict reload', async () => {
+    const corrupt = '{bad log';
+    const app = appWithStorage({ 'log.json': '[]' });
+    const store = new ReviewStore(app);
+    await store.load();
+    app.externalWrite('log.json', corrupt);
+    const write = app.storage.write.bind(app.storage);
+    app.storage.write = async (root, name, text, options) => {
+      if (name.startsWith('log.corrupt-')) throw Object.assign(new Error('full'), { code: 'STORAGE_TOO_MANY_FILES' });
+      return write(root, name, text, options);
+    };
+    await expect(store.appendLog({ id: 'new', word: 'beta', rating: 'Good' })).rejects.toMatchObject({ code: 'LOG_READ_ONLY' });
+    expect(app.files['log.json']).toBe(corrupt);
   });
 
   it('should replay sequential ratings and append logs after revision conflicts', async () => {

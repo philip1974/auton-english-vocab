@@ -11,7 +11,8 @@ describe('offline dictionary data', () => {
     const reviewed = await import('../src/ambiguous-inflections.reviewed.mjs');
     expect(generated.AMBIGUOUS_INFLECTION_METADATA).toMatchObject({ frequencyLimit: 5000, source: 'dict/*.mjs + data/en-wordfreq-30k.json' });
     expect(generated.AMBIGUOUS_INFLECTION_CANDIDATES.every((item) => item.surface && item.reasons.length > 0)).toBe(true);
-    expect(reviewed.AMBIGUOUS_INFLECTION_REVIEWS.map((item) => item.surface)).toEqual(['does', 'fell', 'found', 'lay', 'left', 'rose', 'saw', 'wound']);
+    expect(reviewed.AMBIGUOUS_INFLECTION_DECISIONS).toHaveLength(38);
+    expect(reviewed.AMBIGUOUS_INFLECTION_REVIEWS.map((item) => item.surface).sort()).toEqual(['bit', 'bound', 'does', 'feed', 'fell', 'felt', 'found', 'ground', 'lay', 'left', 'pants', 'rent', 'rose', 'saw', 'shot', 'spoke', 'wound']);
   });
 
   it('should commit deterministic letter chunks with a matching manifest and license', async () => {

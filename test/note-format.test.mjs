@@ -20,6 +20,11 @@ describe('note format', () => {
     expect(appendExample(note, 'Good luck.', { url: 'https://example.com' })).toBe(note);
   });
 
+  it('should deduplicate examples by normalized sentence when the source changes', () => {
+    const note = buildNote({ word: 'test', definition: '测试', example: 'This is a test.', source: { path: '../a.md', title: 'A' } });
+    expect(appendExample(note, '  This   is a test. ', { path: '../b.md', title: 'B' })).toBe(note);
+  });
+
   it('should slug apostrophes and keep hyphens when words contain punctuation', () => {
     expect(slugFor("Mother-in-law")).toBe('mother-in-law');
     expect(slugFor("don't")).toBe('don-t');

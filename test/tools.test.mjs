@@ -169,6 +169,14 @@ describe('tools', () => {
     await expect(add({ entries: [{ word: 'Beta', definition: '测试', source: { path: '../secret' } }] })).rejects.toThrow(/invalid source/);
   });
 
+  it('should localize stable vocab add validation errors in every supported locale', async () => {
+    const invalidByLocale = { en: 'invalid source', zh: '来源无效', ja: '出典が無効', ko: '출처가 올바르지' };
+    for (const [locale, expected] of Object.entries(invalidByLocale)) {
+      const add = makeVocabAdd({ app: app(), index: { get: () => null }, nextNumber: () => 1, notify: () => undefined, locale });
+      await expect(add({ entries: [{ word: 'test', definition: 'definition', example: 'A test.', source: { url: 'ftp://example.com' } }] })).rejects.toMatchObject({ code: 'INVALID_SOURCE', message: expect.stringContaining(expected) });
+    }
+  });
+
   it('should preserve safe docs sources and normalize their title to one line', async () => {
     const fake = app();
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 9, notify: () => undefined });
@@ -310,8 +318,20 @@ describe('tools', () => {
     const fake = app();
     fake.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'READ_FAILED', message: 'disk unavailable' } });
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 1, notify: () => undefined });
-    await expect(add({ entries: [{ word: "don't", definition: '不要' }] })).rejects.toThrow(/disk unavailable/);
+    await expect(add({ entries: [{ word: "don't", definition: '不要' }] })).rejects.toMatchObject({ code: 'READ_FAILED', message: expect.stringContaining('could not read') });
     expect(fake.proposals).toEqual([]);
+  });
+
+  it('should preserve a root-bound abort while reading an existing note', async () => {
+    const aborted = Object.assign(new Error('localized abort'), { code: 'KNOWLEDGE_WRITE_ABORTED' });
+    const add = makeVocabAdd({
+      app: app(),
+      index: { get: () => ({ path: 'wiki/vocab/run.md' }) },
+      nextNumber: () => 1,
+      notify: () => undefined,
+      bindKnowledgeWrite: (operation) => operation({ assertCurrent: () => undefined, wait: async () => { throw aborted; } }),
+    });
+    await expect(add({ entries: [{ word: 'run', definition: '跑' }] })).rejects.toBe(aborted);
   });
 
   it('should refuse to append when duplicate vocabulary notes make the target ambiguous', async () => {

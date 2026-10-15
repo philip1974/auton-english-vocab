@@ -1,4 +1,4 @@
-import { escapeExampleText } from './context-cloze.mjs';
+import { escapeExampleText, parseExampleLine } from './context-cloze.mjs';
 
 const WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
 const WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
@@ -176,7 +176,8 @@ export function appendExample(existing, example, source) {
   if (!parsed.ok) throw new Error(`frontmatter invalid: ${parsed.error}`);
   const line = exampleLine(example, source);
   if (!line) return existing;
-  if (parsed.entry.examples.includes(line.slice(2))) return existing;
+  const identity = (value) => parseExampleLine(value).sentence.trim().replace(/\s+/gu, ' ');
+  if (parsed.entry.examples.some((value) => identity(value) === identity(line))) return existing;
   const newline = String(existing).includes('\r\n') ? '\r\n' : '\n';
   const normalized = String(existing).replaceAll('\r\n', '\n');
   const frontmatterEnd = normalized.indexOf('\n---\n') + 5;

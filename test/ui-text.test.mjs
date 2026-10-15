@@ -65,6 +65,7 @@ describe('ui text', () => {
         text.exampleNotReviewed('reason'),
         text.exampleNotReviewed(''),
         text.addExampleDescription('alpha'),
+        text.toolFailure('UNKNOWN', 'alpha'),
       ];
       expect(rendered.every(Boolean)).toBe(true);
     }

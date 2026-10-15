@@ -68,13 +68,40 @@ describe('inflections', () => {
   });
 
   it('should not map ambiguous independent words to an inflection lemma', () => {
-    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['does', 'fell', 'found', 'lay', 'left', 'rose', 'saw', 'wound']);
+    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['bit', 'bound', 'does', 'feed', 'fell', 'felt', 'found', 'ground', 'lay', 'left', 'pants', 'rent', 'rose', 'saw', 'shot', 'spoke', 'wound']);
     const cases = [
       ['do', 'does'], ['leave', 'left'], ['see', 'saw'], ['rise', 'rose'],
       ['find', 'found'], ['lie', 'lay'], ['wind', 'wound'], ['fall', 'fell'],
     ];
     const map = buildSurfaceMap(cases.map(([word]) => ({ word, pos: 'verb' })));
     for (const [, surface] of cases) expect(map.has(surface)).toBe(false);
+  });
+
+  it('should conservatively exclude every reviewed independent homograph from dictionary forms', () => {
+    const cases = [['bite', 'bit'], ['bind', 'bound'], ['fee', 'feed'], ['feel', 'felt'], ['grind', 'ground'], ['pant', 'pants'], ['rend', 'rent'], ['shoot', 'shot'], ['speak', 'spoke']];
+    for (const [word, surface] of cases) {
+      expect(buildSurfaceMap([{ word, forms: [word, surface], dictionaryPos: 'verb' }]).has(surface)).toBe(false);
+    }
+  });
+
+  it('should prefer dictionary forms for missing and multi part of speech notes', () => {
+    const map = buildSurfaceMap([
+      { word: 'run', definition: 'to move fast on foot', forms: ['run', 'ran', 'running'], dictionaryPos: 'verb' },
+      { word: 'record', pos: 'noun', forms: ['record', 'records', 'recorded', 'recording'], dictionaryPos: 'noun, verb, adjective' },
+    ]);
+    expect(map.get('ran')).toBe('run');
+    expect(map.get('running')).toBe('run');
+    expect(map.get('recorded')).toBe('record');
+    expect(map.get('recording')).toBe('record');
+  });
+
+  it('should generate only reviewed reliable spellings when dictionary forms are unavailable', () => {
+    const map = buildSurfaceMap([
+      { word: 'class', pos: 'noun' }, { word: 'address', pos: 'noun' },
+      { word: 'admit', pos: 'verb' }, { word: 'occur', pos: 'verb' },
+    ]);
+    for (const [surface, lemma] of [['classes', 'class'], ['addresses', 'address'], ['admitted', 'admit'], ['admitting', 'admit'], ['occurred', 'occur'], ['occurring', 'occur']]) expect(map.get(surface)).toBe(lemma);
+    for (const fake of ['admited', 'admiting', 'occured', 'occuring']) expect(map.has(fake)).toBe(false);
   });
 
   it('should retain reviewed normal inflections and transparent nominalizations', () => {

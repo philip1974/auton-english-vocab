@@ -294,6 +294,7 @@ const INFLECTED_VERB_SURFACES = new Set([
   ...[...IRREGULAR_VERBS.values()].flat(), 'am', 'are', 'is', 'does', 'has',
 ]);
 const INFLECTED_NOUN_SURFACES = new Set([...IRREGULAR_NOUNS.values()].flat());
+const DOUBLE_FINAL_VERBS = new Set(['admit', 'occur']);
 
 function thirdPerson(lemma) {
   if (lemma === 'be') return 'is';
@@ -308,6 +309,7 @@ function presentParticiple(lemma) {
   if (/(?:ee|ye|oe)$/u.test(lemma)) return `${lemma}ing`;
   if (lemma.endsWith('e')) return `${lemma.slice(0, -1)}ing`;
   if (lemma.endsWith('c')) return `${lemma}king`;
+  if (DOUBLE_FINAL_VERBS.has(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ing`;
@@ -318,6 +320,7 @@ function regularPast(lemma) {
   if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ied`;
   if (lemma.endsWith('e')) return `${lemma}d`;
   if (lemma.endsWith('c')) return `${lemma}ked`;
+  if (DOUBLE_FINAL_VERBS.has(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ed`;
@@ -336,6 +339,8 @@ function generatedForms(lemma, pos) {
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
     else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
+    else if (lemma.endsWith('ss')) addCandidate(forms, `${lemma}es`);
+    else if (lemma.endsWith('us')) return forms;
     else if (lemma.endsWith('s')) return forms;
     else if (/(x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
@@ -399,10 +404,12 @@ function chooseLemma(surface, current, next, collected) {
 export function buildSurfaceMap(words) {
   const collected = new Set();
   const parts = new Map();
+  const entries = new Map();
   for (const value of words) {
     const word = normalize(typeof value === 'object' && value !== null ? value.word : value);
     if (!isSurface(word)) continue;
     collected.add(word);
+    if (typeof value === 'object' && value !== null) entries.set(word, value);
     const found = parts.get(word) ?? new Set();
     for (const part of partsOf(value)) found.add(part);
     parts.set(word, found);
@@ -411,8 +418,13 @@ export function buildSurfaceMap(words) {
   for (const lemma of collected) {
     const surfaces = new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", '’'));
-    const generatedParts = parts.get(lemma) ?? new Set();
-    for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    const entry = entries.get(lemma);
+    if (Array.isArray(entry?.forms)) {
+      for (const surface of entry.forms) surfaces.add(normalize(surface));
+    } else {
+      const generatedParts = parts.get(lemma) ?? new Set();
+      for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    }
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
       if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;

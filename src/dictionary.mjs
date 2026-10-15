@@ -3,6 +3,7 @@ import { inflectionKindsFor } from './inflections.mjs';
 
 const LETTER_RE = /^[a-z]$/u;
 const cache = new Map();
+const enrichmentCache = new Map();
 const IRREGULAR_BASES = new Map([
   ['ran', 'run'],
   ['went', 'go'],
@@ -29,6 +30,7 @@ async function defaultImporter(letter) {
 
 export function resetDictionaryCache() {
   cache.clear();
+  enrichmentCache.clear();
 }
 
 export function loadChunk(letter, importer = defaultImporter) {
@@ -229,9 +231,7 @@ export function normalizeDefinitionLine(line) {
 }
 
 export function inferPos(entry) {
-  const first = String(entry?.t ?? '').split('\n').find(Boolean) ?? '';
-  const prefix = first.match(/^\s*(n|v|vt|vi|a|adj|adv|prep|conj|pron)\./iu)?.[1]?.toLowerCase();
-  return {
+  const names = {
     n: 'noun',
     v: 'verb',
     vt: 'verb',
@@ -242,5 +242,50 @@ export function inferPos(entry) {
     prep: 'preposition',
     conj: 'conjunction',
     pron: 'pronoun',
-  }[prefix];
+  };
+  const found = new Set();
+  for (const line of `${String(entry?.t ?? '')}\n${String(entry?.d ?? '')}`.split('\n')) {
+    const prefix = line.match(/^\s*(n|v|vt|vi|a|adj|adv|prep|conj|pron)\.?\s/iu)?.[1]?.toLowerCase();
+    if (names[prefix]) found.add(names[prefix]);
+  }
+  return found.size ? [...found].join(', ') : undefined;
+}
+
+function exchangeForms(word, entry) {
+  const forms = new Set([word]);
+  for (const match of String(entry?.x ?? '').matchAll(/(?:^|\/)(?:s|d|p|i|3|r|t):([^/]+)/gu)) {
+    for (const value of match[1].split(',')) {
+      try { forms.add(assertEnglishWord(value)); } catch { /* Ignore malformed upstream exchange values. */ }
+    }
+  }
+  return [...forms];
+}
+
+export async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
+  return Promise.all(entries.map(async (entry) => {
+    const word = normalizeWord(entry?.word);
+    let dictionaryEntry;
+    try {
+      if (importer === defaultImporter) {
+        if (!enrichmentCache.has(word)) {
+          const pending = entryFor(word, importer);
+          enrichmentCache.set(word, pending.catch((error) => {
+            /* v8 ignore next -- default module import failures cannot be injected; loadChunk retry and custom importer failure are covered separately. */
+            enrichmentCache.delete(word);
+            /* v8 ignore next -- preserve the original lazy-import failure for the outer best-effort fallback. */
+            throw error;
+          }));
+        }
+        dictionaryEntry = await enrichmentCache.get(word);
+      } else dictionaryEntry = await entryFor(word, importer);
+    } catch {
+      return entry;
+    }
+    if (!dictionaryEntry) return entry;
+    return {
+      ...entry,
+      dictionaryPos: inferPos(dictionaryEntry),
+      forms: exchangeForms(word, dictionaryEntry),
+    };
+  }));
 }

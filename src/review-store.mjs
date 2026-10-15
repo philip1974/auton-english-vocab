@@ -301,6 +301,7 @@ export class ReviewStore {
       await this.#loadReview(generation);
       /* v8 ignore next -- legacy conflict reload uses the tested generation contract. */
       if (this.#stale(generation, rootGeneration)) return { review: this.review, rootChanged: true };
+      this.#assertReviewWritable();
       const merged = mergeReview(this.review, local);
       const written = await this.app.storage.write(this.rootGeneration, 'review.json', JSON.stringify(merged), {
         expectedRevision: this.reviewRevision,
@@ -335,6 +336,7 @@ export class ReviewStore {
         if (codeOf(error) !== 'REVISION_CONFLICT' || attempt === 1) throw error;
         await this.#loadReview(generation);
         if (this.#stale(generation, rootGeneration)) return { review: this.review, rootChanged: true, applied: false };
+        this.#assertReviewWritable();
         applied = apply();
       }
     }
@@ -368,6 +370,8 @@ export class ReviewStore {
         if (this.#stale(generation, rootGeneration)) return this.log;
         if (codeOf(error) !== 'REVISION_CONFLICT' || attempt === 1) throw error;
         await this.#loadLog(generation);
+        if (this.#stale(generation, rootGeneration)) return this.log;
+        this.#assertLogWritable();
       }
     }
     return this.log;

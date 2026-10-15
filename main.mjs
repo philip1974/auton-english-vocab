@@ -118,6 +118,7 @@ var TEXT = {
     toolNoChanges: "No vocabulary entries changed.",
     toolSubmitted: (number, count) => `Submitted for review #${number}: ${count} ${count === 1 ? "word" : "words"}.`,
     toolSourceOmitted: (path) => `Source ${path} was missing or timed out; the example was kept without a link.`,
+    toolFailure: (code, word) => ({ INVALID_WORD: `invalid word: ${word}.`, INVALID_DEFINITION: `invalid definition for ${word}.`, EXAMPLE_TOO_LONG: `example too long for ${word}.`, INVALID_SOURCE: `invalid source for ${word}.`, INVALID_ENTRY_COUNT: "entries must contain 1-20 items.", NO_AVAILABLE_PATH: `no available note path for ${word}.`, DUPLICATE_NOTES: `duplicate vocabulary notes exist for ${word}.`, DUPLICATE_PATH: `duplicate vocabulary path for ${word}.`, INVALID_FRONTMATTER: `frontmatter invalid for ${word}.`, FRONTMATTER_WORD_MISMATCH: `frontmatter word mismatch for ${word}.`, READ_FAILED: `could not read the existing note for ${word}.` })[code] ?? "Vocabulary operation failed.",
     knowledgeWriteAborted: "The knowledge base changed, so the operation was aborted.",
     corruptBackupFailed: "Damaged data could not be backed up. Saving is disabled to protect the original file; browsing remains available.",
     proposalDescription: (number, words) => `English Vocab #${number}: ${words}`,
@@ -244,6 +245,7 @@ var TEXT = {
     toolNoChanges: "没有生词条目发生变化。",
     toolSubmitted: (number, count) => `已提交审核 #${number}：${count} 个词。`,
     toolSourceOmitted: (path) => `来源 ${path} 不存在或读取超时；例句已保留但省略链接。`,
+    toolFailure: (code, word) => ({ INVALID_WORD: `英文单词无效：${word}。`, INVALID_DEFINITION: `${word} 的释义无效。`, EXAMPLE_TOO_LONG: `${word} 的例句过长。`, INVALID_SOURCE: `${word} 的来源无效。`, INVALID_ENTRY_COUNT: "词条数量必须为 1–20 条。", NO_AVAILABLE_PATH: `无法为 ${word} 找到可用笔记路径。`, DUPLICATE_NOTES: `${word} 存在重复生词笔记。`, DUPLICATE_PATH: `${word} 的生词笔记路径重复。`, INVALID_FRONTMATTER: `${word} 的现有笔记格式无效。`, FRONTMATTER_WORD_MISMATCH: `现有笔记路径属于另一个词，而不是 ${word}。`, READ_FAILED: `无法读取 ${word} 的现有笔记。` })[code] ?? "生词操作失败。",
     knowledgeWriteAborted: "知识库已切换，操作已中止。",
     corruptBackupFailed: "损坏数据无法备份。为保护原文件，保存已进入只读模式；仍可继续浏览。",
     proposalDescription: (number, words) => `英语生词本 #${number}：${words}`,
@@ -370,6 +372,7 @@ var TEXT = {
     toolNoChanges: "変更された単語項目はありません。",
     toolSubmitted: (number, count) => `レビューに提出しました #${number}：${count}語。`,
     toolSourceOmitted: (path) => `出典 ${path} が見つからないかタイムアウトしたため、例文は残してリンクを省略しました。`,
+    toolFailure: (code, word) => ({ INVALID_WORD: `英単語が無効です：${word}。`, INVALID_DEFINITION: `${word} の定義が無効です。`, EXAMPLE_TOO_LONG: `${word} の例文が長すぎます。`, INVALID_SOURCE: `${word} の出典が無効です。`, INVALID_ENTRY_COUNT: "項目数は1～20件にしてください。", NO_AVAILABLE_PATH: `${word} の利用可能なノートパスがありません。`, DUPLICATE_NOTES: `${word} の単語ノートが重複しています。`, DUPLICATE_PATH: `${word} の単語ノートパスが重複しています。`, INVALID_FRONTMATTER: `${word} の既存ノート形式が無効です。`, FRONTMATTER_WORD_MISMATCH: `既存ノートのパスは ${word} とは別の単語に属しています。`, READ_FAILED: `${word} の既存ノートを読み込めませんでした。` })[code] ?? "単語操作に失敗しました。",
     knowledgeWriteAborted: "ナレッジベースが切り替わったため、操作を中止しました。",
     corruptBackupFailed: "破損データをバックアップできませんでした。元ファイルを保護するため保存は読み取り専用です。閲覧は続けられます。",
     proposalDescription: (number, words) => `英単語帳 #${number}：${words}`,
@@ -496,6 +499,7 @@ var TEXT = {
     toolNoChanges: "변경된 단어 항목이 없습니다.",
     toolSubmitted: (number, count) => `검토를 위해 제출했습니다 #${number}: ${count}개 단어.`,
     toolSourceOmitted: (path) => `출처 ${path}을(를) 찾지 못했거나 시간이 초과되어 예문은 유지하고 링크는 생략했습니다.`,
+    toolFailure: (code, word) => ({ INVALID_WORD: `영어 단어가 올바르지 않습니다: ${word}.`, INVALID_DEFINITION: `${word}의 뜻풀이가 올바르지 않습니다.`, EXAMPLE_TOO_LONG: `${word}의 예문이 너무 깁니다.`, INVALID_SOURCE: `${word}의 출처가 올바르지 않습니다.`, INVALID_ENTRY_COUNT: "항목 수는 1–20개여야 합니다.", NO_AVAILABLE_PATH: `${word}에 사용할 수 있는 노트 경로가 없습니다.`, DUPLICATE_NOTES: `${word}의 단어 노트가 중복되어 있습니다.`, DUPLICATE_PATH: `${word}의 단어 노트 경로가 중복되었습니다.`, INVALID_FRONTMATTER: `${word}의 기존 노트 형식이 올바르지 않습니다.`, FRONTMATTER_WORD_MISMATCH: `기존 노트 경로는 ${word}이(가) 아닌 다른 단어에 속합니다.`, READ_FAILED: `${word}의 기존 노트를 읽을 수 없습니다.` })[code] ?? "단어 작업에 실패했습니다.",
     knowledgeWriteAborted: "지식베이스가 전환되어 작업을 중단했습니다.",
     corruptBackupFailed: "손상된 데이터를 백업할 수 없습니다. 원본 보호를 위해 저장은 읽기 전용이며 탐색은 계속할 수 있습니다.",
     proposalDescription: (number, words) => `영어 단어장 #${number}: ${words}`,
@@ -1467,6 +1471,7 @@ var ReviewStore = class {
       const local = normalizeReview(next);
       await this.#loadReview(generation);
       if (this.#stale(generation, rootGeneration)) return { review: this.review, rootChanged: true };
+      this.#assertReviewWritable();
       const merged = mergeReview(this.review, local);
       const written = await this.app.storage.write(this.rootGeneration, "review.json", JSON.stringify(merged), {
         expectedRevision: this.reviewRevision
@@ -1499,6 +1504,7 @@ var ReviewStore = class {
         if (codeOf(error) !== "REVISION_CONFLICT" || attempt === 1) throw error;
         await this.#loadReview(generation);
         if (this.#stale(generation, rootGeneration)) return { review: this.review, rootChanged: true, applied: false };
+        this.#assertReviewWritable();
         applied = apply();
       }
     }
@@ -1530,6 +1536,8 @@ var ReviewStore = class {
         if (this.#stale(generation, rootGeneration)) return this.log;
         if (codeOf(error) !== "REVISION_CONFLICT" || attempt === 1) throw error;
         await this.#loadLog(generation);
+        if (this.#stale(generation, rootGeneration)) return this.log;
+        this.#assertLogWritable();
       }
     }
     return this.log;
@@ -1652,18 +1660,51 @@ function mergeReview(base, incoming) {
 }
 
 // src/ambiguous-inflections.reviewed.mjs
-var AMBIGUOUS_INFLECTION_REVIEWS = Object.freeze([
-  Object.freeze({ surface: "does", reason: "do 的第三人称单数，同时也是 doe（母鹿）的复数。" }),
-  Object.freeze({ surface: "fell", reason: "fall 的过去式，同时是“砍倒”及相关名词、形容词。" }),
-  Object.freeze({ surface: "found", reason: "find 的过去式和过去分词，同时是“建立、创立”。" }),
-  Object.freeze({ surface: "lay", reason: "lie 的过去式，同时是常用动词“放置”。" }),
-  Object.freeze({ surface: "left", reason: "leave 的过去式和过去分词，同时表示“左边、左侧”。" }),
-  Object.freeze({ surface: "rose", reason: "rise 的过去式，同时是常用名词“玫瑰”。" }),
-  Object.freeze({ surface: "saw", reason: "see 的过去式，同时是常用名词和动词“锯、锯开”。" }),
-  Object.freeze({ surface: "wound", reason: "wind 的过去式和过去分词，同时是常用名词“伤口”。" })
-]);
+var AMBIGUOUS_INFLECTION_DECISIONS = Object.freeze([
+  ["does", true, "do 的第三人称单数，同时也是 doe（母鹿）的复数。"],
+  ["found", true, "find 的过去式和过去分词，同时是常用动词“建立、创立”。"],
+  ["left", true, "leave 的过去式和过去分词，同时常表示“左边、左侧”。"],
+  ["thought", false, "名词义“想法”与 think 语义透明。"],
+  ["bit", true, "bite 的过去式，同时是常用名词“少量、马嚼子”。"],
+  ["saw", true, "see 的过去式，同时是常用名词和动词“锯、锯开”。"],
+  ["shot", true, "shoot 的过去式和过去分词，同时是常用名词“射击、尝试、镜头”。"],
+  ["training", false, "train 的规则屈折及语义透明名词化。"],
+  ["ground", true, "grind 的过去式和过去分词，同时是常用名词“土地、地面”。"],
+  ["feeling", false, "feel 的规则屈折及语义透明名词化。"],
+  ["felt", true, "feel 的过去式和过去分词，同时是常用名词“毛毡”。"],
+  ["feels", false, "词典 exchange 指回 feel 的规则第三人称形式。"],
+  ["programs", false, "词典 exchange 指回 program 的规则复数或第三人称形式。"],
+  ["putting", false, "put 的规则屈折；高尔夫义仍与动作语义相关。"],
+  ["fell", true, "fall 的过去式，同时是独立常用动词“砍倒”。"],
+  ["wedding", false, "wed 的规则屈折及语义透明名词化。"],
+  ["rose", true, "rise 的过去式，同时是常用名词“玫瑰”。"],
+  ["engineering", false, "engineer 的规则屈折及语义透明名词化。"],
+  ["marketing", false, "market 的规则屈折及语义透明名词化。"],
+  ["clothes", false, "clothe 的形式与“衣物”义语义直接相关。"],
+  ["feed", true, "fee 的过去式和过去分词，同时是常用动词、名词“喂养、饲料”。"],
+  ["lay", true, "lie 的过去式，同时是常用独立动词“放置”。"],
+  ["sat", false, "独立义主要为缩写或罕见名词，通常是 sit 的过去式。"],
+  ["falls", false, "词典 exchange 指回 fall 的规则第三人称或复数形式。"],
+  ["spoke", true, "speak 的过去式，同时是常用名词“轮辐”。"],
+  ["painting", false, "paint 的规则屈折及语义透明名词化。"],
+  ["rent", true, "rend 的过去式和过去分词，同时是常用名词、动词“租金、租用”。"],
+  ["manufacturing", false, "manufacture 的规则屈折及语义透明名词化。"],
+  ["chose", false, "独立法律名词义罕见，通常是 choose 的过去式。"],
+  ["advertising", false, "advertise 的规则屈折及语义透明名词化。"],
+  ["pants", true, "pant 的第三人称单数，同时是常用名词“裤子”。"],
+  ["bound", true, "bind 的过去式和过去分词，同时常表示“边界、跳跃、前往”。"],
+  ["programming", false, "program 的规则屈折及语义透明名词化。"],
+  ["drove", false, "独立名词义罕见，通常是 drive 的过去式。"],
+  ["timing", false, "time 的规则屈折及语义透明名词化。"],
+  ["feeding", false, "feed/fee 的规则屈折或语义透明名词化。"],
+  ["wound", true, "wind 的过去式和过去分词，同时是常用名词“伤口”。"],
+  ["rangers", false, "词典 exchange 指回 ranger 的规则复数。"]
+].map(([surface, include, reason]) => Object.freeze({ surface, include, reason })));
+var AMBIGUOUS_INFLECTION_REVIEWS = Object.freeze(
+  AMBIGUOUS_INFLECTION_DECISIONS.filter((item) => item.include)
+);
 var AMBIGUOUS_INFLECTION_SURFACES = Object.freeze(
-  AMBIGUOUS_INFLECTION_REVIEWS.map((item) => item.surface)
+  AMBIGUOUS_INFLECTION_REVIEWS.map((item) => item.surface).sort()
 );
 
 // src/inflections.mjs
@@ -1983,6 +2024,7 @@ var INFLECTED_VERB_SURFACES = /* @__PURE__ */ new Set([
   "has"
 ]);
 var INFLECTED_NOUN_SURFACES = new Set([...IRREGULAR_NOUNS.values()].flat());
+var DOUBLE_FINAL_VERBS = /* @__PURE__ */ new Set(["admit", "occur"]);
 function thirdPerson(lemma) {
   if (lemma === "be") return "is";
   if (lemma === "have") return "has";
@@ -1995,6 +2037,7 @@ function presentParticiple(lemma) {
   if (/(?:ee|ye|oe)$/u.test(lemma)) return `${lemma}ing`;
   if (lemma.endsWith("e")) return `${lemma.slice(0, -1)}ing`;
   if (lemma.endsWith("c")) return `${lemma}king`;
+  if (DOUBLE_FINAL_VERBS.has(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ing`;
@@ -2004,6 +2047,7 @@ function regularPast(lemma) {
   if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ied`;
   if (lemma.endsWith("e")) return `${lemma}d`;
   if (lemma.endsWith("c")) return `${lemma}ked`;
+  if (DOUBLE_FINAL_VERBS.has(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ed`;
@@ -2021,6 +2065,8 @@ function generatedForms(lemma, pos) {
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
     else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
+    else if (lemma.endsWith("ss")) addCandidate(forms, `${lemma}es`);
+    else if (lemma.endsWith("us")) return forms;
     else if (lemma.endsWith("s")) return forms;
     else if (/(x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
@@ -2081,10 +2127,12 @@ function chooseLemma(surface, current, next, collected) {
 function buildSurfaceMap(words) {
   const collected = /* @__PURE__ */ new Set();
   const parts = /* @__PURE__ */ new Map();
+  const entries = /* @__PURE__ */ new Map();
   for (const value of words) {
     const word = normalize(typeof value === "object" && value !== null ? value.word : value);
     if (!isSurface(word)) continue;
     collected.add(word);
+    if (typeof value === "object" && value !== null) entries.set(word, value);
     const found = parts.get(word) ?? /* @__PURE__ */ new Set();
     for (const part of partsOf(value)) found.add(part);
     parts.set(word, found);
@@ -2093,8 +2141,13 @@ function buildSurfaceMap(words) {
   for (const lemma of collected) {
     const surfaces = /* @__PURE__ */ new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", "’"));
-    const generatedParts = parts.get(lemma) ?? /* @__PURE__ */ new Set();
-    for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    const entry = entries.get(lemma);
+    if (Array.isArray(entry?.forms)) {
+      for (const surface of entry.forms) surfaces.add(normalize(surface));
+    } else {
+      const generatedParts = parts.get(lemma) ?? /* @__PURE__ */ new Set();
+      for (const part of generatedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    }
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
       if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES2.has(surface)) continue;
@@ -2450,7 +2503,8 @@ function appendExample(existing, example, source) {
   if (!parsed.ok) throw new Error(`frontmatter invalid: ${parsed.error}`);
   const line = exampleLine(example, source);
   if (!line) return existing;
-  if (parsed.entry.examples.includes(line.slice(2))) return existing;
+  const identity = (value) => parseExampleLine(value).sentence.trim().replace(/\s+/gu, " ");
+  if (parsed.entry.examples.some((value) => identity(value) === identity(line))) return existing;
   const newline = String(existing).includes("\r\n") ? "\r\n" : "\n";
   const normalized = String(existing).replaceAll("\r\n", "\n");
   const frontmatterEnd = normalized.indexOf("\n---\n") + 5;
@@ -2481,11 +2535,12 @@ function unwrap(result) {
   return result;
 }
 var VocabIndex = class {
-  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0 } = {}) {
+  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0, enrichEntries = async (entries) => entries } = {}) {
     this.knowledge = knowledge;
     this.batchSize = batchSize;
     this.onProgress = onProgress;
     this.onUpdate = onUpdate;
+    this.enrichEntries = enrichEntries;
     this.cache = /* @__PURE__ */ new Map();
     this.entries = /* @__PURE__ */ new Map();
     this.duplicateWords = /* @__PURE__ */ new Set();
@@ -2568,7 +2623,12 @@ var VocabIndex = class {
       }
       if (i + this.batchSize < metas.length) await sleep();
     }
-    return this.rebuild(readFailures);
+    const result = this.rebuild(readFailures);
+    result.entries = await this.enrichEntries(result.entries);
+    if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
+    this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.onUpdate(result);
+    return result;
   }
   rebuild(readFailures = []) {
     this.entries = /* @__PURE__ */ new Map();
@@ -2727,6 +2787,7 @@ function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
 // src/dictionary.mjs
 var LETTER_RE = /^[a-z]$/u;
 var cache = /* @__PURE__ */ new Map();
+var enrichmentCache = /* @__PURE__ */ new Map();
 var IRREGULAR_BASES = /* @__PURE__ */ new Map([
   ["ran", "run"],
   ["went", "go"],
@@ -2945,9 +3006,7 @@ function normalizeDefinitionLine(line) {
   return String(line).replace(/^([nvasr])\.?\s+/u, (match, label) => `${labels[label]} `);
 }
 function inferPos(entry) {
-  const first = String(entry?.t ?? "").split("\n").find(Boolean) ?? "";
-  const prefix = first.match(/^\s*(n|v|vt|vi|a|adj|adv|prep|conj|pron)\./iu)?.[1]?.toLowerCase();
-  return {
+  const names = {
     n: "noun",
     v: "verb",
     vt: "verb",
@@ -2958,7 +3017,52 @@ function inferPos(entry) {
     prep: "preposition",
     conj: "conjunction",
     pron: "pronoun"
-  }[prefix];
+  };
+  const found = /* @__PURE__ */ new Set();
+  for (const line of `${String(entry?.t ?? "")}
+${String(entry?.d ?? "")}`.split("\n")) {
+    const prefix = line.match(/^\s*(n|v|vt|vi|a|adj|adv|prep|conj|pron)\.?\s/iu)?.[1]?.toLowerCase();
+    if (names[prefix]) found.add(names[prefix]);
+  }
+  return found.size ? [...found].join(", ") : void 0;
+}
+function exchangeForms(word, entry) {
+  const forms = /* @__PURE__ */ new Set([word]);
+  for (const match of String(entry?.x ?? "").matchAll(/(?:^|\/)(?:s|d|p|i|3|r|t):([^/]+)/gu)) {
+    for (const value of match[1].split(",")) {
+      try {
+        forms.add(assertEnglishWord(value));
+      } catch {
+      }
+    }
+  }
+  return [...forms];
+}
+async function enrichVocabularyEntries(entries, { importer = defaultImporter } = {}) {
+  return Promise.all(entries.map(async (entry) => {
+    const word = normalizeWord(entry?.word);
+    let dictionaryEntry;
+    try {
+      if (importer === defaultImporter) {
+        if (!enrichmentCache.has(word)) {
+          const pending = entryFor(word, importer);
+          enrichmentCache.set(word, pending.catch((error) => {
+            enrichmentCache.delete(word);
+            throw error;
+          }));
+        }
+        dictionaryEntry = await enrichmentCache.get(word);
+      } else dictionaryEntry = await entryFor(word, importer);
+    } catch {
+      return entry;
+    }
+    if (!dictionaryEntry) return entry;
+    return {
+      ...entry,
+      dictionaryPos: inferPos(dictionaryEntry),
+      forms: exchangeForms(word, dictionaryEntry)
+    };
+  }));
 }
 
 // src/panel.mjs
@@ -3592,6 +3696,9 @@ function appendSelectionRequest(app, context, notify, locale = currentLocale()) 
 // src/tools.mjs
 var MAX_ENTRIES = 20;
 var DOCUMENT_SOURCE_RE = /^(?:wiki|docs)\/[^\\\r\n]+$/u;
+function toolFailure(code, word = "") {
+  throw Object.assign(new Error(code), { code, word });
+}
 function isSafeDocumentSourcePath(path) {
   return DOCUMENT_SOURCE_RE.test(path) && !String(path).split("/").some((part) => part === "." || part === ".." || part === "");
 }
@@ -3612,27 +3719,27 @@ function validateEntry(entry) {
   try {
     word = assertEnglishWord(entry.word);
   } catch {
-    throw new Error(`invalid word: ${entry.word}`);
+    toolFailure("INVALID_WORD", String(entry?.word ?? ""));
   }
   const definition = String(entry.definition ?? "").trim();
-  if (!definition || definition.length > 500) throw new Error(`invalid definition for ${word}`);
+  if (!definition || definition.length > 500) toolFailure("INVALID_DEFINITION", word);
   const example = entry.example === void 0 ? void 0 : String(entry.example).trim().replace(/\s+/g, " ");
-  if (example && example.length > 600) throw new Error(`example too long for ${word}`);
+  if (example && example.length > 600) toolFailure("EXAMPLE_TOO_LONG", word);
   const source = entry.source;
   if (source) {
     if (source.path) {
-      if (!isSafeDocumentSourcePath(source.path)) throw new Error(`invalid source for ${word}`);
+      if (!isSafeDocumentSourcePath(source.path)) toolFailure("INVALID_SOURCE", word);
     } else if (source.url) {
-      if (/[\s<>]/.test(source.url)) throw new Error(`invalid source for ${word}`);
+      if (/[\s<>]/.test(source.url)) toolFailure("INVALID_SOURCE", word);
       let parsed;
       try {
         parsed = new URL(source.url);
       } catch {
-        throw new Error(`invalid source for ${word}`);
+        toolFailure("INVALID_SOURCE", word);
       }
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`invalid source for ${word}`);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") toolFailure("INVALID_SOURCE", word);
     } else {
-      throw new Error(`invalid source for ${word}`);
+      toolFailure("INVALID_SOURCE", word);
     }
   }
   const normalizedSource = source ? { ...source, ...source.title === void 0 ? {} : { title: normalizeSourceTitle(source.title) } } : source;
@@ -3685,12 +3792,18 @@ async function availablePath(app, word, guard, reservedPaths) {
   for (let number = 1; number < 1e3; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? "" : `-${number}`}.md`;
     if (reservedPaths.has(path)) continue;
-    const doc = await readOptional(app, path, guard);
+    let doc;
+    try {
+      doc = await readOptional(app, path, guard);
+    } catch (error) {
+      if (error?.code === "KNOWLEDGE_WRITE_ABORTED") throw error;
+      toolFailure("READ_FAILED", word);
+    }
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
     if (parsed.ok && parsed.entry.word === word) return { path, doc };
   }
-  throw new Error(`no available note path for ${word}`);
+  toolFailure("NO_AVAILABLE_PATH", word);
 }
 function makeVocabLookup({ index, review, getReview = () => review, bindRootRead = (operation) => operation() }) {
   return async function vocabLookup(input) {
@@ -3715,70 +3828,82 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
   return async function vocabAdd(input) {
     const t = uiText(typeof locale === "function" ? locale() : locale);
     const bind = bindKnowledgeWrite ?? ((operation) => operation({ assertCurrent: () => void 0, wait: (promise) => promise }));
-    return bind(async (guard) => {
-      const entries = input?.entries;
-      if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
-        throw new Error("entries must contain 1-20 items");
-      }
-      const notes = [];
-      const validated = entries.map(validateEntry);
-      const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({
-        ...entry,
-        source: entry.example ? await resolveSource(app, entry.source, notes, guard, t) : void 0
-      })));
-      const groups = /* @__PURE__ */ new Map();
-      for (const entry of normalized) {
-        const group = groups.get(entry.word) ?? { ...entry, examples: [] };
-        if (entry.example && !group.examples.some((item) => item.example === entry.example && JSON.stringify(item.source) === JSON.stringify(entry.source))) {
-          group.examples.push({ example: entry.example, source: entry.source });
+    try {
+      return await bind(async (guard) => {
+        const entries = input?.entries;
+        if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
+          toolFailure("INVALID_ENTRY_COUNT");
         }
-        groups.set(entry.word, group);
-      }
-      const changes = [];
-      const accepted = [];
-      const reservedPaths = /* @__PURE__ */ new Set();
-      for (const entry of groups.values()) {
-        if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
-        const existing = index.get(entry.word);
-        let path;
-        let doc;
-        if (existing) {
-          path = existing.path;
-          if (reservedPaths.has(path)) throw new Error(`duplicate vocabulary path for ${entry.word}`);
-          doc = unwrap2(await guard.wait(app.knowledge.readDocument({ path })));
-        } else {
-          ({ path, doc } = await availablePath(app, entry.word, guard, reservedPaths));
+        const notes = [];
+        const validated = entries.map(validateEntry);
+        const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({
+          ...entry,
+          source: entry.example ? await resolveSource(app, entry.source, notes, guard, t) : void 0
+        })));
+        const groups = /* @__PURE__ */ new Map();
+        for (const entry of normalized) {
+          const group = groups.get(entry.word) ?? { ...entry, examples: [] };
+          if (entry.example && !group.examples.some((item) => item.example === entry.example && JSON.stringify(item.source) === JSON.stringify(entry.source))) {
+            group.examples.push({ example: entry.example, source: entry.source });
+          }
+          groups.set(entry.word, group);
         }
-        reservedPaths.add(path);
-        let content;
-        if (doc) {
-          const parsed = parseNote(doc.content);
-          if (!parsed.ok) throw new Error(`frontmatter invalid for ${entry.word}: ${parsed.error}`);
-          if (parsed.entry.word !== entry.word) throw new Error(`frontmatter word mismatch for ${entry.word}`);
-          content = doc.content;
-        } else {
-          content = buildNote({ ...entry, example: void 0, source: void 0 });
+        const changes = [];
+        const accepted = [];
+        const reservedPaths = /* @__PURE__ */ new Set();
+        for (const entry of groups.values()) {
+          if (index.isAmbiguous?.(entry.word)) toolFailure("DUPLICATE_NOTES", entry.word);
+          const existing = index.get(entry.word);
+          let path;
+          let doc;
+          if (existing) {
+            path = existing.path;
+            if (reservedPaths.has(path)) toolFailure("DUPLICATE_PATH", entry.word);
+            try {
+              doc = unwrap2(await guard.wait(app.knowledge.readDocument({ path })));
+            } catch (error) {
+              if (error?.code === "KNOWLEDGE_WRITE_ABORTED") throw error;
+              toolFailure("READ_FAILED", entry.word);
+            }
+          } else {
+            ({ path, doc } = await availablePath(app, entry.word, guard, reservedPaths));
+          }
+          reservedPaths.add(path);
+          let content;
+          if (doc) {
+            const parsed = parseNote(doc.content);
+            if (!parsed.ok) toolFailure("INVALID_FRONTMATTER", entry.word);
+            if (parsed.entry.word !== entry.word) toolFailure("FRONTMATTER_WORD_MISMATCH", entry.word);
+            content = doc.content;
+          } else {
+            content = buildNote({ ...entry, example: void 0, source: void 0 });
+          }
+          for (const item of entry.examples) content = appendExample(content, item.example, item.source);
+          if (doc && content === doc.content) continue;
+          changes.push({ path, newContent: content });
+          accepted.push(entry.word);
         }
-        for (const item of entry.examples) content = appendExample(content, item.example, item.source);
-        if (doc && content === doc.content) continue;
-        changes.push({ path, newContent: content });
-        accepted.push(entry.word);
+        if (!changes.length) return [t.toolNoChanges, ...notes].join("\n");
+        if (new Set(changes.map((change) => change.path)).size !== changes.length) toolFailure("DUPLICATE_PATH");
+        const number = nextNumber();
+        const words = accepted;
+        await guard.assertCurrent();
+        const proposal = app.knowledge.propose({
+          description: t.proposalDescription(number, words.join(", ")),
+          changes
+        });
+        proposal.then(unwrap2).then((receipt) => {
+          notify(noticeText(receipt, number, words, t));
+          refresh?.();
+        }).catch(() => notify(t.proposalFailed(number)));
+        return [t.toolSubmitted(number, words.length), ...notes].join("\n");
+      }, t.knowledgeWriteAborted);
+    } catch (error) {
+      if (typeof error?.code === "string" && ["INVALID_WORD", "INVALID_DEFINITION", "EXAMPLE_TOO_LONG", "INVALID_SOURCE", "INVALID_ENTRY_COUNT", "NO_AVAILABLE_PATH", "DUPLICATE_NOTES", "DUPLICATE_PATH", "INVALID_FRONTMATTER", "FRONTMATTER_WORD_MISMATCH", "READ_FAILED"].includes(error.code)) {
+        throw Object.assign(new Error(t.toolFailure(error.code, error.word)), { code: error.code });
       }
-      if (!changes.length) return [t.toolNoChanges, ...notes].join("\n");
-      if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error("duplicate vocabulary proposal path");
-      const number = nextNumber();
-      const words = accepted;
-      await guard.assertCurrent();
-      const proposal = app.knowledge.propose({
-        description: t.proposalDescription(number, words.join(", ")),
-        changes
-      });
-      proposal.then(unwrap2).then((receipt) => {
-        notify(noticeText(receipt, number, words, t));
-        refresh?.();
-      }).catch(() => notify(t.proposalFailed(number)));
-      return [t.toolSubmitted(number, words.length), ...notes].join("\n");
-    }, t.knowledgeWriteAborted);
+      throw error;
+    }
   };
 }
 var LOOKUP_SCHEMA = {
@@ -3957,7 +4082,8 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
         const cardState = state.review?.cards && Object.hasOwn(state.review.cards, context.key) ? state.review.cards[context.key] : void 0;
         const flagState = state.review?.flags && Object.hasOwn(state.review.flags, context.key) ? state.review.flags[context.key] : void 0;
         const familiarity = familiarityFor(cardState, flagState);
-        heading.append(word, el2("span", `ev-reading-badge ev-reading-${context.tone}`, t[familiarity] || t[context.tone] || context.tone));
+        const currentTone = TONE_BY_FAMILIARITY[familiarity] ?? context.tone;
+        heading.append(word, el2("span", `ev-reading-badge ev-reading-${currentTone}`, t[familiarity] || t[currentTone] || currentTone));
         card.append(heading);
         if (context.tone === null) card.append(el2("p", "ev-reading-note", t.collectedWord));
         if (entry?.definition) card.append(el2("p", "ev-reading-definition", entry.definition));
@@ -34277,7 +34403,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
-var ANALYSIS_VERSION = 2;
+var ANALYSIS_VERSION = 3;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {
@@ -34952,7 +35078,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.state.entries = result.entries;
         this.state.invalid = result.invalid;
         this.emitState();
-      }
+      },
+      enrichEntries: (entries) => enrichVocabularyEntries(entries)
     });
     await this.refreshIndex();
     await this.initializeReadingLevel();
