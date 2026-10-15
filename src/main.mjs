@@ -71,6 +71,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.learningSuggestionsHandle = null;
     this.recommender = null;
     this.mutationTail = Promise.resolve();
+    this.preferenceTail = Promise.resolve();
+    this.preferenceSnapshot = {};
+    this.reviewModeRequest = 0;
+    this.levelSettingsRequest = 0;
     this.pendingMutations = 0;
     this.mutationSequence = 0;
     this.operationNonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -313,6 +317,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async loadPreferences() {
     try {
       const data = await this.loadData?.();
+      this.preferenceSnapshot = { ...(data ?? {}) };
       this.state.highlight = data?.highlight !== false;
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
@@ -320,6 +325,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const levelSettings = validateLevelSettings(data?.levelSettings);
       this.state.levelSettings = levelSettings.ok ? levelSettings.settings : DEFAULT_LEVEL_SETTINGS;
     } catch {
+      this.preferenceSnapshot = {};
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
       this.state.lookupNoticeShown = false;
@@ -329,18 +335,25 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async savePreferences(patch = {}) {
-    const existing = await this.loadData?.().catch(() => ({})) ?? {};
-    const next = {
-      ...existing,
-      highlight: this.state.highlight,
-      lookupAnyWord: this.state.lookupAnyWord,
-      levelSettings: this.state.levelSettings,
-      lookupNoticeShown: this.state.lookupNoticeShown,
-      reviewMode: this.state.reviewMode,
-      ...patch,
+    const save = async () => {
+      let existing;
+      try { existing = await this.loadData?.() ?? {}; } catch { existing = this.preferenceSnapshot; }
+      const next = {
+        highlight: this.state.highlight,
+        lookupAnyWord: this.state.lookupAnyWord,
+        levelSettings: this.state.levelSettings,
+        lookupNoticeShown: this.state.lookupNoticeShown,
+        reviewMode: this.state.reviewMode,
+        ...existing,
+        ...patch,
+      };
+      await this.saveData?.(next);
+      this.preferenceSnapshot = { ...next };
+      return next;
     };
-    await this.saveData?.(next);
-    return next;
+    const run = this.preferenceTail.then(save, save);
+    this.preferenceTail = run.catch(() => undefined);
+    return run;
   }
 
   async initializeState() {
@@ -378,12 +391,19 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   async setReviewMode(mode) {
     if (!REVIEW_MODES.has(mode)) return false;
+    const request = ++this.reviewModeRequest;
     try {
       await this.savePreferences({ reviewMode: mode });
     } catch {
-      this.notice(this.t.reviewModeSaveFailed);
+      if (request === this.reviewModeRequest) {
+        const persisted = this.preferenceSnapshot?.reviewMode;
+        this.state.reviewMode = REVIEW_MODES.has(persisted) ? persisted : null;
+        this.notice(this.t.reviewModeSaveFailed);
+        this.emitState();
+      }
       return false;
     }
+    if (request !== this.reviewModeRequest) return true;
     this.state.reviewMode = mode;
     this.emitState();
     return true;
@@ -678,7 +698,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async setHighlight(value) {
     this.state.highlight = Boolean(value);
     try {
-      await this.savePreferences();
+      await this.savePreferences({ highlight: this.state.highlight });
     } catch {
       // Preference persistence is best-effort; the visible state still follows the toggle.
     }
@@ -689,7 +709,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async setLookupAnyWord(value) {
     this.state.lookupAnyWord = Boolean(value);
     try {
-      await this.savePreferences();
+      await this.savePreferences({ lookupAnyWord: this.state.lookupAnyWord });
     } catch {
       // Preference persistence is best-effort; the visible state still follows the toggle.
     }
@@ -721,12 +741,26 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async setLevelSettings(settings) {
+    const request = ++this.levelSettingsRequest;
     try {
       await this.savePreferences({ levelSettings: settings });
     } catch {
-      this.notice(this.t.levelSettingsSaveFailed);
+      if (request === this.levelSettingsRequest) {
+        const persisted = validateLevelSettings(this.preferenceSnapshot?.levelSettings);
+        const current = this.state.levelSettings;
+        const matchesCurrent = persisted.ok
+          && current.vocabularySize === persisted.settings.vocabularySize
+          && current.easyMax === persisted.settings.easyMax
+          && current.goodMax === persisted.settings.goodMax;
+        const restored = matchesCurrent ? current : persisted.ok ? persisted.settings : current;
+        this.state.levelSettings = restored;
+        if (this.recommender) this.recommender.settings = restored;
+        this.notice(this.t.levelSettingsSaveFailed);
+        this.emitState();
+      }
       return false;
     }
+    if (request !== this.levelSettingsRequest) return true;
     this.state.levelSettings = settings;
     if (this.recommender) this.recommender.settings = settings;
     this.emitState();
@@ -880,6 +914,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
     this.index?.cancel?.();
+    this.recommender?.cancel?.();
     this.cancelSpeech();
     this.readingUndoSnapshots?.clear?.();
     this.latestReadingEvent = null;

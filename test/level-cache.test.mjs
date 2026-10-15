@@ -291,4 +291,20 @@ describe('level cache and novel word scoring', () => {
     await expect(cache.flush()).resolves.toBeUndefined();
     expect(cache.get('wiki/a.md', 'h1')).not.toBeNull();
   });
+
+  it('should reject stale cache mutations and flushes when the cache is cancelled', async () => {
+    const io = storage();
+    const cache = new LevelCache(io);
+    await cache.load();
+    const epoch = cache.epoch;
+    expect(await cache.set(epoch, 'wiki/a.md', 'h1', { english: true, counted: 1, base: 1, words: {} })).toBe(true);
+    cache.cancel();
+    expect(await cache.set(epoch, 'wiki/b.md', 'h2', { english: true, counted: 1, base: 1, words: {} })).toBe(false);
+    expect(cache.prune(epoch, new Set())).toBe(false);
+    expect(await cache.flush(undefined, epoch)).toBe(false);
+    expect(await cache.flushShard('level-cache-1.json', epoch)).toBe(false);
+    expect(await cache.load()).toBe(false);
+    expect(await cache.scopeStorage()).toBeNull();
+    expect(io.calls.filter(([kind]) => kind === 'write')).toEqual([]);
+  });
 });

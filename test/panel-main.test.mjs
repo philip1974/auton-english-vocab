@@ -1441,7 +1441,7 @@ describe('main plugin', () => {
     expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
     expect(plugin.saveData).not.toHaveBeenCalled();
     [...container.querySelectorAll('.ev-mode button')].find((node) => node.textContent === '翻卡').click();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenCalled());
     expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ reviewMode: 'flip' }));
   });
 
@@ -1456,6 +1456,116 @@ describe('main plugin', () => {
     expect(plugin.state.reviewMode).toBe('reverse');
     await plugin.panelState().onReviewModeChange('context');
     expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ reviewMode: 'context', custom: 'keep-me' }));
+  });
+
+  it('should keep the latest review mode when an earlier preference save is delayed', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context', custom: 'keep' };
+    plugin.loadData = async () => ({ ...persisted });
+    plugin.saveData = async (value) => { persisted = { ...value }; };
+    await plugin.onload();
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+    let writes = 0;
+    plugin.saveData = vi.fn(async (value) => {
+      writes += 1;
+      if (writes === 1) await firstGate;
+      persisted = { ...value };
+    });
+    const first = plugin.setReviewMode('flip');
+    const second = plugin.setReviewMode('reverse');
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenCalledTimes(1));
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(plugin.saveData).toHaveBeenCalledTimes(2);
+    expect(plugin.state.reviewMode).toBe('reverse');
+    expect(persisted).toMatchObject({ reviewMode: 'reverse', custom: 'keep' });
+  });
+
+  it('should preserve both changes when review mode and highlight preference saves interleave', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context', highlight: true };
+    plugin.loadData = async () => ({ ...persisted });
+    plugin.saveData = async (value) => { persisted = { ...value }; };
+    await plugin.onload();
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+    let writes = 0;
+    plugin.saveData = vi.fn(async (value) => {
+      writes += 1;
+      if (writes === 1) await firstGate;
+      persisted = { ...value };
+    });
+    const mode = plugin.setReviewMode('flip');
+    const highlight = plugin.setHighlight(false);
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenCalledTimes(1));
+    releaseFirst();
+    await Promise.all([mode, highlight]);
+    expect(persisted).toMatchObject({ reviewMode: 'flip', highlight: false });
+    expect(plugin.state).toMatchObject({ reviewMode: 'flip', highlight: false });
+  });
+
+  it('should restore the last successful review mode when the newest queued save fails', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context' };
+    plugin.loadData = async () => ({ ...persisted });
+    plugin.saveData = async (value) => { persisted = { ...value }; };
+    await plugin.onload();
+    let writes = 0;
+    plugin.saveData = vi.fn(async (value) => {
+      writes += 1;
+      if (writes === 2) throw new Error('disk full');
+      persisted = { ...value };
+    });
+    const first = plugin.setReviewMode('flip');
+    const second = plugin.setReviewMode('reverse');
+    await expect(Promise.all([first, second])).resolves.toEqual([true, false]);
+    expect(plugin.state.reviewMode).toBe('flip');
+    expect(persisted.reviewMode).toBe('flip');
+    expect(app.notices.some((item) => item.message.includes('复习模式保存失败'))).toBe(true);
+  });
+
+  it('should ignore an older failed mode request when a newer queued request succeeds', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context' };
+    plugin.loadData = async () => ({ ...persisted });
+    plugin.saveData = async (value) => { persisted = { ...value }; };
+    await plugin.onload();
+    let writes = 0;
+    plugin.saveData = vi.fn(async (value) => {
+      writes += 1;
+      if (writes === 1) throw new Error('temporary');
+      persisted = { ...value };
+    });
+    const first = plugin.setReviewMode('flip');
+    const second = plugin.setReviewMode('reverse');
+    await expect(Promise.all([first, second])).resolves.toEqual([false, true]);
+    expect(plugin.state.reviewMode).toBe('reverse');
+    expect(persisted.reviewMode).toBe('reverse');
+    expect(app.notices.some((item) => item.message.includes('复习模式保存失败'))).toBe(false);
+  });
+
+  it('should merge a queued preference patch from the last persisted snapshot when rereading fails', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    let persisted = { reviewMode: 'context', custom: 'keep' };
+    plugin.loadData = async () => ({ ...persisted });
+    plugin.saveData = async (value) => { persisted = { ...value }; };
+    await plugin.onload();
+    plugin.loadData = vi.fn(async () => { throw new Error('temporary read failure'); });
+    await expect(plugin.setReviewMode('flip')).resolves.toBe(true);
+    expect(persisted).toMatchObject({ reviewMode: 'flip', custom: 'keep' });
   });
 
   it('should speak sentences with an English voice and expose speech cancellation', async () => {
@@ -3101,6 +3211,37 @@ describe('main plugin', () => {
     expect(app.notices.some((item) => item.message.includes('生词率设置保存失败'))).toBe(true);
   });
 
+  it('should keep the latest reading settings when an earlier preference save is delayed', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    let persisted = { levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 } };
+    plugin.loadData = async () => structuredClone(persisted);
+    plugin.saveData = async (value) => { persisted = structuredClone(value); };
+    await plugin.onload();
+    plugin.refreshReadingLevelSurfaces = vi.fn(async () => true);
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+    let writes = 0;
+    plugin.saveData = vi.fn(async (value) => {
+      writes += 1;
+      if (writes === 1) await firstGate;
+      persisted = structuredClone(value);
+    });
+    const firstSettings = { vocabularySize: 5000, easyMax: 1, goodMax: 6 };
+    const secondSettings = { vocabularySize: 8000, easyMax: 2, goodMax: 4 };
+    const first = plugin.setLevelSettings(firstSettings);
+    const second = plugin.setLevelSettings(secondSettings);
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenCalledTimes(1));
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(plugin.state.levelSettings).toEqual(secondSettings);
+    expect(plugin.recommender.settings).toEqual(secondSettings);
+    expect(persisted.levelSettings).toEqual(secondSettings);
+  });
+
   it('should cancel speech reset index work and invalidate requests when unloaded', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -3122,10 +3263,44 @@ describe('main plugin', () => {
     Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: previousSpeech });
   });
 
+  it('should stop recommendation reads and cache writes when unloaded during a document read', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.cache.items.clear();
+    plugin.recommender.cache.dirty.clear();
+    app.knowledge.listDocuments = async () => [
+      { path: 'wiki/read-one.md', title: 'One', revision: { contentHash: 'one' } },
+      { path: 'wiki/read-two.md', title: 'Two', revision: { contentHash: 'two' } },
+    ];
+    let releaseRead;
+    let markRead;
+    const readStarted = new Promise((resolve) => { markRead = resolve; });
+    const waiting = new Promise((resolve) => { releaseRead = resolve; });
+    const readDocument = vi.fn(async ({ path }) => {
+      markRead();
+      await waiting;
+      return { content: Array.from({ length: 80 }, () => 'the').join(' '), meta: { title: path } };
+    });
+    app.knowledge.readDocument = readDocument;
+    const writesBefore = app.storage.writes.length;
+    const refreshing = plugin.refreshRecommendations();
+    await readStarted;
+    plugin.onunload();
+    releaseRead();
+    await refreshing;
+    expect(readDocument).toHaveBeenCalledTimes(1);
+    expect(app.storage.writes).toHaveLength(writesBefore);
+  });
+
   it('should load a fresh index when the plugin is enabled after a prior instance unloads', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
     const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
     const first = new module.default(app, { id: 'dev.auton.english-vocab' });
     await first.onload();
     first.onunload();
@@ -3134,6 +3309,9 @@ describe('main plugin', () => {
     await second.onload();
     expect(second.index.get('alpha')).toMatchObject({ word: 'alpha' });
     expect(second.index).not.toBe(first.index);
+    expect(first.recommender.disposed).toBe(true);
+    expect(second.recommender.disposed).toBe(false);
+    expect(second.recommender).not.toBe(first.recommender);
   });
 
   it('should expose panel controls for flags notices highlights and reading document opening', async () => {

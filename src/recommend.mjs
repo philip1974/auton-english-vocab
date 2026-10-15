@@ -82,6 +82,8 @@ export class ReadingRecommender {
     this.t = uiText(locale);
     this.cache = new LevelCache(app.storage);
     this.epoch = app.workspace?.scope?.().epoch ?? 'legacy';
+    this.generation = 0;
+    this.disposed = false;
   }
 
   scopeEpoch() {
@@ -89,8 +91,18 @@ export class ReadingRecommender {
   }
 
   async reload() {
+    if (this.disposed) return false;
+    const generation = this.generation;
     await this.cache.load(this.epoch);
+    if (this.disposed || generation !== this.generation) return false;
     this.epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
+    return true;
+  }
+
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.cache.cancel();
   }
 
   bandLabel(band) {
@@ -113,7 +125,9 @@ export class ReadingRecommender {
   }
 
   async scoreDocument(meta, doc, review, entries, epoch = this.epoch) {
-    if (epoch !== this.scopeEpoch()) return null;
+    const generation = this.generation;
+    const current = () => !this.disposed && generation === this.generation && epoch === this.scopeEpoch();
+    if (!current()) return null;
     const cacheEpoch = this.cache.epoch;
     const hash = meta.revision?.contentHash ?? '';
     let cached = this.cache.get(meta.path, hash);
@@ -121,17 +135,19 @@ export class ReadingRecommender {
       cached = buildLevelCacheEntry(doc.content, this.table);
       cached.title = titleFor(meta, doc, meta.path);
       const stored = await this.cache.set(cacheEpoch, meta.path, hash, cached);
-      if (!stored || cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
-      await this.cache.flush(cacheShardNameForPath(meta.path));
-      if (cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
+      if (!stored || cacheEpoch !== this.cache.epoch || !current()) return null;
+      await this.cache.flush(cacheShardNameForPath(meta.path), cacheEpoch);
+      if (cacheEpoch !== this.cache.epoch || !current()) return null;
     }
     return this.scoreCached(meta, cached, review, entries);
   }
 
   async recommend({ review = { cards: {}, flags: {} }, entries = [], onProgress = this.onProgress } = {}) {
+    if (this.disposed) return { stale: true, items: [], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } };
+    const generation = this.generation;
     const started = this.scopeEpoch();
     const cacheEpoch = this.cache.epoch;
-    const current = () => this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
+    const current = () => !this.disposed && generation === this.generation && this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
     this.epoch = started;
     const metas = unwrap(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
     /* v8 ignore next -- the same captured-epoch contract is exercised at the async document and cache boundaries below. */
@@ -187,14 +203,14 @@ export class ReadingRecommender {
       onProgress(done, metas.length);
       /* v8 ignore next -- repeated guard before the flush await. */
       if (!current()) return { stale: true, items: [], skipped };
-      await this.cache.flush();
+      await this.cache.flush(undefined, cacheEpoch);
       /* v8 ignore next -- LevelCache also rejects root changes during flush; this keeps workspace epoch symmetry. */
       if (!current()) return { stale: true, items: [], skipped };
       if (i + this.batchSize < metas.length) await sleep();
     }
     /* v8 ignore next -- repeated final-flush guard. */
     if (!current()) return { stale: true, items: [], skipped };
-    await this.cache.flush();
+    await this.cache.flush(undefined, cacheEpoch);
     /* v8 ignore next -- repeated post-flush guard. */
     if (!current()) return { stale: true, items: [], skipped };
     return { stale: false, items: sortRecommendations(items, this.settings), skipped };

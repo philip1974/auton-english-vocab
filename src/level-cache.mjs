@@ -100,22 +100,29 @@ export class LevelCache {
     this.epoch = 'memory';
     this.rootGeneration = null;
     this.dirty = new Set();
+    this.generation = 0;
+    this.disposed = false;
   }
 
   async scopeStorage() {
+    if (this.disposed) return null;
     if (!this.storage?.scope) {
       this.rootGeneration = null;
       this.epoch = 'memory';
       return null;
     }
     const { rootGeneration } = await this.storage.scope();
+    if (this.disposed) return null;
     this.rootGeneration = rootGeneration;
     this.epoch = rootGeneration;
     return rootGeneration;
   }
 
   async load() {
+    if (this.disposed) return false;
+    const generation = this.generation;
     const root = await this.scopeStorage();
+    if (this.disposed || generation !== this.generation) return false;
     this.items = new Map();
     this.dirty = new Set();
     if (!this.storage || !root) return;
@@ -127,6 +134,7 @@ export class LevelCache {
         if (isRootChanged(error)) return this.load();
         throw error;
       }
+      if (this.disposed || generation !== this.generation) return false;
       if (!result?.found) continue;
       try {
         const parsed = JSON.parse(result.text);
@@ -139,6 +147,16 @@ export class LevelCache {
         // A corrupt cache shard is disposable; rebuilding from source documents is safe.
       }
     }
+    return undefined;
+  }
+
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.epoch = `cancelled:${this.generation}`;
+    this.rootGeneration = null;
+    this.items.clear();
+    this.dirty.clear();
   }
 
   async handleRootChanged() {
@@ -151,14 +169,14 @@ export class LevelCache {
   }
 
   async set(epoch, path, hash, value) {
-    if (epoch !== this.epoch) return false;
+    if (this.disposed || epoch !== this.epoch) return false;
     this.items.set(path, { ...value, hash, usedAt: Date.now() });
     this.dirty.add(entryShard(path));
     return true;
   }
 
   prune(epoch, livePaths) {
-    if (epoch !== this.epoch) return false;
+    if (this.disposed || epoch !== this.epoch) return false;
     for (const path of this.items.keys()) {
       if (livePaths.has(path)) continue;
       this.items.delete(path);
@@ -167,17 +185,22 @@ export class LevelCache {
     return true;
   }
 
-  async flush(name) {
+  async flush(name, epoch = this.epoch) {
+    if (this.disposed || epoch !== this.epoch) return false;
     if (!this.storage || !this.rootGeneration) {
       this.dirty.clear();
-      return;
+      return undefined;
     }
     const names = name ? [name] : [...this.dirty];
-    for (const shard of names) await this.flushShard(shard);
+    for (const shard of names) {
+      if ((await this.flushShard(shard, epoch)) === false) return false;
+    }
+    return undefined;
   }
 
-  async flushShard(name) {
-    if (!this.storage || !this.rootGeneration) return;
+  async flushShard(name, epoch = this.epoch) {
+    if (this.disposed || epoch !== this.epoch) return false;
+    if (!this.storage || !this.rootGeneration) return undefined;
     const items = {};
     for (const [path, entry] of this.items.entries()) if (entryShard(path) === name) items[path] = entry;
     let text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
@@ -190,12 +213,16 @@ export class LevelCache {
         text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
       }
     }
+    if (this.disposed || epoch !== this.epoch) return false;
     try {
       await this.storage.write(this.rootGeneration, name, text);
+      if (this.disposed || epoch !== this.epoch) return false;
       this.dirty.delete(name);
+      return undefined;
     } catch (error) {
       if (!isRootChanged(error)) throw error;
       await this.load();
+      return undefined;
     }
   }
 }

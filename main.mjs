@@ -34926,20 +34926,27 @@ var LevelCache = class {
     this.epoch = "memory";
     this.rootGeneration = null;
     this.dirty = /* @__PURE__ */ new Set();
+    this.generation = 0;
+    this.disposed = false;
   }
   async scopeStorage() {
+    if (this.disposed) return null;
     if (!this.storage?.scope) {
       this.rootGeneration = null;
       this.epoch = "memory";
       return null;
     }
     const { rootGeneration } = await this.storage.scope();
+    if (this.disposed) return null;
     this.rootGeneration = rootGeneration;
     this.epoch = rootGeneration;
     return rootGeneration;
   }
   async load() {
+    if (this.disposed) return false;
+    const generation = this.generation;
     const root = await this.scopeStorage();
+    if (this.disposed || generation !== this.generation) return false;
     this.items = /* @__PURE__ */ new Map();
     this.dirty = /* @__PURE__ */ new Set();
     if (!this.storage || !root) return;
@@ -34951,6 +34958,7 @@ var LevelCache = class {
         if (isRootChanged(error)) return this.load();
         throw error;
       }
+      if (this.disposed || generation !== this.generation) return false;
       if (!result?.found) continue;
       try {
         const parsed = JSON.parse(result.text);
@@ -34962,6 +34970,15 @@ var LevelCache = class {
       } catch {
       }
     }
+    return void 0;
+  }
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.epoch = `cancelled:${this.generation}`;
+    this.rootGeneration = null;
+    this.items.clear();
+    this.dirty.clear();
   }
   async handleRootChanged() {
     await this.load();
@@ -34971,13 +34988,13 @@ var LevelCache = class {
     return entry?.hash === hash ? entry : null;
   }
   async set(epoch, path, hash, value) {
-    if (epoch !== this.epoch) return false;
+    if (this.disposed || epoch !== this.epoch) return false;
     this.items.set(path, { ...value, hash, usedAt: Date.now() });
     this.dirty.add(entryShard(path));
     return true;
   }
   prune(epoch, livePaths) {
-    if (epoch !== this.epoch) return false;
+    if (this.disposed || epoch !== this.epoch) return false;
     for (const path of this.items.keys()) {
       if (livePaths.has(path)) continue;
       this.items.delete(path);
@@ -34985,16 +35002,21 @@ var LevelCache = class {
     }
     return true;
   }
-  async flush(name) {
+  async flush(name, epoch = this.epoch) {
+    if (this.disposed || epoch !== this.epoch) return false;
     if (!this.storage || !this.rootGeneration) {
       this.dirty.clear();
-      return;
+      return void 0;
     }
     const names = name ? [name] : [...this.dirty];
-    for (const shard of names) await this.flushShard(shard);
+    for (const shard of names) {
+      if (await this.flushShard(shard, epoch) === false) return false;
+    }
+    return void 0;
   }
-  async flushShard(name) {
-    if (!this.storage || !this.rootGeneration) return;
+  async flushShard(name, epoch = this.epoch) {
+    if (this.disposed || epoch !== this.epoch) return false;
+    if (!this.storage || !this.rootGeneration) return void 0;
     const items = {};
     for (const [path, entry] of this.items.entries()) if (entryShard(path) === name) items[path] = entry;
     let text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
@@ -35007,12 +35029,16 @@ var LevelCache = class {
         text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
       }
     }
+    if (this.disposed || epoch !== this.epoch) return false;
     try {
       await this.storage.write(this.rootGeneration, name, text);
+      if (this.disposed || epoch !== this.epoch) return false;
       this.dirty.delete(name);
+      return void 0;
     } catch (error) {
       if (!isRootChanged(error)) throw error;
       await this.load();
+      return void 0;
     }
   }
 };
@@ -35085,13 +35111,24 @@ var ReadingRecommender = class {
     this.t = uiText(locale);
     this.cache = new LevelCache(app.storage);
     this.epoch = app.workspace?.scope?.().epoch ?? "legacy";
+    this.generation = 0;
+    this.disposed = false;
   }
   scopeEpoch() {
     return this.app.workspace?.scope?.().epoch ?? this.epoch;
   }
   async reload() {
+    if (this.disposed) return false;
+    const generation = this.generation;
     await this.cache.load(this.epoch);
+    if (this.disposed || generation !== this.generation) return false;
     this.epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
+    return true;
+  }
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.cache.cancel();
   }
   bandLabel(band) {
     if (band === "good") return this.t.bandGood;
@@ -35111,7 +35148,9 @@ var ReadingRecommender = class {
     };
   }
   async scoreDocument(meta, doc, review, entries, epoch = this.epoch) {
-    if (epoch !== this.scopeEpoch()) return null;
+    const generation = this.generation;
+    const current = () => !this.disposed && generation === this.generation && epoch === this.scopeEpoch();
+    if (!current()) return null;
     const cacheEpoch = this.cache.epoch;
     const hash = meta.revision?.contentHash ?? "";
     let cached = this.cache.get(meta.path, hash);
@@ -35119,16 +35158,18 @@ var ReadingRecommender = class {
       cached = buildLevelCacheEntry(doc.content, this.table);
       cached.title = titleFor(meta, doc, meta.path);
       const stored = await this.cache.set(cacheEpoch, meta.path, hash, cached);
-      if (!stored || cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
-      await this.cache.flush(cacheShardNameForPath(meta.path));
-      if (cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
+      if (!stored || cacheEpoch !== this.cache.epoch || !current()) return null;
+      await this.cache.flush(cacheShardNameForPath(meta.path), cacheEpoch);
+      if (cacheEpoch !== this.cache.epoch || !current()) return null;
     }
     return this.scoreCached(meta, cached, review, entries);
   }
   async recommend({ review = { cards: {}, flags: {} }, entries = [], onProgress = this.onProgress } = {}) {
+    if (this.disposed) return { stale: true, items: [], skipped: { "not-english": 0, "too-short": 0, unreadable: 0 } };
+    const generation = this.generation;
     const started = this.scopeEpoch();
     const cacheEpoch = this.cache.epoch;
-    const current = () => this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
+    const current = () => !this.disposed && generation === this.generation && this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
     this.epoch = started;
     const metas = unwrap3(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
     if (!current()) return { stale: true, items: [], skipped: { "not-english": 0, "too-short": 0, unreadable: 0 } };
@@ -35180,12 +35221,12 @@ var ReadingRecommender = class {
       }
       onProgress(done, metas.length);
       if (!current()) return { stale: true, items: [], skipped };
-      await this.cache.flush();
+      await this.cache.flush(void 0, cacheEpoch);
       if (!current()) return { stale: true, items: [], skipped };
       if (i + this.batchSize < metas.length) await sleep2();
     }
     if (!current()) return { stale: true, items: [], skipped };
-    await this.cache.flush();
+    await this.cache.flush(void 0, cacheEpoch);
     if (!current()) return { stale: true, items: [], skipped };
     return { stale: false, items: sortRecommendations(items, this.settings), skipped };
   }
@@ -35247,6 +35288,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.learningSuggestionsHandle = null;
     this.recommender = null;
     this.mutationTail = Promise.resolve();
+    this.preferenceTail = Promise.resolve();
+    this.preferenceSnapshot = {};
+    this.reviewModeRequest = 0;
+    this.levelSettingsRequest = 0;
     this.pendingMutations = 0;
     this.mutationSequence = 0;
     this.operationNonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -35479,6 +35524,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async loadPreferences() {
     try {
       const data = await this.loadData?.();
+      this.preferenceSnapshot = { ...data ?? {} };
       this.state.highlight = data?.highlight !== false;
       this.state.lookupAnyWord = data?.lookupAnyWord !== false;
       this.state.lookupNoticeShown = data?.lookupNoticeShown === true;
@@ -35486,6 +35532,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       const levelSettings = validateLevelSettings(data?.levelSettings);
       this.state.levelSettings = levelSettings.ok ? levelSettings.settings : DEFAULT_LEVEL_SETTINGS;
     } catch {
+      this.preferenceSnapshot = {};
       this.state.highlight = true;
       this.state.lookupAnyWord = true;
       this.state.lookupNoticeShown = false;
@@ -35494,18 +35541,29 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
   }
   async savePreferences(patch = {}) {
-    const existing = await this.loadData?.().catch(() => ({})) ?? {};
-    const next = {
-      ...existing,
-      highlight: this.state.highlight,
-      lookupAnyWord: this.state.lookupAnyWord,
-      levelSettings: this.state.levelSettings,
-      lookupNoticeShown: this.state.lookupNoticeShown,
-      reviewMode: this.state.reviewMode,
-      ...patch
+    const save = async () => {
+      let existing;
+      try {
+        existing = await this.loadData?.() ?? {};
+      } catch {
+        existing = this.preferenceSnapshot;
+      }
+      const next = {
+        highlight: this.state.highlight,
+        lookupAnyWord: this.state.lookupAnyWord,
+        levelSettings: this.state.levelSettings,
+        lookupNoticeShown: this.state.lookupNoticeShown,
+        reviewMode: this.state.reviewMode,
+        ...existing,
+        ...patch
+      };
+      await this.saveData?.(next);
+      this.preferenceSnapshot = { ...next };
+      return next;
     };
-    await this.saveData?.(next);
-    return next;
+    const run = this.preferenceTail.then(save, save);
+    this.preferenceTail = run.catch(() => void 0);
+    return run;
   }
   async initializeState() {
     this.reviewStore = new ReviewStore(this.app, { locale: this.locale, notify: (message) => this.notice(message) });
@@ -35546,12 +35604,19 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async setReviewMode(mode) {
     if (!REVIEW_MODES.has(mode)) return false;
+    const request = ++this.reviewModeRequest;
     try {
       await this.savePreferences({ reviewMode: mode });
     } catch {
-      this.notice(this.t.reviewModeSaveFailed);
+      if (request === this.reviewModeRequest) {
+        const persisted = this.preferenceSnapshot?.reviewMode;
+        this.state.reviewMode = REVIEW_MODES.has(persisted) ? persisted : null;
+        this.notice(this.t.reviewModeSaveFailed);
+        this.emitState();
+      }
       return false;
     }
+    if (request !== this.reviewModeRequest) return true;
     this.state.reviewMode = mode;
     this.emitState();
     return true;
@@ -35829,7 +35894,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async setHighlight(value) {
     this.state.highlight = Boolean(value);
     try {
-      await this.savePreferences();
+      await this.savePreferences({ highlight: this.state.highlight });
     } catch {
     }
     this.syncReadingDecorations();
@@ -35838,7 +35903,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async setLookupAnyWord(value) {
     this.state.lookupAnyWord = Boolean(value);
     try {
-      await this.savePreferences();
+      await this.savePreferences({ lookupAnyWord: this.state.lookupAnyWord });
     } catch {
     }
     this.syncReadingDecorations();
@@ -35866,12 +35931,23 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
   }
   async setLevelSettings(settings) {
+    const request = ++this.levelSettingsRequest;
     try {
       await this.savePreferences({ levelSettings: settings });
     } catch {
-      this.notice(this.t.levelSettingsSaveFailed);
+      if (request === this.levelSettingsRequest) {
+        const persisted = validateLevelSettings(this.preferenceSnapshot?.levelSettings);
+        const current = this.state.levelSettings;
+        const matchesCurrent = persisted.ok && current.vocabularySize === persisted.settings.vocabularySize && current.easyMax === persisted.settings.easyMax && current.goodMax === persisted.settings.goodMax;
+        const restored = matchesCurrent ? current : persisted.ok ? persisted.settings : current;
+        this.state.levelSettings = restored;
+        if (this.recommender) this.recommender.settings = restored;
+        this.notice(this.t.levelSettingsSaveFailed);
+        this.emitState();
+      }
       return false;
     }
+    if (request !== this.levelSettingsRequest) return true;
     this.state.levelSettings = settings;
     if (this.recommender) this.recommender.settings = settings;
     this.emitState();
@@ -36015,6 +36091,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
     this.index?.cancel?.();
+    this.recommender?.cancel?.();
     this.cancelSpeech();
     this.readingUndoSnapshots?.clear?.();
     this.latestReadingEvent = null;

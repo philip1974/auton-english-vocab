@@ -200,6 +200,23 @@ describe('reading recommendations', () => {
     expect(recommender.cache.flush).not.toHaveBeenCalled();
   });
 
+  it('should make every recommendation entry point inert after cancellation', async () => {
+    const app = appFor([{ path: 'wiki/read.md', title: 'Read', content: english('the') }]);
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    recommender.cancel();
+    await expect(recommender.reload()).resolves.toBe(false);
+    await expect(recommender.recommend()).resolves.toMatchObject({ stale: true, items: [] });
+    await expect(recommender.scoreDocument(
+      { path: 'wiki/read.md', revision: { contentHash: 'same' } },
+      { content: english('the') },
+      { cards: {}, flags: {} },
+      [],
+    )).resolves.toBeNull();
+    expect(app.knowledge.readDocument).not.toHaveBeenCalled();
+    expect(app.storage.writes).toEqual([]);
+  });
+
   it('should localize recommendation band labels for non-Chinese locales', async () => {
     const app = appFor([{ path: 'wiki/good.md', title: 'Good', hash: 'h-good', content: `${english('the')} rareone raretwo rarethree` }]);
     const recommender = new ReadingRecommender(app, {
