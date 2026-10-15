@@ -127,9 +127,33 @@ export function renderPanel(container, controls) {
   let dictionaryResult = null;
   let dictionaryQuery = '';
   let dictionarySuggestions = [];
+  let dictionaryError = null;
+  let dictionaryCollecting = false;
+  let dictionaryCollectStatus = '';
   let suggestionRequest = 0;
   let lookupRequest = 0;
+  let refreshTimer = null;
+  let cleaned = false;
   const phonetics = new Map();
+
+  const scheduleReviewRefresh = (state) => {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = null;
+    if (cleaned || tab !== 'today') return;
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    let wakeAt = midnight.getTime();
+    for (const entry of state.entries) {
+      const due = Date.parse(state.review.cards?.[entry.word]?.due);
+      if (Number.isFinite(due) && due > now.getTime() && due < wakeAt) wakeAt = due;
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      rerender();
+    }, Math.max(1, wakeAt - now.getTime()));
+    refreshTimer?.unref?.();
+  };
 
   const review = (rating) => {
     const state = read();
@@ -267,16 +291,45 @@ export function renderPanel(container, controls) {
       }, 'ev-dict-lemma-link'));
       resultBox.append(renderDictionaryDefinition(result.entry, locale));
       const collected = state.entries.some((entry) => entry.word === result.lemma);
-      resultBox.append(collected ? el('p', 'ev-note', t.collectedWord) : button(t.collectWord, () => controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null })));
+      if (collected) resultBox.append(el('p', 'ev-note', t.collectedWord));
+      else {
+        const collect = button(t.collectWord, async () => {
+          if (dictionaryCollecting) return;
+          dictionaryCollecting = true;
+          collect.disabled = true;
+          let receipt = null;
+          try { receipt = await controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null }); } catch { /* retry remains available */ }
+          if (dictionaryResult !== result) return;
+          if (receipt?.outcome === 'applied') dictionaryCollectStatus = t.dictionaryAdded;
+          else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') dictionaryCollectStatus = t.dictionaryCancelled;
+          else if (receipt) dictionaryCollectStatus = t.dictionaryNotReviewed(receipt.reason);
+          else dictionaryCollectStatus = t.dictionaryLoadFailed;
+          dictionaryCollecting = receipt?.outcome === 'applied';
+          rerender();
+        });
+        collect.disabled = dictionaryCollecting;
+        resultBox.append(collect);
+        if (dictionaryCollectStatus) resultBox.append(el('p', 'ev-note', dictionaryCollectStatus));
+      }
     };
     const runLookup = async (word) => {
       const request = ++lookupRequest;
       const query = String(word ?? '').trim().toLowerCase();
       dictionaryQuery = query;
-      const result = await controls.lookupDictionary?.(query);
+      dictionaryError = null;
+      dictionaryResult = null;
+      dictionarySuggestions = [];
+      dictionaryCollecting = false;
+      dictionaryCollectStatus = '';
+      let result;
+      try { result = await controls.lookupDictionary?.(query); } catch {
+        if (request !== lookupRequest || dictionaryQuery !== query) return;
+        dictionaryError = { kind: 'lookup', query };
+        rerender();
+        return;
+      }
       if (request !== lookupRequest || dictionaryQuery !== query) return;
       dictionaryResult = result;
-      dictionarySuggestions = [];
       rerender();
     };
     const showSuggestions = (items) => {
@@ -289,22 +342,31 @@ export function renderPanel(container, controls) {
         suggestions.append(button(item.word, () => { lookupInput.value = item.word; runLookup(item.word); }, 'ev-dict-chip'));
       }
     };
-    const runSuggest = async () => {
+    const runSuggest = async (value = lookupInput.value) => {
       const request = ++suggestionRequest;
-      const q = lookupInput.value.trim().toLowerCase();
+      const q = String(value ?? '').trim().toLowerCase();
       dictionaryQuery = q;
       lookupRequest += 1;
       dictionaryResult = null;
       dictionarySuggestions = [];
+      dictionaryError = null;
+      dictionaryCollecting = false;
+      dictionaryCollectStatus = '';
       suggestions.textContent = '';
       resultBox.textContent = '';
       if (q.length < 2) return;
-      const items = await controls.suggestDictionary?.(q, 8) ?? [];
+      let items;
+      try { items = await controls.suggestDictionary?.(q, 8) ?? []; } catch {
+        if (request !== suggestionRequest || dictionaryQuery !== q) return;
+        dictionaryError = { kind: 'suggest', query: q };
+        rerender();
+        return;
+      }
       if (request !== suggestionRequest || dictionaryQuery !== q) return;
       dictionarySuggestions = items;
       rerender();
     };
-    lookupInput.addEventListener('input', runSuggest);
+    lookupInput.addEventListener('input', () => runSuggest());
     lookupInput.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
@@ -312,7 +374,13 @@ export function renderPanel(container, controls) {
     });
     lookupBox.append(lookupInput, suggestions, resultBox);
     body.append(lookupBox);
-    if (dictionaryResult) showResult(dictionaryResult);
+    if (dictionaryError) {
+      resultBox.append(el('p', 'ev-empty', t.dictionaryLoadFailed), button(t.retry, () => {
+        lookupInput.value = dictionaryError.query;
+        if (dictionaryError.kind === 'lookup') runLookup(dictionaryError.query);
+        else runSuggest(dictionaryError.query);
+      }));
+    } else if (dictionaryResult) showResult(dictionaryResult);
     else if (dictionarySuggestions.length || dictionaryQuery.length >= 2) showSuggestions(dictionarySuggestions);
 
     const addRow = el('div', 'ev-add');
@@ -497,6 +565,7 @@ export function renderPanel(container, controls) {
       if (saved.focused) node.focus();
       if (role === 'notebook-search' || role === 'notebook-filter') node.dispatchEvent(new Event(role === 'notebook-filter' ? 'change' : 'input'));
     }
+    scheduleReviewRefresh(state);
   };
 
   const onKeydown = (event) => {
@@ -510,6 +579,8 @@ export function renderPanel(container, controls) {
   const unsubscribe = controls.subscribe?.(rerender) ?? (() => undefined);
   rerender();
   return () => {
+    cleaned = true;
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
     unsubscribe();
     container.removeEventListener('keydown', onKeydown);
     container.textContent = '';

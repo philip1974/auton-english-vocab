@@ -1,3 +1,5 @@
+import { assertEnglishWord, isEnglishWordPrefix, normalizeWord } from './note-format.mjs';
+
 const LETTER_RE = /^[a-z]$/u;
 const cache = new Map();
 const IRREGULAR_BASES = new Map([
@@ -5,10 +7,6 @@ const IRREGULAR_BASES = new Map([
   ['went', 'go'],
   ['gone', 'go'],
 ]);
-
-function normalizeWord(value) {
-  return String(value ?? '').normalize('NFC').trim().toLowerCase().replaceAll('’', "'");
-}
 
 function firstLetter(word) {
   const letter = word[0];
@@ -125,7 +123,8 @@ function candidateBases(surface) {
 
 export async function lookup(word, { importer = defaultImporter } = {}) {
   const displaySurface = String(word ?? '').normalize('NFC').trim().toLowerCase();
-  const surface = normalizeWord(word);
+  let surface;
+  try { surface = assertEnglishWord(word); } catch { return null; }
   const letter = firstLetter(surface);
   if (!letter) return null;
   const direct = await entryFor(surface, importer);
@@ -153,6 +152,7 @@ export async function lookup(word, { importer = defaultImporter } = {}) {
 
 export async function suggest(prefix, n = 8, { importer = defaultImporter } = {}) {
   const normalized = normalizeWord(prefix);
+  if (normalized && !isEnglishWordPrefix(normalized)) return [];
   const letter = firstLetter(normalized);
   if (!letter || normalized.length < 1) return [];
   const chunk = await loadChunk(letter, importer);

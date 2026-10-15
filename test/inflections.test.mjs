@@ -51,6 +51,18 @@ describe('inflections', () => {
     expect(map.get('goes')).toBe('go');
   });
 
+  it('should generate only tested spellings for o fe f zz and c endings', () => {
+    const map = buildSurfaceMap([
+      { word: 'tomato', pos: 'noun' }, { word: 'potato', pos: 'noun' },
+      { word: 'quiz', pos: 'noun' }, { word: 'knife', pos: 'noun' },
+      { word: 'panic', pos: 'verb' },
+    ]);
+    for (const [surface, lemma] of [['tomatoes', 'tomato'], ['potatoes', 'potato'], ['quizzes', 'quiz'], ['knives', 'knife'], ['panicked', 'panic'], ['panicking', 'panic']]) {
+      expect(map.get(surface)).toBe(lemma);
+    }
+    for (const fake of ['tomatos', 'potatos', 'quizes', 'knifes', 'paniced', 'panicing']) expect(map.has(fake)).toBe(false);
+  });
+
   it('should include expanded common irregular verb forms without duplicate-form conflicts', () => {
     const map = buildSurfaceMap(['arise', 'bear', 'cling', 'forbid', 'lie', 'seek', 'stride', 'undertake', 'weave', 'withdraw', 'read', 'put'].map((word) => ({ word, pos: 'verb' })));
     expect(map.get('arose')).toBe('arise');

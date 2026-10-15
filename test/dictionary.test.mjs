@@ -121,6 +121,14 @@ describe('dictionary', () => {
     await expect(suggest(undefined, 8, { importer })).resolves.toEqual([]);
   });
 
+  it('should reject words when punctuation is leading trailing or repeated', async () => {
+    const localImporter = vi.fn(() => Promise.resolve({ default: {} }));
+    await expect(lookup('run-', { importer: localImporter })).resolves.toBeNull();
+    await expect(lookup("a''b", { importer: localImporter })).resolves.toBeNull();
+    await expect(suggest('a--', 8, { importer: localImporter })).resolves.toEqual([]);
+    expect(localImporter).not.toHaveBeenCalled();
+  });
+
   it('should sort suggestions by rank, missing rank, and word when prefix matches', async () => {
     await expect(suggest('ep', 8, { importer })).resolves.toEqual([
       { word: 'epic', entry: chunks.e.epic },

@@ -737,6 +737,115 @@ describe('panel', () => {
     expect(container.querySelector('.ev-dict-result .ev-row-word')?.textContent).toBe('run');
   });
 
+  it('should show a persistent retry state when panel dictionary lookup or suggestions reject', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const lookupDictionary = vi.fn()
+      .mockRejectedValueOnce(new Error('chunk fail'))
+      .mockResolvedValueOnce({ surface: 'run', lemma: 'run', entry: { t: 'v. 跑' } });
+    const suggestDictionary = vi.fn()
+      .mockRejectedValueOnce(new Error('chunk fail'))
+      .mockResolvedValueOnce([{ word: 'running', entry: {} }]);
+    renderPanel(container, {
+      app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, lookupDictionary, suggestDictionary, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    let input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'run';
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain('词典加载失败');
+    expect(container.querySelector('[data-role="dictionary-search"]').value).toBe('run');
+    expect(document.activeElement).toBe(container.querySelector('[data-role="dictionary-search"]'));
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '重试').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('.ev-dict-result .ev-row-word')?.textContent).toBe('run');
+
+    input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'runn';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toContain('词典加载失败');
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '重试').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector('.ev-dict-chip')?.textContent).toBe('running');
+  });
+
+  it('should allow only one in-flight notebook collection and keep retry state aligned with proposal outcomes', async () => {
+    const container = document.createElement('div');
+    let release;
+    const onCollectDictionaryWord = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    renderPanel(container, {
+      app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} },
+      lookupDictionary: async () => ({ surface: 'run', lemma: 'run', entry: { t: 'v. 跑' } }),
+      onCollectDictionaryWord,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'run';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    const collect = [...container.querySelectorAll('button')].find((node) => node.textContent === '收词');
+    collect.click();
+    collect.click();
+    expect(collect.disabled).toBe(true);
+    expect(onCollectDictionaryWord).toHaveBeenCalledOnce();
+    release({ outcome: 'not-reviewed', reason: 'busy' });
+    await Promise.resolve();
+    let retry = [...container.querySelectorAll('button')].find((node) => node.textContent === '收词');
+    expect(retry.disabled).toBe(false);
+
+    onCollectDictionaryWord.mockRejectedValueOnce(new Error('temporary failure'));
+    retry.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    retry = [...container.querySelectorAll('button')].find((node) => node.textContent === '收词');
+    expect(retry.disabled).toBe(false);
+    expect(container.textContent).toContain('词典加载失败');
+
+    onCollectDictionaryWord.mockResolvedValueOnce({ outcome: 'applied' });
+    retry.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect([...container.querySelectorAll('button')].find((node) => node.textContent === '收词').disabled).toBe(true);
+    expect(container.textContent).toContain('已收进生词本');
+  });
+
+  it('should rerender at local midnight and the nearest due time without a state event', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-15T23:59:59'));
+      const container = document.createElement('div');
+      const log = Array.from({ length: 50 }, (_, index) => ({ word: `old-${index}`, previousState: 'New', reviewedAt: '2026-10-15T12:00:00' }));
+      const cleanup = renderPanel(container, {
+        app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, log, hasEnglishVoice: () => true,
+      });
+      expect(container.querySelector('.ev-card')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(container.querySelector('.ev-card')?.textContent).toContain('alpha');
+      cleanup();
+      expect(vi.getTimerCount()).toBe(0);
+
+      vi.setSystemTime(new Date('2026-10-16T12:00:00'));
+      const dueContainer = document.createElement('div');
+      const dueCleanup = renderPanel(dueContainer, {
+        app: fullApp(),
+        entries: [{ word: 'beta', definition: '字母' }],
+        review: { version: 1, cards: { beta: { ...newSerializedCard(new Date()), state: 'Review', stability: 2, difficulty: 5, reps: 1, last_review: new Date(Date.now() - 86_400_000).toISOString(), due: new Date(Date.now() + 1000).toISOString() } }, flags: {} },
+        log: [], hasEnglishVoice: () => true,
+      });
+      expect(dueContainer.querySelector('.ev-card')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(dueContainer.querySelector('.ev-card')?.textContent).toContain('beta');
+      dueCleanup();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('should accept a curly apostrophe as the same spelling answer as a straight apostrophe', () => {
     const container = document.createElement('div');
     const reviewed = vi.fn();
@@ -1898,6 +2007,28 @@ describe('main plugin', () => {
     await plugin.rateWord('alpha', 'Good', 'flip');
     expect(plugin.state.review.cards.alpha).toBeUndefined();
     expect(app.notices.some((item) => item.message.includes('知识库已切换'))).toBe(true);
+  });
+
+  it('should fully recover the new root after rating or flagging detects a silent root switch', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    for (const action of ['rate', 'flag']) {
+      const app = fullApp();
+      const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+      await plugin.onload();
+      app.storage.setRoot('root-b');
+      const betaCard = newSerializedCard(new Date('2026-10-15T00:00:00Z'));
+      await app.storage.write('root-b', 'review.json', JSON.stringify({ version: 1, cards: { beta: betaCard }, flags: {} }), { expectedRevision: null });
+      app.knowledge.listDocuments = async () => [{ path: 'wiki/vocab/beta.md', title: 'Beta', revision: { contentHash: 'b' } }];
+      app.knowledge.readDocument = async () => ({ meta: { title: 'Beta' }, content: buildNote({ word: 'beta', definition: '贝塔' }) });
+      const result = action === 'rate'
+        ? await plugin.rateWord('alpha', 'Good', 'flip')
+        : await plugin.setFlag('alpha', 'ignored');
+      expect(result).toBe(false);
+      expect(plugin.state.review.cards.beta).toEqual(betaCard);
+      expect(plugin.state.entries.map((entry) => entry.word)).toEqual(['beta']);
+      expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    }
   });
 
   it('should make registered lookup observe review state reloaded for a new root', async () => {

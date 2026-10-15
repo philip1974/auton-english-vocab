@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { familiarityFor } from '../src/familiarity.mjs';
-import { dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
+import { activeReviewLog, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
 
 describe('scheduler and familiarity', () => {
   it('should advance a card when a rating is applied', () => {
@@ -58,6 +58,17 @@ describe('scheduler and familiarity', () => {
       { id: 'undo-1', word: 'old', reviewedAt: '2026-10-14T02:00:00.000Z', undoOf: 'rated-1' },
     ];
     expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'))).toHaveLength(2);
+  });
+
+  it('should pair a legacy undo with the latest unmatched same-word rating when ids are absent', () => {
+    const log = [
+      { word: 'old', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T01:00:00Z' },
+      { word: 'other', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T01:00:30Z' },
+      { word: 'old', undo: true, reviewedAt: '2026-10-15T01:01:00Z' },
+    ];
+    expect(activeReviewLog(log)).toEqual([log[1]]);
+    const words = ['a', 'b'].map((word) => ({ word, definition: word }));
+    expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-15T12:00:00Z'))).toHaveLength(1);
   });
 
   it('should default to good when rating name is unknown', () => {

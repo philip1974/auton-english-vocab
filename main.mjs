@@ -1121,7 +1121,19 @@ function rateCard(serialized, ratingName, now = /* @__PURE__ */ new Date()) {
 }
 function activeReviewLog(log = []) {
   const undone = new Set(log.filter((entry) => entry?.undoOf).map((entry) => entry.undoOf));
-  return log.filter((entry) => !entry?.undoOf && (!entry?.id || !undone.has(entry.id)));
+  const legacyUndone = /* @__PURE__ */ new Set();
+  for (let index = 0; index < log.length; index += 1) {
+    const entry = log[index];
+    if (!entry?.undo || !entry.word) continue;
+    for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+      const rating = log[candidate];
+      if (rating?.word !== entry.word || rating?.undo || rating?.undoOf || legacyUndone.has(candidate)) continue;
+      if (rating.id && undone.has(rating.id)) continue;
+      legacyUndone.add(candidate);
+      break;
+    }
+  }
+  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(entry.id)));
 }
 function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date()) {
   const newLimit = options.newLimit ?? 50;
@@ -1453,7 +1465,8 @@ function mergeReview(base, incoming) {
 }
 
 // src/note-format.mjs
-var WORD_RE = /^[a-z][a-z'-]{0,63}$/i;
+var WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
+var WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
 function normalizeWord(word) {
   return String(word ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
 }
@@ -1461,6 +1474,9 @@ function assertEnglishWord(word) {
   const normalized = normalizeWord(word);
   if (!WORD_RE.test(normalized)) throw new Error(`invalid English word: ${word}`);
   return normalized;
+}
+function isEnglishWordPrefix(word) {
+  return WORD_PREFIX_RE.test(normalizeWord(word));
 }
 function slugFor(word) {
   const normalized = assertEnglishWord(word);
@@ -1477,7 +1493,8 @@ function sourceLink(source) {
   if (!source) return "";
   if (source.url) {
     if (!source.title) return `<${source.url}>`;
-    return `[${String(source.title).replace(/[\[\]]/g, "\\$&")}](${source.url})`;
+    const url = String(source.url).replaceAll("(", "%28").replaceAll(")", "%29");
+    return `[${String(source.title).replace(/[\[\]]/g, "\\$&")}](${url})`;
   }
   if (source.path) {
     const path = String(source.path).replaceAll("%", "%25").replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
@@ -1818,7 +1835,7 @@ function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
 }
 
 // src/inflections.mjs
-var SURFACE_RE = /^[a-z][a-z'’-]{0,63}$/u;
+var SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 var VOWELS = /* @__PURE__ */ new Set(["a", "e", "i", "o", "u"]);
 var DENYLIST = /* @__PURE__ */ new Set([
   "us",
@@ -2043,6 +2060,20 @@ var IRREGULAR_NOUNS = {
   goose: ["geese"],
   ox: ["oxen"]
 };
+var O_ES_NOUNS = /* @__PURE__ */ new Set(["echo", "hero", "potato", "tomato"]);
+var VES_NOUNS = /* @__PURE__ */ new Map([
+  ["calf", "calves"],
+  ["half", "halves"],
+  ["knife", "knives"],
+  ["leaf", "leaves"],
+  ["life", "lives"],
+  ["loaf", "loaves"],
+  ["self", "selves"],
+  ["shelf", "shelves"],
+  ["thief", "thieves"],
+  ["wife", "wives"],
+  ["wolf", "wolves"]
+]);
 var IRREGULAR_COMPARATIVES = {
   good: ["better", "best"],
   well: ["better", "best"],
@@ -2127,6 +2158,7 @@ function presentParticiple(lemma) {
   if (lemma.endsWith("ie")) return `${lemma.slice(0, -2)}ying`;
   if (/(?:ee|ye|oe)$/u.test(lemma)) return `${lemma}ing`;
   if (lemma.endsWith("e")) return `${lemma.slice(0, -1)}ing`;
+  if (lemma.endsWith("c")) return `${lemma}king`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ing`;
@@ -2135,6 +2167,7 @@ function presentParticiple(lemma) {
 function regularPast(lemma) {
   if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ied`;
   if (lemma.endsWith("e")) return `${lemma}d`;
+  if (lemma.endsWith("c")) return `${lemma}ked`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ed`;
@@ -2147,8 +2180,12 @@ function generatedForms(lemma, pos) {
     if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
     const irregular2 = IRREGULAR_NOUNS[lemma];
     if (irregular2) for (const form of irregular2) addCandidate(forms, form);
+    else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
+    else if (/fe?$/u.test(lemma)) return forms;
+    else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
-    else if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+    else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
+    else if (/(s|x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
     return forms;
   }
@@ -2183,7 +2220,7 @@ function chooseLemma(surface, current, next, collected) {
   if (surface === next && collected.has(next)) return next;
   return next.localeCompare(current) < 0 ? next : current;
 }
-function buildSurfaceMap(words) {
+function buildSurfaceMap(words, { permissive = false } = {}) {
   const collected = /* @__PURE__ */ new Set();
   const parts = /* @__PURE__ */ new Map();
   for (const value of words) {
@@ -2198,7 +2235,9 @@ function buildSurfaceMap(words) {
   for (const lemma of collected) {
     const surfaces = /* @__PURE__ */ new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", "’"));
-    for (const part of parts.get(lemma) ?? []) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    const generatedParts = parts.get(lemma) ?? /* @__PURE__ */ new Set();
+    const selectedParts = permissive && generatedParts.size === 0 ? /* @__PURE__ */ new Set(["noun", "verb", "comparative"]) : generatedParts;
+    for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface) || surface !== lemma && DENYLIST.has(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
@@ -2235,10 +2274,12 @@ function parseExampleLine(text) {
   if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
-    const target = decodeSourcePath(markdown.groups.path.trim());
+    const rawTarget = markdown.groups.path.trim();
+    const web = /^https?:\/\//u.test(rawTarget);
+    const target = web ? rawTarget : decodeSourcePath(rawTarget);
     return {
       sentence: markdown.groups.sentence.trim(),
-      source: /^https?:\/\//u.test(target) ? { title: unescapeTitle(markdown.groups.title), url: target } : { title: unescapeTitle(markdown.groups.title), path: target }
+      source: web ? { title: unescapeTitle(markdown.groups.title), url: target } : { title: unescapeTitle(markdown.groups.title), path: target }
     };
   }
   const url = line.match(SOURCE_URL_RE);
@@ -2280,7 +2321,7 @@ function resolveExampleSourcePath(notePath, rawPath) {
   return readableMarkdownPath([...noteParts, ...source.split("/")].join("/"));
 }
 function surfacesFor(entry) {
-  return [...buildSurfaceMap([entry]).keys()].sort();
+  return [...buildSurfaceMap([entry], { permissive: true }).keys()].sort();
 }
 function tokenMatches(sentence, surfaces) {
   const hits = [];
@@ -2357,9 +2398,6 @@ var IRREGULAR_BASES = /* @__PURE__ */ new Map([
   ["went", "go"],
   ["gone", "go"]
 ]);
-function normalizeWord3(value) {
-  return String(value ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
-}
 function firstLetter(word) {
   const letter = word[0];
   return LETTER_RE.test(letter) ? letter : null;
@@ -2465,7 +2503,12 @@ function candidateBases(surface) {
 }
 async function lookup(word, { importer = defaultImporter } = {}) {
   const displaySurface = String(word ?? "").normalize("NFC").trim().toLowerCase();
-  const surface = normalizeWord3(word);
+  let surface;
+  try {
+    surface = assertEnglishWord(word);
+  } catch {
+    return null;
+  }
   const letter = firstLetter(surface);
   if (!letter) return null;
   const direct = await entryFor(surface, importer);
@@ -2494,7 +2537,8 @@ async function lookup(word, { importer = defaultImporter } = {}) {
   return null;
 }
 async function suggest(prefix, n = 8, { importer = defaultImporter } = {}) {
-  const normalized = normalizeWord3(prefix);
+  const normalized = normalizeWord(prefix);
+  if (normalized && !isEnglishWordPrefix(normalized)) return [];
   const letter = firstLetter(normalized);
   if (!letter || normalized.length < 1) return [];
   const chunk = await loadChunk(letter, importer);
@@ -2653,9 +2697,32 @@ function renderPanel(container, controls) {
   let dictionaryResult = null;
   let dictionaryQuery = "";
   let dictionarySuggestions = [];
+  let dictionaryError = null;
+  let dictionaryCollecting = false;
+  let dictionaryCollectStatus = "";
   let suggestionRequest = 0;
   let lookupRequest = 0;
+  let refreshTimer = null;
+  let cleaned = false;
   const phonetics = /* @__PURE__ */ new Map();
+  const scheduleReviewRefresh = (state) => {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = null;
+    if (cleaned || tab !== "today") return;
+    const now = /* @__PURE__ */ new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    let wakeAt = midnight.getTime();
+    for (const entry of state.entries) {
+      const due = Date.parse(state.review.cards?.[entry.word]?.due);
+      if (Number.isFinite(due) && due > now.getTime() && due < wakeAt) wakeAt = due;
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      rerender();
+    }, Math.max(1, wakeAt - now.getTime()));
+    refreshTimer?.unref?.();
+  };
   const review = (rating) => {
     const state = read();
     if (state.mutationPending) return;
@@ -2803,16 +2870,50 @@ function renderPanel(container, controls) {
       }, "ev-dict-lemma-link"));
       resultBox.append(renderDictionaryDefinition(result.entry, locale));
       const collected = state.entries.some((entry) => entry.word === result.lemma);
-      resultBox.append(collected ? el("p", "ev-note", t.collectedWord) : button(t.collectWord, () => controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null })));
+      if (collected) resultBox.append(el("p", "ev-note", t.collectedWord));
+      else {
+        const collect = button(t.collectWord, async () => {
+          if (dictionaryCollecting) return;
+          dictionaryCollecting = true;
+          collect.disabled = true;
+          let receipt = null;
+          try {
+            receipt = await controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null });
+          } catch {
+          }
+          if (dictionaryResult !== result) return;
+          if (receipt?.outcome === "applied") dictionaryCollectStatus = t.dictionaryAdded;
+          else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") dictionaryCollectStatus = t.dictionaryCancelled;
+          else if (receipt) dictionaryCollectStatus = t.dictionaryNotReviewed(receipt.reason);
+          else dictionaryCollectStatus = t.dictionaryLoadFailed;
+          dictionaryCollecting = receipt?.outcome === "applied";
+          rerender();
+        });
+        collect.disabled = dictionaryCollecting;
+        resultBox.append(collect);
+        if (dictionaryCollectStatus) resultBox.append(el("p", "ev-note", dictionaryCollectStatus));
+      }
     };
     const runLookup = async (word) => {
       const request = ++lookupRequest;
       const query = String(word ?? "").trim().toLowerCase();
       dictionaryQuery = query;
-      const result = await controls.lookupDictionary?.(query);
+      dictionaryError = null;
+      dictionaryResult = null;
+      dictionarySuggestions = [];
+      dictionaryCollecting = false;
+      dictionaryCollectStatus = "";
+      let result;
+      try {
+        result = await controls.lookupDictionary?.(query);
+      } catch {
+        if (request !== lookupRequest || dictionaryQuery !== query) return;
+        dictionaryError = { kind: "lookup", query };
+        rerender();
+        return;
+      }
       if (request !== lookupRequest || dictionaryQuery !== query) return;
       dictionaryResult = result;
-      dictionarySuggestions = [];
       rerender();
     };
     const showSuggestions = (items) => {
@@ -2828,22 +2929,33 @@ function renderPanel(container, controls) {
         }, "ev-dict-chip"));
       }
     };
-    const runSuggest = async () => {
+    const runSuggest = async (value = lookupInput.value) => {
       const request = ++suggestionRequest;
-      const q2 = lookupInput.value.trim().toLowerCase();
+      const q2 = String(value ?? "").trim().toLowerCase();
       dictionaryQuery = q2;
       lookupRequest += 1;
       dictionaryResult = null;
       dictionarySuggestions = [];
+      dictionaryError = null;
+      dictionaryCollecting = false;
+      dictionaryCollectStatus = "";
       suggestions.textContent = "";
       resultBox.textContent = "";
       if (q2.length < 2) return;
-      const items = await controls.suggestDictionary?.(q2, 8) ?? [];
+      let items;
+      try {
+        items = await controls.suggestDictionary?.(q2, 8) ?? [];
+      } catch {
+        if (request !== suggestionRequest || dictionaryQuery !== q2) return;
+        dictionaryError = { kind: "suggest", query: q2 };
+        rerender();
+        return;
+      }
       if (request !== suggestionRequest || dictionaryQuery !== q2) return;
       dictionarySuggestions = items;
       rerender();
     };
-    lookupInput.addEventListener("input", runSuggest);
+    lookupInput.addEventListener("input", () => runSuggest());
     lookupInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
@@ -2851,7 +2963,13 @@ function renderPanel(container, controls) {
     });
     lookupBox.append(lookupInput, suggestions, resultBox);
     body.append(lookupBox);
-    if (dictionaryResult) showResult(dictionaryResult);
+    if (dictionaryError) {
+      resultBox.append(el("p", "ev-empty", t.dictionaryLoadFailed), button(t.retry, () => {
+        lookupInput.value = dictionaryError.query;
+        if (dictionaryError.kind === "lookup") runLookup(dictionaryError.query);
+        else runSuggest(dictionaryError.query);
+      }));
+    } else if (dictionaryResult) showResult(dictionaryResult);
     else if (dictionarySuggestions.length || dictionaryQuery.length >= 2) showSuggestions(dictionarySuggestions);
     const addRow = el("div", "ev-add");
     const addInput = el("input", "ev-input");
@@ -3046,6 +3164,7 @@ function renderPanel(container, controls) {
       if (saved.focused) node.focus();
       if (role === "notebook-search" || role === "notebook-filter") node.dispatchEvent(new Event(role === "notebook-filter" ? "change" : "input"));
     }
+    scheduleReviewRefresh(state);
   };
   const onKeydown = (event) => {
     if (tab !== "today") return;
@@ -3062,6 +3181,8 @@ function renderPanel(container, controls) {
   const unsubscribe = controls.subscribe?.(rerender) ?? (() => void 0);
   rerender();
   return () => {
+    cleaned = true;
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
     unsubscribe();
     container.removeEventListener("keydown", onKeydown);
     container.textContent = "";
@@ -3088,8 +3209,12 @@ function noticeText(receipt, number, words, t) {
   return t.proposalAborted(number, list);
 }
 function validateEntry(entry) {
-  const word = normalizeWord(entry.word);
-  if (!/^[a-z][a-z'-]{0,63}$/.test(word)) throw new Error(`invalid word: ${entry.word}`);
+  let word;
+  try {
+    word = assertEnglishWord(entry.word);
+  } catch {
+    throw new Error(`invalid word: ${entry.word}`);
+  }
   const definition = String(entry.definition ?? "").trim();
   if (!definition || definition.length > 500) throw new Error(`invalid definition for ${word}`);
   const example = entry.example === void 0 ? void 0 : String(entry.example).trim().replace(/\s+/g, " ");
@@ -33719,6 +33844,7 @@ function rankOf(surface, table) {
 
 // src/level-cache.mjs
 var SHARDS = ["level-cache-0.json", "level-cache-1.json", "level-cache-2.json", "level-cache-3.json"];
+var ANALYSIS_VERSION = 2;
 var MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 var utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 function hashPath(path) {
@@ -33812,6 +33938,7 @@ var LevelCache = class {
       if (!result?.found) continue;
       try {
         const parsed = JSON.parse(result.text);
+        if (parsed.version !== 1 || parsed.analysisVersion !== ANALYSIS_VERSION || !parsed.items || typeof parsed.items !== "object" || Array.isArray(parsed.items)) continue;
         for (const [path, entry] of Object.entries(parsed.items ?? {})) this.items.set(path, entry);
       } catch {
       }
@@ -33842,14 +33969,14 @@ var LevelCache = class {
     if (!this.storage || !this.rootGeneration) return;
     const items = {};
     for (const [path, entry] of this.items.entries()) if (entryShard(path) === name) items[path] = entry;
-    let text = JSON.stringify({ version: 1, items });
+    let text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
     if (utf8Bytes(text) > this.maxShardBytes) {
       const sorted = Object.entries(items).sort((a, b2) => (a[1].usedAt ?? 0) - (b2[1].usedAt ?? 0));
       while (utf8Bytes(text) > this.maxShardBytes && sorted.length > 0) {
         const [oldPath] = sorted.shift();
         delete items[oldPath];
         this.items.delete(oldPath);
-        text = JSON.stringify({ version: 1, items });
+        text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
       }
     }
     try {
@@ -34272,6 +34399,12 @@ var EnglishVocabPlugin = class extends BasePlugin {
     if (generation !== this.rootGeneration) return;
     await this.refreshIndex(generation);
   }
+  async recoverSilentRootChange() {
+    const generation = this.invalidateRoot();
+    await this.handleRootChanged(generation);
+    if (generation === this.rootGeneration) this.notice(this.t.rootChangedDuringReview);
+    return false;
+  }
   async rateWord(word, rating, mode) {
     return this.enqueueMutation(async (isCurrent) => {
       const id = this.nextLogId();
@@ -34286,9 +34419,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       }
       if (!isCurrent()) return false;
       if (result.rootChanged) {
-        this.invalidateRoot();
-        this.notice(this.t.rootChangedDuringReview);
-        return false;
+        return this.recoverSilentRootChange();
       }
       this.state.review = result.review;
       this.state.log = this.reviewStore.effectiveLog();
@@ -34346,8 +34477,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.state.log = this.reviewStore.effectiveLog();
         if (result.rootChanged) {
           this.readingUndoSnapshots.delete(word);
-          this.notice(this.t.rootChangedDuringReview);
-          return false;
+          return this.recoverSilentRootChange();
         }
         if (!result.applied) {
           this.readingUndoSnapshots.delete(word);
@@ -34384,9 +34514,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         const result = await this.reviewStore.mutateReview(flag ? { type: "setFlag", word, flag } : { type: "removeFlag", word });
         if (!isCurrent()) return false;
         if (result.rootChanged) {
-          this.invalidateRoot();
-          this.notice(this.t.rootChangedDuringReview);
-          return false;
+          return this.recoverSilentRootChange();
         }
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();

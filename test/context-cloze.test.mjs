@@ -55,9 +55,9 @@ describe('context cloze', () => {
     expect(resolveExampleSourcePath()).toBeNull();
   });
 
-  it('should include comparative surfaces when entry has adjective pos', () => {
+  it('should include comparative surfaces for adjective pos and permissive unknown-pos cloze', () => {
     expect(surfacesFor({ word: 'big', pos: 'adjective' })).toEqual(expect.arrayContaining(['big', 'bigger', 'biggest']));
-    expect(surfacesFor({ word: 'quick' })).not.toContain('quicker');
+    expect(surfacesFor({ word: 'quick' })).toContain('quicker');
     expect(surfacesFor({ word: 'quick', pos: 'adjective' })).toContain('quicker');
   });
 
@@ -67,10 +67,18 @@ describe('context cloze', () => {
     expect(clozeSentence('A rerun is not run.', { word: 'run' }).text).toBe('A rerun is not _____.');
   });
 
-  it('should not cloze verb forms for noun entries or ambiguous entries without pos', () => {
+  it('should use a permissive inflection union for cloze when note pos cannot be inferred', () => {
+    const run = { word: 'run', definition: 'to move fast on foot' };
+    expect(clozeSentence('She was running late.', run).text).toBe('She was _____ late.');
+    expect(clozeSentence('He ran home.', run).text).toBe('He _____ home.');
+    expect(pickExample({ ...run, examples: ['She was running late.', 'He ran home.'] }, 0)?.sentence).toBe('She was running late.');
+    expect(clozeSentence('She booked it.', { word: 'book', definition: 'a written work' }).text).toBe('She _____ it.');
+  });
+
+  it('should constrain known noun entries while allowing verb forms for unknown-pos cloze', () => {
     expect(clozeSentence('She booked it.', { word: 'book', pos: 'noun' }).text).toBe('She booked it.');
     expect(clozeSentence('They sawed it.', { word: 'saw', pos: 'noun' }).text).toBe('They sawed it.');
-    expect(clozeSentence('She opened it.', { word: 'open' }).text).toBe('She opened it.');
+    expect(clozeSentence('She opened it.', { word: 'open' }).text).toBe('She _____ it.');
   });
 
   it('should not cloze apostrophe tokens or unrelated words when they are not exact surfaces', () => {

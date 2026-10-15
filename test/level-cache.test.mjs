@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLevelCacheEntry, cacheShardNames, LevelCache, scoreCachedEntry } from '../src/level-cache.mjs';
+import { ANALYSIS_VERSION, buildLevelCacheEntry, cacheShardNames, LevelCache, scoreCachedEntry } from '../src/level-cache.mjs';
 import { rankMapFromWords } from '../src/rank-candidates.mjs';
 
 function storage() {
@@ -130,6 +130,24 @@ describe('level cache and novel word scoring', () => {
     io.setRoot('root-b');
     await expect(cache.flush()).resolves.toBeUndefined();
     expect(cache.epoch).toBe('root-b');
+  });
+
+  it('should discard cache shards when their analysis version is missing or unsupported', async () => {
+    const io = storage();
+    io.files.set('level-cache-0.json', JSON.stringify({ version: 1, items: { 'wiki/old.md': { hash: 'same', counted: 1, base: 1, words: {} } } }));
+    io.files.set('level-cache-1.json', JSON.stringify({ version: 1, analysisVersion: 999, items: { 'wiki/future.md': { hash: 'same', counted: 1, base: 1, words: {} } } }));
+    io.files.set('level-cache-2.json', JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items: { 'wiki/current.md': { hash: 'same', counted: 1, base: 0, words: { letter: 1 } } } }));
+    const cache = new LevelCache(io);
+    await cache.load();
+    expect(cache.get('wiki/old.md', 'same')).toBeNull();
+    expect(cache.get('wiki/future.md', 'same')).toBeNull();
+    expect(cache.get('wiki/current.md', 'same')).toMatchObject({ words: { letter: 1 } });
+    io.files.set('level-cache-0.json', JSON.stringify({ version: 999, analysisVersion: ANALYSIS_VERSION, items: {} }));
+    io.files.set('level-cache-1.json', JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION }));
+    io.files.set('level-cache-2.json', JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items: [] }));
+    await cache.load();
+    expect(cache.items.size).toBe(0);
+    await cache.flush();
   });
 
   it('should keep an in-memory cache when plugin storage is missing', async () => {

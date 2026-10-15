@@ -22,4 +22,9 @@ describe('styles.css', () => {
     expect(css).toMatch(/\.ev-reading-card \.ev-context-source-link::after/u);
     expect(css).toMatch(/\.ev-reading-card \.ev-context-source-text/u);
   });
+
+  it('should keep long review cards vertically reachable without horizontal overflow', () => {
+    expect(css).toMatch(/\.ev-body\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/su);
+    expect(css).toMatch(/\.ev-definition\s*\{[^}]*overflow-wrap:\s*anywhere;/su);
+  });
 });

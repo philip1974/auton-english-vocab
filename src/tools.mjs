@@ -1,4 +1,4 @@
-import { appendExample, buildNote, parseNote, slugFor, normalizeWord } from './note-format.mjs';
+import { appendExample, assertEnglishWord, buildNote, parseNote, slugFor, normalizeWord } from './note-format.mjs';
 import { familiarityFor } from './familiarity.mjs';
 import { uiText } from './ui-text.mjs';
 
@@ -19,8 +19,8 @@ function noticeText(receipt, number, words, t) {
 }
 
 function validateEntry(entry) {
-  const word = normalizeWord(entry.word);
-  if (!/^[a-z][a-z'-]{0,63}$/.test(word)) throw new Error(`invalid word: ${entry.word}`);
+  let word;
+  try { word = assertEnglishWord(entry.word); } catch { throw new Error(`invalid word: ${entry.word}`); }
   const definition = String(entry.definition ?? '').trim();
   if (!definition || definition.length > 500) throw new Error(`invalid definition for ${word}`);
   const example = entry.example === undefined ? undefined : String(entry.example).trim().replace(/\s+/g, ' ');

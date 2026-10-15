@@ -41,7 +41,8 @@
   min-height: 0;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-button {
@@ -231,6 +232,7 @@
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-definition {
+  overflow-wrap: anywhere;
   color: var(--agent-color-text-primary, inherit);
   font-weight: 600;
 }

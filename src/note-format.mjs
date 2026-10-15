@@ -1,4 +1,5 @@
-const WORD_RE = /^[a-z][a-z'-]{0,63}$/i;
+const WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
+const WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
 
 export function normalizeWord(word) {
   return String(word ?? '').normalize('NFC').trim().toLowerCase().replaceAll('’', "'");
@@ -8,6 +9,10 @@ export function assertEnglishWord(word) {
   const normalized = normalizeWord(word);
   if (!WORD_RE.test(normalized)) throw new Error(`invalid English word: ${word}`);
   return normalized;
+}
+
+export function isEnglishWordPrefix(word) {
+  return WORD_PREFIX_RE.test(normalizeWord(word));
 }
 
 export function slugFor(word) {
@@ -28,7 +33,8 @@ function sourceLink(source) {
   if (!source) return '';
   if (source.url) {
     if (!source.title) return `<${source.url}>`;
-    return `[${String(source.title).replace(/[\[\]]/g, '\\$&')}](${source.url})`;
+    const url = String(source.url).replaceAll('(', '%28').replaceAll(')', '%29');
+    return `[${String(source.title).replace(/[\[\]]/g, '\\$&')}](${url})`;
   }
   if (source.path) {
     const path = String(source.path).replaceAll('%', '%25').replaceAll(' ', '%20').replaceAll('(', '%28').replaceAll(')', '%29');

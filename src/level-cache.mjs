@@ -4,6 +4,7 @@ import { DEFAULT_LEVEL_SETTINGS, extractReadingTokens, classifyNovelRate } from 
 import { familiarityFor } from './familiarity.mjs';
 
 const SHARDS = ['level-cache-0.json', 'level-cache-1.json', 'level-cache-2.json', 'level-cache-3.json'];
+export const ANALYSIS_VERSION = 2;
 const MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
 const utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 
@@ -113,6 +114,7 @@ export class LevelCache {
       if (!result?.found) continue;
       try {
         const parsed = JSON.parse(result.text);
+        if (parsed.version !== 1 || parsed.analysisVersion !== ANALYSIS_VERSION || !parsed.items || typeof parsed.items !== 'object' || Array.isArray(parsed.items)) continue;
         for (const [path, entry] of Object.entries(parsed.items ?? {})) this.items.set(path, entry);
       } catch {
         // A corrupt cache shard is disposable; rebuilding from source documents is safe.
@@ -149,14 +151,14 @@ export class LevelCache {
     if (!this.storage || !this.rootGeneration) return;
     const items = {};
     for (const [path, entry] of this.items.entries()) if (entryShard(path) === name) items[path] = entry;
-    let text = JSON.stringify({ version: 1, items });
+    let text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
     if (utf8Bytes(text) > this.maxShardBytes) {
       const sorted = Object.entries(items).sort((a, b) => (a[1].usedAt ?? 0) - (b[1].usedAt ?? 0));
       while (utf8Bytes(text) > this.maxShardBytes && sorted.length > 0) {
         const [oldPath] = sorted.shift();
         delete items[oldPath];
         this.items.delete(oldPath);
-        text = JSON.stringify({ version: 1, items });
+        text = JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items });
       }
     }
     try {

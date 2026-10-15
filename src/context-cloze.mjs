@@ -23,10 +23,12 @@ export function parseExampleLine(text) {
   if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
-    const target = decodeSourcePath(markdown.groups.path.trim());
+    const rawTarget = markdown.groups.path.trim();
+    const web = /^https?:\/\//u.test(rawTarget);
+    const target = web ? rawTarget : decodeSourcePath(rawTarget);
     return {
       sentence: markdown.groups.sentence.trim(),
-      source: /^https?:\/\//u.test(target)
+      source: web
         ? { title: unescapeTitle(markdown.groups.title), url: target }
         : { title: unescapeTitle(markdown.groups.title), path: target },
     };
@@ -74,7 +76,7 @@ export function resolveExampleSourcePath(notePath, rawPath) {
 }
 
 export function surfacesFor(entry) {
-  return [...buildSurfaceMap([entry]).keys()].sort();
+  return [...buildSurfaceMap([entry], { permissive: true }).keys()].sort();
 }
 
 function tokenMatches(sentence, surfaces) {

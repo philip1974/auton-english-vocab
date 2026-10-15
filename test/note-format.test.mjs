@@ -39,6 +39,14 @@ describe('note format', () => {
     expect(() => buildNote({ word: 'valid' })).toThrow(/definition is required/);
   });
 
+  it('should reject leading trailing or repeated punctuation inside collected words', () => {
+    for (const word of ['run-', '-run', 'a--b', "don't-", "a''b", "'run", 'run--fast']) {
+      expect(() => assertEnglishWord(word)).toThrow(/invalid English word/u);
+    }
+    expect(assertEnglishWord("mother-in-law")).toBe('mother-in-law');
+    expect(assertEnglishWord("don't")).toBe("don't");
+  });
+
   it('should reject append when frontmatter is broken', () => {
     expect(() => appendExample('---\ntype: vocab\n---\n# broken\n', 'x')).toThrow(/frontmatter invalid/);
   });
@@ -66,6 +74,13 @@ describe('note format', () => {
       sentence: 'Read it.',
       source: { url: 'https://example.com/article', title: 'Article title' },
     });
+  });
+
+  it('should round trip titled web urls containing parentheses without decoding existing escapes', () => {
+    const original = 'https://example.com/a_%28b%29_(c)';
+    const line = parseNote(buildNote({ word: 'web', definition: '网络', example: 'Use run.', source: { url: original, title: 'A [title]' } })).entry.examples[0];
+    expect(line).toContain('a_%28b%29_%28c%29');
+    expect(parseExampleLine(line)).toEqual({ sentence: 'Use run.', source: { url: 'https://example.com/a_%28b%29_%28c%29', title: 'A [title]' } });
   });
 
   it('should parse unquoted and single quoted scalars when frontmatter is hand edited', () => {

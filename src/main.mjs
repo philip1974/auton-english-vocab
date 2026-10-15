@@ -297,6 +297,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
     await this.refreshIndex(generation);
   }
 
+  async recoverSilentRootChange() {
+    const generation = this.invalidateRoot();
+    await this.handleRootChanged(generation);
+    if (generation === this.rootGeneration) this.notice(this.t.rootChangedDuringReview);
+    return false;
+  }
+
   async rateWord(word, rating, mode) {
     return this.enqueueMutation(async (isCurrent) => {
       const id = this.nextLogId();
@@ -311,9 +318,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       }
       if (!isCurrent()) return false;
       if (result.rootChanged) {
-        this.invalidateRoot();
-        this.notice(this.t.rootChangedDuringReview);
-        return false;
+        return this.recoverSilentRootChange();
       }
       this.state.review = result.review;
       this.state.log = this.reviewStore.effectiveLog();
@@ -372,8 +377,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         this.state.log = this.reviewStore.effectiveLog();
         if (result.rootChanged) {
           this.readingUndoSnapshots.delete(word);
-          this.notice(this.t.rootChangedDuringReview);
-          return false;
+          return this.recoverSilentRootChange();
         }
         if (!result.applied) {
           this.readingUndoSnapshots.delete(word);
@@ -414,9 +418,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         const result = await this.reviewStore.mutateReview(flag ? { type: 'setFlag', word, flag } : { type: 'removeFlag', word });
         if (!isCurrent()) return false;
         if (result.rootChanged) {
-          this.invalidateRoot();
-          this.notice(this.t.rootChangedDuringReview);
-          return false;
+          return this.recoverSilentRootChange();
         }
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();

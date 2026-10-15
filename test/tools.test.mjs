@@ -157,6 +157,8 @@ describe('tools', () => {
     await expect(add({ entries: [] })).rejects.toThrow(/1-20/);
     await expect(add({ entries: [{ word: 'a', definition: '' }] })).rejects.toThrow(/invalid definition/);
     await expect(add({ entries: [{ word: 'x'.repeat(65), definition: 'x' }] })).rejects.toThrow(/invalid word/);
+    await expect(add({ entries: [{ word: 'run-', definition: 'x' }] })).rejects.toThrow(/invalid word/);
+    await expect(add({ entries: [{ word: 'a--b', definition: 'x' }] })).rejects.toThrow(/invalid word/);
     await expect(add({ entries: [{ word: 'beta', definition: 'x', example: 'x'.repeat(601) }] })).rejects.toThrow(/example too long/);
   });
 

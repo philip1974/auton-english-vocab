@@ -1,4 +1,4 @@
-const SURFACE_RE = /^[a-z][a-z'’-]{0,63}$/u;
+const SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
 const DENYLIST = new Set([
   'us', 'as', 'is', 'was', 'has', 'its', 'bus', 'gas', 'yes', 'this', 'thus', 'plus',
@@ -201,6 +201,13 @@ const IRREGULAR_NOUNS = {
   tooth: ['teeth'], foot: ['feet'], goose: ['geese'], ox: ['oxen'],
 };
 
+const O_ES_NOUNS = new Set(['echo', 'hero', 'potato', 'tomato']);
+const VES_NOUNS = new Map([
+  ['calf', 'calves'], ['half', 'halves'], ['knife', 'knives'], ['leaf', 'leaves'],
+  ['life', 'lives'], ['loaf', 'loaves'], ['self', 'selves'], ['shelf', 'shelves'],
+  ['thief', 'thieves'], ['wife', 'wives'], ['wolf', 'wolves'],
+]);
+
 const IRREGULAR_COMPARATIVES = {
   good: ['better', 'best'], well: ['better', 'best'], bad: ['worse', 'worst'],
   far: ['farther', 'farthest', 'further', 'furthest'],
@@ -290,6 +297,7 @@ function presentParticiple(lemma) {
   if (lemma.endsWith('ie')) return `${lemma.slice(0, -2)}ying`;
   if (/(?:ee|ye|oe)$/u.test(lemma)) return `${lemma}ing`;
   if (lemma.endsWith('e')) return `${lemma.slice(0, -1)}ing`;
+  if (lemma.endsWith('c')) return `${lemma}king`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ing`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ing`;
@@ -299,6 +307,7 @@ function presentParticiple(lemma) {
 function regularPast(lemma) {
   if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ied`;
   if (lemma.endsWith('e')) return `${lemma}d`;
+  if (lemma.endsWith('c')) return `${lemma}ked`;
   const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
   if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ed`;
   if (syllables > 1 && isCvc(lemma)) return `${lemma}ed`;
@@ -312,8 +321,12 @@ function generatedForms(lemma, pos) {
     if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
     const irregular = IRREGULAR_NOUNS[lemma];
     if (irregular) for (const form of irregular) addCandidate(forms, form);
+    else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
+    else if (/fe?$/u.test(lemma)) return forms;
+    else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
-    else if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+    else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
+    else if (/(s|x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
     return forms;
   }
@@ -350,7 +363,7 @@ function chooseLemma(surface, current, next, collected) {
   return next.localeCompare(current) < 0 ? next : current;
 }
 
-export function buildSurfaceMap(words) {
+export function buildSurfaceMap(words, { permissive = false } = {}) {
   const collected = new Set();
   const parts = new Map();
   for (const value of words) {
@@ -365,7 +378,9 @@ export function buildSurfaceMap(words) {
   for (const lemma of collected) {
     const surfaces = new Set([lemma]);
     if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", '’'));
-    for (const part of parts.get(lemma) ?? []) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
+    const generatedParts = parts.get(lemma) ?? new Set();
+    const selectedParts = permissive && generatedParts.size === 0 ? new Set(['noun', 'verb', 'comparative']) : generatedParts;
+    for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface) || (surface !== lemma && DENYLIST.has(surface))) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));

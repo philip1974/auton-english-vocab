@@ -45,7 +45,19 @@ export function rateCard(serialized, ratingName, now = new Date()) {
 
 export function activeReviewLog(log = []) {
   const undone = new Set(log.filter((entry) => entry?.undoOf).map((entry) => entry.undoOf));
-  return log.filter((entry) => !entry?.undoOf && (!entry?.id || !undone.has(entry.id)));
+  const legacyUndone = new Set();
+  for (let index = 0; index < log.length; index += 1) {
+    const entry = log[index];
+    if (!entry?.undo || !entry.word) continue;
+    for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+      const rating = log[candidate];
+      if (rating?.word !== entry.word || rating?.undo || rating?.undoOf || legacyUndone.has(candidate)) continue;
+      if (rating.id && undone.has(rating.id)) continue;
+      legacyUndone.add(candidate);
+      break;
+    }
+  }
+  return log.filter((entry, index) => !entry?.undo && !entry?.undoOf && !legacyUndone.has(index) && (!entry?.id || !undone.has(entry.id)));
 }
 
 export function dueQueue(words, review, options = {}, now = new Date()) {
