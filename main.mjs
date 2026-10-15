@@ -16,6 +16,7 @@ var TEXT = {
     invalidReviewItems: (count) => `${count} damaged review flag or pending log item(s) were skipped.`,
     unsupportedReviewVersion: "review.json uses an unsupported version. It was backed up and will not be overwritten.",
     corruptLog: "log.json is damaged. It was backed up and the review log was reset.",
+    logIdCollisions: (count) => `${count} conflicting review log ID(s) were recovered; the original log was backed up.`,
     pendingLogRecoveryFailed: "Pending review logs could not be recovered yet. They remain saved and will be retried later.",
     termsLimited: "The vocabulary notebook is too large. Highlighting was limited to collected words.",
     hyphenHighlightLimited: "Hyphenated words work in context review, but the host splits them for document highlighting.",
@@ -136,6 +137,7 @@ var TEXT = {
     invalidReviewItems: (count) => `已跳过 ${count} 条损坏的复习标记或待补写日志。`,
     unsupportedReviewVersion: "review.json 版本不受支持，已备份且不会覆盖原文件。",
     corruptLog: "log.json 已损坏，已备份并从空日志恢复。",
+    logIdCollisions: (count) => `已恢复 ${count} 条 ID 冲突的复习日志，原日志已备份。`,
     pendingLogRecoveryFailed: "待补写的复习日志暂时无法恢复，记录仍已保存，稍后会重试。",
     termsLimited: "生词本过大，正文标记已退化为仅匹配原词。",
     hyphenHighlightLimited: "连字符词可用于语境复习，但宿主正文标记会按单词拆分。",
@@ -256,6 +258,7 @@ var TEXT = {
     invalidReviewItems: (count) => `破損した復習フラグまたは保留ログ ${count} 件をスキップしました。`,
     unsupportedReviewVersion: "review.json のバージョンは未対応です。バックアップし、元ファイルは上書きしません。",
     corruptLog: "log.json が破損しています。バックアップして復習ログを初期化しました。",
+    logIdCollisions: (count) => `ID が競合した復習ログ ${count} 件を復元し、元のログをバックアップしました。`,
     pendingLogRecoveryFailed: "保留中の復習ログをまだ復元できません。記録は保存されており、後で再試行します。",
     termsLimited: "単語帳が大きすぎるため、本文表示を登録語だけに制限しました。",
     hyphenHighlightLimited: "ハイフン付き単語は文脈復習で使えますが、本文表示ではホストにより単語ごとに分割されます。",
@@ -376,6 +379,7 @@ var TEXT = {
     invalidReviewItems: (count) => `손상된 복습 표시 또는 대기 로그 ${count}개를 건너뛰었습니다.`,
     unsupportedReviewVersion: "review.json 버전이 지원되지 않습니다. 백업했으며 원본을 덮어쓰지 않습니다.",
     corruptLog: "log.json이 손상되었습니다. 백업 후 복습 로그를 초기화했습니다.",
+    logIdCollisions: (count) => `ID가 충돌한 복습 로그 ${count}개를 복구하고 원본 로그를 백업했습니다.`,
     pendingLogRecoveryFailed: "대기 중인 복습 로그를 아직 복구하지 못했습니다. 기록은 보존되며 나중에 다시 시도합니다.",
     termsLimited: "단어장이 너무 커서 본문 표시는 수집한 원형으로 제한했습니다.",
     hyphenHighlightLimited: "하이픈 단어는 문맥 복습에서 사용할 수 있지만 본문 표시는 호스트가 단어별로 분리합니다.",
@@ -1146,8 +1150,8 @@ function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date())
   const dueReview = [];
   for (const item of words) {
     const word = item.word;
-    const card = review.cards[word];
-    const flag = review.flags[word];
+    const card = Object.hasOwn(review.cards, word) ? review.cards[word] : void 0;
+    const flag = Object.hasOwn(review.flags, word) ? review.flags[word] : void 0;
     if (!isReviewable(card, flag)) continue;
     const familiarity = familiarityFor(card, flag);
     if (!card || familiarity === "new") dueNew.push({ ...item, familiarity });
@@ -1159,12 +1163,44 @@ function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date())
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
   };
   const today2 = localDay(now);
-  const introduced = new Set(activeReviewLog(options.log).filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0 || entry.previousState == null)).map((entry) => entry.word)).size;
+  const introduced = new Set(activeReviewLog(options.log).filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word)).size;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];
 }
 
 // src/review-store.mjs
-var EMPTY = () => ({ version: 1, cards: {}, flags: {} });
+var wordRecord = () => /* @__PURE__ */ Object.create(null);
+var EMPTY = () => ({ version: 1, cards: wordRecord(), flags: wordRecord() });
+function sameLogEntry(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+function uniqueLogEntries(values, onCollision = () => void 0) {
+  const entries = [];
+  const byId = /* @__PURE__ */ new Map();
+  for (const value of values) {
+    if (!value?.id) {
+      entries.push(value);
+      continue;
+    }
+    const existing = byId.get(value.id);
+    if (!existing) {
+      byId.set(value.id, value);
+      entries.push(value);
+      continue;
+    }
+    if (sameLogEntry(existing, value)) continue;
+    onCollision(value.id);
+    let suffix = 1;
+    let id = `${value.id}~recovered-${suffix}`;
+    while (byId.has(id)) {
+      suffix += 1;
+      id = `${value.id}~recovered-${suffix}`;
+    }
+    const recovered = { ...value, id };
+    byId.set(id, recovered);
+    entries.push(recovered);
+  }
+  return entries;
+}
 function codeOf(error) {
   return error && typeof error === "object" && typeof error.code === "string" ? error.code : "";
 }
@@ -1228,20 +1264,25 @@ var ReviewStore = class {
     try {
       let invalidCards = 0;
       let invalidItems = 0;
+      let logIdCollisions = 0;
       this.review = normalizeReview(JSON.parse(result.text), {
         onInvalidCard: () => {
           invalidCards += 1;
         },
         onInvalidItem: () => {
           invalidItems += 1;
+        },
+        onLogIdCollision: () => {
+          logIdCollisions += 1;
         }
       });
-      if (invalidCards > 0 || invalidItems > 0) {
+      if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
         await this.#backupCorrupt("review", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
       }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
+      if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
       await this.#backupCorrupt("review", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
@@ -1268,7 +1309,15 @@ var ReviewStore = class {
     try {
       const parsed = JSON.parse(result.text);
       if (!Array.isArray(parsed)) throw new Error("log must be an array");
-      this.log = parsed.slice(-2e3);
+      let collisions = 0;
+      this.log = uniqueLogEntries(parsed, () => {
+        collisions += 1;
+      }).slice(-2e3);
+      if (collisions > 0) {
+        await this.#backupCorrupt("log", result.text, rootGeneration, generation);
+        if (this.#stale(generation, rootGeneration)) return;
+        this.notify(this.t.logIdCollisions(collisions));
+      }
     } catch {
       await this.#backupCorrupt("log", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
@@ -1278,12 +1327,22 @@ var ReviewStore = class {
     }
   }
   async #backupCorrupt(kind, text, rootGeneration = this.rootGeneration, generation = this.generation) {
-    const stamp = this.now().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
-    await this.app.storage.write(rootGeneration, `${kind}.corrupt-${stamp}.json`, text);
+    const stamp = this.now().toISOString().replace(/[^0-9]/g, "").slice(0, 17);
+    let name;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const nonce = globalThis.crypto?.randomUUID?.().replaceAll("-", "").slice(0, 12) ?? `${Math.random().toString(36).slice(2, 10)}${attempt}`;
+      name = `${kind}.corrupt-${stamp}-${nonce}.json`;
+      try {
+        await this.app.storage.write(rootGeneration, name, text, { expectedRevision: null });
+        break;
+      } catch (error) {
+        if (codeOf(error) !== "REVISION_CONFLICT" || attempt === 3) throw error;
+      }
+    }
     if (this.#stale(generation, rootGeneration)) return;
     const listed = await this.app.storage.list(rootGeneration);
     if (this.#stale(generation, rootGeneration)) return;
-    const backups = listed.filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+\\.json$`, "u").test(item.name)).sort((a, b2) => a.name.localeCompare(b2.name));
+    const backups = listed.filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, "iu").test(item.name)).sort((a, b2) => a.name.localeCompare(b2.name));
     for (const item of backups.slice(0, -3)) {
       await this.app.storage.remove(rootGeneration, item.name);
       if (this.#stale(generation, rootGeneration)) return;
@@ -1349,8 +1408,7 @@ var ReviewStore = class {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const exists = entry?.id && this.log.some((item) => item?.id === entry.id);
-      const next = (exists ? this.log : [...this.log, entry]).slice(-2e3);
+      const next = uniqueLogEntries([...this.log, entry]).slice(-2e3);
       try {
         const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(next), {
           expectedRevision: this.logRevision
@@ -1368,10 +1426,7 @@ var ReviewStore = class {
     return this.log;
   }
   effectiveLog() {
-    const entries = /* @__PURE__ */ new Map();
-    for (const entry of this.log) entries.set(entry?.id ?? Symbol(), entry);
-    for (const entry of this.review.pendingLogs ?? []) entries.set(entry.id, entry);
-    return [...entries.values()].slice(-2e3);
+    return uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]).slice(-2e3);
   }
   async flushPendingLogs() {
     const generation = this.generation;
@@ -1396,7 +1451,7 @@ var ReviewStore = class {
 };
 function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()) {
   const review = normalizeReview(value);
-  const previousCard = review.cards[operation.word] ?? null;
+  const previousCard = Object.hasOwn(review.cards, operation.word) ? review.cards[operation.word] : null;
   if (operation.type === "restoreCardIfFingerprint" && JSON.stringify(previousCard) !== operation.expectedFingerprint) {
     return { review, previousCard, applied: false };
   }
@@ -1415,11 +1470,11 @@ function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()
   } else throw new Error(`unknown review operation: ${operation.type}`);
   if (operation.logEntry) {
     const entry = operation.type === "rateCard" ? { ...operation.logEntry, previousState: previousCard?.state ?? "New" } : operation.logEntry;
-    review.pendingLogs = [...(review.pendingLogs ?? []).filter((item) => item.id !== entry.id), entry];
+    review.pendingLogs = uniqueLogEntries([...review.pendingLogs ?? [], entry]);
   }
   return { review, previousCard, applied: true };
 }
-function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = () => void 0 } = {}) {
+function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = () => void 0, onLogIdCollision = () => void 0 } = {}) {
   if (value?.version !== void 0 && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: "UNSUPPORTED_REVIEW_VERSION" });
   }
@@ -1453,24 +1508,25 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
     else onInvalidItem(`flag:${word}`);
   }
   if (Array.isArray(value.pendingLogs)) {
-    review.pendingLogs = [];
+    const pendingLogs = [];
     for (const entry of value.pendingLogs) {
-      if (entry && typeof entry === "object" && !Array.isArray(entry) && typeof entry.id === "string") review.pendingLogs.push(entry);
+      if (entry && typeof entry === "object" && !Array.isArray(entry) && typeof entry.id === "string") pendingLogs.push(entry);
       else onInvalidItem("pendingLog");
     }
-    review.pendingLogs = review.pendingLogs.slice(-2e3);
+    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2e3);
   }
   return review;
 }
 function mergeReview(base, incoming) {
   const merged = normalizeReview(base);
   const other = normalizeReview(incoming);
-  for (const [word, card] of Object.entries(other.cards)) merged.cards[word] = newestCard(merged.cards[word], card);
-  merged.flags = { ...merged.flags, ...other.flags };
+  for (const [word, card] of Object.entries(other.cards)) {
+    const current = Object.hasOwn(merged.cards, word) ? merged.cards[word] : void 0;
+    merged.cards[word] = newestCard(current, card);
+  }
+  for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    const pending = new Map((merged.pendingLogs ?? []).map((entry) => [entry.id, entry]));
-    for (const entry of other.pendingLogs ?? []) pending.set(entry.id, entry);
-    merged.pendingLogs = [...pending.values()].slice(-2e3);
+    merged.pendingLogs = uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]).slice(-2e3);
   }
   return merged;
 }
@@ -1591,11 +1647,13 @@ function parseNote(text) {
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return { ok: false, error: "missing frontmatter" };
   try {
-    const fields = {};
+    const fields = /* @__PURE__ */ Object.create(null);
     for (const line of match[1].split("\n")) {
+      if (!line.trim() || /^\s*#/u.test(line)) continue;
       const index = line.indexOf(":");
-      if (index <= 0) continue;
-      fields[line.slice(0, index).trim()] = parseYamlScalar(line.slice(index + 1));
+      const key = line.slice(0, Math.max(0, index)).trim();
+      if (index <= 0 || /^\s/u.test(line) || !/^[A-Za-z][A-Za-z0-9_-]*$/u.test(key)) throw new Error(`unsupported frontmatter line: ${line}`);
+      fields[key] = parseYamlScalar(line.slice(index + 1));
     }
     if (fields.type !== "vocab" || !fields.word) return { ok: false, error: "missing word" };
     const word = assertEnglishWord(fields.word);
@@ -1891,7 +1949,7 @@ var DENYLIST = /* @__PURE__ */ new Set([
   "basis",
   "analysis"
 ]);
-var IRREGULAR_VERBS = {
+var IRREGULAR_VERBS = new Map(Object.entries({
   abide: ["abode", "abode"],
   alight: ["alit", "alit"],
   arise: ["arose", "arisen"],
@@ -2080,8 +2138,8 @@ var IRREGULAR_VERBS = {
   withstand: ["withstood", "withstood"],
   wring: ["wrung", "wrung"],
   write: ["wrote", "written"]
-};
-var IRREGULAR_NOUNS = {
+}));
+var IRREGULAR_NOUNS = new Map(Object.entries({
   analysis: ["analyses"],
   axis: ["axes"],
   crisis: ["crises"],
@@ -2094,7 +2152,7 @@ var IRREGULAR_NOUNS = {
   foot: ["feet"],
   goose: ["geese"],
   ox: ["oxen"]
-};
+}));
 var O_ES_NOUNS = /* @__PURE__ */ new Set(["echo", "hero", "potato", "tomato"]);
 var VES_NOUNS = /* @__PURE__ */ new Map([
   ["calf", "calves"],
@@ -2109,14 +2167,13 @@ var VES_NOUNS = /* @__PURE__ */ new Map([
   ["wife", "wives"],
   ["wolf", "wolves"]
 ]);
-var IRREGULAR_COMPARATIVES = {
+var IRREGULAR_COMPARATIVES = new Map(Object.entries({
   good: ["better", "best"],
   well: ["better", "best"],
   bad: ["worse", "worst"],
   far: ["farther", "farthest", "further", "furthest"]
-};
-var IRREGULAR = new Map(Object.entries({
-  ...IRREGULAR_VERBS,
+}));
+var IRREGULAR = new Map([...IRREGULAR_VERBS.entries(), ...Object.entries({
   be: ["am", "are", "is", "was", "were", "been", "being"],
   child: ["children"],
   man: ["men"],
@@ -2131,7 +2188,7 @@ var IRREGULAR = new Map(Object.entries({
   well: ["better", "best"],
   bad: ["worse", "worst"],
   far: ["farther", "farthest", "further", "furthest"]
-}).map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
+})].map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
 function normalize(value) {
   return String(value ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
 }
@@ -2175,14 +2232,14 @@ function partsOf(value) {
   return parts;
 }
 var INFLECTED_VERB_SURFACES = /* @__PURE__ */ new Set([
-  ...Object.values(IRREGULAR_VERBS).flat(),
+  ...[...IRREGULAR_VERBS.values()].flat(),
   "am",
   "are",
   "is",
   "does",
   "has"
 ]);
-var INFLECTED_NOUN_SURFACES = new Set(Object.values(IRREGULAR_NOUNS).flat());
+var INFLECTED_NOUN_SURFACES = new Set([...IRREGULAR_NOUNS.values()].flat());
 function thirdPerson(lemma) {
   if (lemma === "be") return "is";
   if (lemma === "have") return "has";
@@ -2213,8 +2270,8 @@ function generatedForms(lemma, pos) {
   const forms = /* @__PURE__ */ new Set();
   if (lemma.includes("'")) return forms;
   if (pos === "noun") {
-    if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
-    const irregular2 = IRREGULAR_NOUNS[lemma];
+    if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS.has(lemma)) return forms;
+    const irregular2 = IRREGULAR_NOUNS.get(lemma);
     if (irregular2) for (const form of irregular2) addCandidate(forms, form, true);
     else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
     else if (/fe?$/u.test(lemma)) return forms;
@@ -2227,7 +2284,7 @@ function generatedForms(lemma, pos) {
     return forms;
   }
   if (pos === "comparative") {
-    const irregular2 = IRREGULAR_COMPARATIVES[lemma];
+    const irregular2 = IRREGULAR_COMPARATIVES.get(lemma);
     if (irregular2) for (const form of irregular2) addCandidate(forms, form, true);
     else if (endsConsonantY(lemma)) {
       addCandidate(forms, `${lemma.slice(0, -1)}ier`);
@@ -2242,8 +2299,8 @@ function generatedForms(lemma, pos) {
     return forms;
   }
   if (pos !== "verb") return forms;
-  if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS[lemma]) return forms;
-  const irregular = IRREGULAR_VERBS[lemma];
+  if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS.has(lemma)) return forms;
+  const irregular = IRREGULAR_VERBS.get(lemma);
   for (const form of irregular ?? []) addCandidate(forms, form, true);
   if (lemma === "be") for (const form of ["am", "are", "is", "was", "were", "been", "being"]) addCandidate(forms, form, true);
   addCandidate(forms, thirdPerson(lemma), lemma === "be" || lemma === "have");
@@ -2259,10 +2316,10 @@ function inflectionKindsFor(lemmaValue, surfaceValue) {
   if (generatedForms(lemma, "noun").has(surface)) kinds.add("plural");
   if (thirdPerson(lemma) === surface) kinds.add("thirdPerson");
   if (presentParticiple(lemma) === surface) kinds.add("presentParticiple");
-  const irregular = IRREGULAR_VERBS[lemma];
+  const irregular = IRREGULAR_VERBS.get(lemma);
   if (irregular?.[0] === surface || !irregular && regularPast(lemma) === surface) kinds.add("past");
   if (irregular?.[1] === surface || !irregular && regularPast(lemma) === surface) kinds.add("pastParticiple");
-  const comparative = IRREGULAR_COMPARATIVES[lemma];
+  const comparative = IRREGULAR_COMPARATIVES.get(lemma);
   if (comparative?.[0] === surface) kinds.add("comparative");
   if (comparative?.[1] === surface) kinds.add("superlative");
   if (!comparative) {
@@ -2487,7 +2544,7 @@ async function entryFor(word, importer) {
   const letter = firstLetter(word);
   if (!letter) return null;
   const chunk = await loadChunk(letter, importer);
-  return chunk?.[word] ?? null;
+  return chunk && Object.hasOwn(chunk, word) ? chunk[word] : null;
 }
 function exchangeLemma(entry) {
   const exchange = String(entry?.x ?? "");
@@ -2813,7 +2870,8 @@ function renderPanel(container, controls) {
     midnight.setHours(24, 0, 0, 0);
     let wakeAt = midnight.getTime();
     for (const entry of state.entries) {
-      const due = Date.parse(state.review.cards?.[entry.word]?.due);
+      const card = state.review.cards && Object.hasOwn(state.review.cards, entry.word) ? state.review.cards[entry.word] : void 0;
+      const due = Date.parse(card?.due);
       if (Number.isFinite(due) && due > now.getTime() && due < wakeAt) wakeAt = due;
     }
     refreshTimer = setTimeout(() => {
@@ -3104,13 +3162,15 @@ function renderPanel(container, controls) {
       const current = { entries: [], review: { cards: {}, flags: {} }, ...read() };
       const q2 = search.value.trim().toLowerCase();
       for (const entry of current.entries) {
-        const fam = familiarityFor(current.review.cards[entry.word], current.review.flags[entry.word]);
+        const card = Object.hasOwn(current.review.cards, entry.word) ? current.review.cards[entry.word] : void 0;
+        const currentFlag = Object.hasOwn(current.review.flags, entry.word) ? current.review.flags[entry.word] : void 0;
+        const fam = familiarityFor(card, currentFlag);
         if (q2 && !entry.word.includes(q2) || filter.value !== "all" && fam !== filter.value) continue;
         const row = el("div", "ev-row");
         const head = el("div", "ev-row-head");
         head.append(el("strong", "ev-row-word", entry.word), el("small", "ev-badge", t[fam] || fam));
         const actions = el("div", "ev-row-actions");
-        const flag = current.review.flags[entry.word];
+        const flag = currentFlag;
         if (fam !== "mastered" && flag !== "ignored") actions.append(button(t.markMastered, () => setFlag(entry.word, "mastered")));
         if (flag !== "ignored") actions.append(button(t.ignore, () => setFlag(entry.word, "ignored")));
         if (flag === "mastered" || flag === "ignored") actions.append(button(flag === "mastered" ? t.restoreReview : t.restore, () => setFlag(entry.word, void 0)));
@@ -3120,8 +3180,11 @@ function renderPanel(container, controls) {
     };
     const setFlag = (word, flag) => {
       if (controls.onFlag) controls.onFlag(word, flag);
-      else if (flag) state.review.flags[word] = flag;
-      else delete state.review.flags[word];
+      else {
+        state.review.flags = Object.assign(/* @__PURE__ */ Object.create(null), state.review.flags);
+        if (flag) state.review.flags[word] = flag;
+        else delete state.review.flags[word];
+      }
       draw();
     };
     search.addEventListener("input", draw);
@@ -3404,8 +3467,9 @@ function makeVocabLookup({ index, review, getReview = () => review }) {
     const word = normalizeWord(input?.word);
     const entry = index.get(word);
     const current = getReview();
-    const card = current.cards[word];
-    const familiarity = familiarityFor(card, current.flags[word]);
+    const card = Object.hasOwn(current.cards, word) ? current.cards[word] : void 0;
+    const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : void 0;
+    const familiarity = familiarityFor(card, flag);
     return JSON.stringify({
       collected: Boolean(entry),
       word,
@@ -3621,7 +3685,9 @@ function buildReadingTerms({ entries = [], review = { cards: {}, flags: {} } } =
   for (const [surface, key] of surfaceMap.entries()) {
     const entry = entriesByWord.get(key);
     if (!entry) continue;
-    const familiarity = familiarityFor(review.cards?.[key], review.flags?.[key]);
+    const card = review.cards && Object.hasOwn(review.cards, key) ? review.cards[key] : void 0;
+    const flag = review.flags && Object.hasOwn(review.flags, key) ? review.flags[key] : void 0;
+    const familiarity = familiarityFor(card, flag);
     const tone = TONE_BY_FAMILIARITY[familiarity];
     if (!tone) continue;
     terms.push({ surface, tone, key });
@@ -3649,7 +3715,9 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
         card.addEventListener("click", (event) => event.stopPropagation());
         const heading = el2("div", "ev-reading-heading");
         const word = el2("strong", "ev-reading-word", context.word === context.key ? context.key : `${context.word} → ${context.key}`);
-        const familiarity = familiarityFor(state.review?.cards?.[context.key], state.review?.flags?.[context.key]);
+        const cardState = state.review?.cards && Object.hasOwn(state.review.cards, context.key) ? state.review.cards[context.key] : void 0;
+        const flagState = state.review?.flags && Object.hasOwn(state.review.flags, context.key) ? state.review.flags[context.key] : void 0;
+        const familiarity = familiarityFor(cardState, flagState);
         heading.append(word, el2("span", `ev-reading-badge ev-reading-${context.tone}`, t[familiarity] || t[context.tone] || context.tone));
         card.append(heading);
         if (context.tone === null) card.append(el2("p", "ev-reading-note", t.collectedWord));
@@ -33860,7 +33928,7 @@ var RANK_DENYLIST = /* @__PURE__ */ new Set([
   "blessed",
   "cursed"
 ]);
-var IRREGULAR_BASE = {
+var IRREGULAR_BASE = new Map(Object.entries({
   take: ["taken", "took"],
   run: ["ran"],
   be: ["am", "are", "been", "being", "were"],
@@ -33868,9 +33936,9 @@ var IRREGULAR_BASE = {
   write: ["wrote", "written"],
   speak: ["spoke", "spoken"],
   see: ["saw", "seen"]
-};
+}));
 var IRREGULAR_SURFACE = /* @__PURE__ */ new Map();
-for (const [base, forms] of Object.entries(IRREGULAR_BASE)) {
+for (const [base, forms] of IRREGULAR_BASE.entries()) {
   for (const form of forms) IRREGULAR_SURFACE.set(form, base);
 }
 var COMPARATIVE_BASES = /* @__PURE__ */ new Set([
@@ -33977,14 +34045,15 @@ function isRootChanged(error) {
 function familiarityForCollected(review, word, surfaceMap) {
   if (!surfaceMap.has(word)) return null;
   const lemma = surfaceMap.get(word);
-  return familiarityFor(review?.cards?.[lemma] ?? review?.cards?.[word], review?.flags?.[lemma] ?? review?.flags?.[word]);
+  const own = (record, key) => record && Object.hasOwn(record, key) ? record[key] : void 0;
+  return familiarityFor(own(review?.cards, lemma) ?? own(review?.cards, word), own(review?.flags, lemma) ?? own(review?.flags, word));
 }
 function cacheShardNameForPath(path) {
   return entryShard(path);
 }
 function buildLevelCacheEntry(markdown, table, now = Date.now()) {
   const ranks = table instanceof Map ? table : rankMapFromWords(table);
-  const words = {};
+  const words = /* @__PURE__ */ Object.create(null);
   let base = 0;
   let counted = 0;
   for (const token of extractReadingTokens(markdown)) {
@@ -33992,7 +34061,7 @@ function buildLevelCacheEntry(markdown, table, now = Date.now()) {
     counted += 1;
     const rank = rankOf(token.word, ranks);
     if (rank !== null && rank <= 1e3) base += 1;
-    else words[token.word] = (words[token.word] ?? 0) + 1;
+    else words[token.word] = (Object.hasOwn(words, token.word) ? words[token.word] : 0) + 1;
   }
   return { english: true, counted, base, words, usedAt: now };
 }
@@ -34189,8 +34258,11 @@ var ReadingRecommender = class {
   }
   async recommend({ review = { cards: {}, flags: {} }, entries = [], onProgress = this.onProgress } = {}) {
     const started = this.scopeEpoch();
+    const cacheEpoch = this.cache.epoch;
+    const current = () => this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
     this.epoch = started;
     const metas = unwrap3(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
+    if (!current()) return { stale: true, items: [], skipped: { "not-english": 0, "too-short": 0, unreadable: 0 } };
     const skipped = { "not-english": 0, "too-short": 0, unreadable: 0 };
     const items = [];
     let done = 0;
@@ -34209,36 +34281,43 @@ var ReadingRecommender = class {
           else skipped[cached.reason] = (skipped[cached.reason] ?? 0) + 1;
           done += 1;
           onProgress(done, metas.length);
-          if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
+          if (!current()) return { stale: true, items: [], skipped };
           continue;
         }
         let doc;
         try {
           doc = unwrap3(await this.app.knowledge.readDocument({ path: meta.path }));
         } catch {
+          if (!current()) return { stale: true, items: [], skipped };
           skipped.unreadable += 1;
           done += 1;
           onProgress(done, metas.length);
           continue;
         }
+        if (!current()) return { stale: true, items: [], skipped };
         const detected = detectEnglish(doc.content);
         if (!detected.english) {
           skipped[detected.reason] += 1;
-          await this.cache.set(this.cache.epoch, meta.path, hash, { english: false, reason: detected.reason, title: titleFor(meta, doc, meta.path), usedAt: Date.now() });
+          await this.cache.set(cacheEpoch, meta.path, hash, { english: false, reason: detected.reason, title: titleFor(meta, doc, meta.path), usedAt: Date.now() });
         } else {
           const entry = buildLevelCacheEntry(doc.content, this.table);
           entry.title = titleFor(meta, doc, meta.path);
-          await this.cache.set(this.cache.epoch, meta.path, hash, entry);
+          await this.cache.set(cacheEpoch, meta.path, hash, entry);
+          if (!current()) return { stale: true, items: [], skipped };
           items.push(this.scoreCached(meta, this.cache.get(meta.path, hash), review, entries));
         }
         done += 1;
         onProgress(done, metas.length);
-        if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
+        if (!current()) return { stale: true, items: [], skipped };
       }
+      if (!current()) return { stale: true, items: [], skipped };
       await this.cache.flush();
+      if (!current()) return { stale: true, items: [], skipped };
       if (i + this.batchSize < metas.length) await sleep2();
     }
+    if (!current()) return { stale: true, items: [], skipped };
     await this.cache.flush();
+    if (!current()) return { stale: true, items: [], skipped };
     return { stale: false, items: sortRecommendations(items, this.settings), skipped };
   }
 };
@@ -34246,13 +34325,16 @@ var ReadingRecommender = class {
 // src/main.mjs
 var BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {
 };
-var emptyReview = () => ({ version: 1, cards: {}, flags: {} });
+var emptyReview = () => ({ version: 1, cards: /* @__PURE__ */ Object.create(null), flags: /* @__PURE__ */ Object.create(null) });
 var REVIEW_MODES = /* @__PURE__ */ new Set(["context", "flip", "reverse", "listening"]);
 function normalizedSentence2(value) {
   return String(value ?? "").trim().replace(/\s+/gu, " ");
 }
 function cardFingerprint(card) {
   return card ? JSON.stringify(card) : "missing";
+}
+function ownValue(record, key) {
+  return record && Object.hasOwn(record, key) ? record[key] : void 0;
 }
 function proposalError(error) {
   return String(error?.message ?? error?.code ?? error ?? "proposal failed");
@@ -34517,22 +34599,33 @@ var EnglishVocabPlugin = class extends BasePlugin {
     if (!this.index) return;
     const moved = this.reviewStore !== null && await this.rootMoved();
     if (generation !== this.rootGeneration) return;
-    if (moved) {
-      generation = this.invalidateRoot();
-      const review = await this.reviewStore.reloadForRootChange();
-      if (generation !== this.rootGeneration) return;
-      this.state.review = review;
-      this.state.log = this.reviewStore.effectiveLog();
-      await this.recommender?.reload();
-      if (generation !== this.rootGeneration) return;
+    const binding = await this.captureRootBinding();
+    if (generation !== this.rootGeneration) return;
+    if (moved || !binding.stable || binding.storageRootGeneration !== this.reviewStore?.rootGeneration) {
+      return this.handleRootChanged(this.invalidateRoot());
     }
     try {
-      this.indexBinding = { generation, epoch: this.workspaceEpoch() };
-      const result = await this.index.refresh();
-      if (generation !== this.rootGeneration || this.indexBinding.epoch !== this.workspaceEpoch()) return;
+      this.indexBinding = { generation, epoch: binding.workspaceEpoch, storageRootGeneration: binding.storageRootGeneration };
+      let result;
+      try {
+        result = await this.index.refresh();
+      } catch (error) {
+        if (error?.code === "ROOT_CHANGED") return this.handleRootChanged(this.invalidateRoot());
+        throw error;
+      }
+      const afterIndex = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!afterIndex.stable || afterIndex.workspaceEpoch !== binding.workspaceEpoch || afterIndex.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
+      const beforeRecommendations = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!beforeRecommendations.stable || beforeRecommendations.workspaceEpoch !== binding.workspaceEpoch || beforeRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       await this.refreshRecommendations({ silent: true });
       if (generation !== this.rootGeneration) return;
       await this.refreshLatestReadingStatus();
@@ -34550,6 +34643,12 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } catch {
       return false;
     }
+  }
+  async captureRootBinding() {
+    const before = this.workspaceEpoch();
+    const { rootGeneration: storageRootGeneration } = await this.app.storage.scope();
+    const workspaceEpoch = this.workspaceEpoch();
+    return { storageRootGeneration, workspaceEpoch, stable: before === workspaceEpoch };
   }
   async handleRootChanged(generation = this.invalidateRoot()) {
     if (!this.reviewStore) return;
@@ -34594,7 +34693,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
           card: previous,
           logId: id,
           rootGeneration: this.reviewStore.rootGeneration,
-          resultingCard: cardFingerprint(result.review.cards[word])
+          resultingCard: cardFingerprint(ownValue(result.review.cards, word))
         });
       }
       try {
@@ -34666,7 +34765,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async readingUndoSnapshotValid(word, snapshot) {
     try {
       const { rootGeneration } = await this.app.storage.scope();
-      return rootGeneration === snapshot.rootGeneration && this.reviewStore.rootGeneration === snapshot.rootGeneration && cardFingerprint(this.reviewStore.review.cards[word]) === snapshot.resultingCard;
+      return rootGeneration === snapshot.rootGeneration && this.reviewStore.rootGeneration === snapshot.rootGeneration && cardFingerprint(ownValue(this.reviewStore.review.cards, word)) === snapshot.resultingCard;
     } catch {
       return false;
     }

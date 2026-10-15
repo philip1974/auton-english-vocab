@@ -72,6 +72,11 @@ describe('context cloze', () => {
     expect(clozeSentence('A rerun is not run.', { word: 'run' }).text).toBe('A rerun is not _____.');
   });
 
+  it('should cloze prototype-shaped words as ordinary vocabulary surfaces', () => {
+    expect(clozeSentence('The constructor calls another constructor.', { word: 'constructor', pos: 'noun' }).text).toBe('The _____ calls another _____.');
+    expect(clozeSentence('Use toString and hasOwnProperty.', { word: 'toString' }).text).toBe('Use _____ and hasOwnProperty.');
+  });
+
   it('should use a permissive inflection union for cloze when note pos cannot be inferred', () => {
     const run = { word: 'run', definition: 'to move fast on foot' };
     expect(clozeSentence('She was running late.', run).text).toBe('She was _____ late.');

@@ -11,7 +11,7 @@ import { appendExample, buildNote, parseNote, slugFor, normalizeWord, normalizeS
 import { parseExampleLine } from './context-cloze.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
-const emptyReview = () => ({ version: 1, cards: {}, flags: {} });
+const emptyReview = () => ({ version: 1, cards: Object.create(null), flags: Object.create(null) });
 const REVIEW_MODES = new Set(['context', 'flip', 'reverse', 'listening']);
 
 function normalizedSentence(value) {
@@ -20,6 +20,10 @@ function normalizedSentence(value) {
 
 function cardFingerprint(card) {
   return card ? JSON.stringify(card) : 'missing';
+}
+
+function ownValue(record, key) {
+  return record && Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function proposalError(error) {
@@ -293,22 +297,33 @@ export default class EnglishVocabPlugin extends BasePlugin {
     // root-changed event cannot leave the old root's progress on screen.
     const moved = this.reviewStore !== null && await this.rootMoved();
     if (generation !== this.rootGeneration) return;
-    if (moved) {
-      generation = this.invalidateRoot();
-      const review = await this.reviewStore.reloadForRootChange();
-      if (generation !== this.rootGeneration) return;
-      this.state.review = review;
-      this.state.log = this.reviewStore.effectiveLog();
-      await this.recommender?.reload();
-      if (generation !== this.rootGeneration) return;
+    const binding = await this.captureRootBinding();
+    if (generation !== this.rootGeneration) return;
+    if (moved || !binding.stable || binding.storageRootGeneration !== this.reviewStore?.rootGeneration) {
+      return this.handleRootChanged(this.invalidateRoot());
     }
     try {
-      this.indexBinding = { generation, epoch: this.workspaceEpoch() };
-      const result = await this.index.refresh();
-      if (generation !== this.rootGeneration || this.indexBinding.epoch !== this.workspaceEpoch()) return;
+      this.indexBinding = { generation, epoch: binding.workspaceEpoch, storageRootGeneration: binding.storageRootGeneration };
+      let result;
+      try {
+        result = await this.index.refresh();
+      } catch (error) {
+        if (error?.code === 'ROOT_CHANGED') return this.handleRootChanged(this.invalidateRoot());
+        throw error;
+      }
+      const afterIndex = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!afterIndex.stable || afterIndex.workspaceEpoch !== binding.workspaceEpoch || afterIndex.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
+      const beforeRecommendations = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!beforeRecommendations.stable || beforeRecommendations.workspaceEpoch !== binding.workspaceEpoch || beforeRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       await this.refreshRecommendations({ silent: true });
       if (generation !== this.rootGeneration) return;
       await this.refreshLatestReadingStatus();
@@ -327,6 +342,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } catch {
       return false;
     }
+  }
+
+  async captureRootBinding() {
+    const before = this.workspaceEpoch();
+    const { rootGeneration: storageRootGeneration } = await this.app.storage.scope();
+    const workspaceEpoch = this.workspaceEpoch();
+    return { storageRootGeneration, workspaceEpoch, stable: before === workspaceEpoch };
   }
 
   async handleRootChanged(generation = this.invalidateRoot()) {
@@ -374,7 +396,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
           card: previous,
           logId: id,
           rootGeneration: this.reviewStore.rootGeneration,
-          resultingCard: cardFingerprint(result.review.cards[word]),
+          resultingCard: cardFingerprint(ownValue(result.review.cards, word)),
         });
       }
       try {
@@ -450,7 +472,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const { rootGeneration } = await this.app.storage.scope();
       return rootGeneration === snapshot.rootGeneration
         && this.reviewStore.rootGeneration === snapshot.rootGeneration
-        && cardFingerprint(this.reviewStore.review.cards[word]) === snapshot.resultingCard;
+        && cardFingerprint(ownValue(this.reviewStore.review.cards, word)) === snapshot.resultingCard;
     } catch {
       return false;
     }

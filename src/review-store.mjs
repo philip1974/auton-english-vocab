@@ -1,7 +1,41 @@
 import { deserializeCard, newSerializedCard, rateCard, serializeCard } from './scheduler.mjs';
 import { uiText } from './ui-text.mjs';
 
-const EMPTY = () => ({ version: 1, cards: {}, flags: {} });
+const wordRecord = () => Object.create(null);
+const EMPTY = () => ({ version: 1, cards: wordRecord(), flags: wordRecord() });
+
+function sameLogEntry(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function uniqueLogEntries(values, onCollision = () => undefined) {
+  const entries = [];
+  const byId = new Map();
+  for (const value of values) {
+    if (!value?.id) {
+      entries.push(value);
+      continue;
+    }
+    const existing = byId.get(value.id);
+    if (!existing) {
+      byId.set(value.id, value);
+      entries.push(value);
+      continue;
+    }
+    if (sameLogEntry(existing, value)) continue;
+    onCollision(value.id);
+    let suffix = 1;
+    let id = `${value.id}~recovered-${suffix}`;
+    while (byId.has(id)) {
+      suffix += 1;
+      id = `${value.id}~recovered-${suffix}`;
+    }
+    const recovered = { ...value, id };
+    byId.set(id, recovered);
+    entries.push(recovered);
+  }
+  return entries;
+}
 
 function codeOf(error) {
   return error && typeof error === 'object' && typeof error.code === 'string' ? error.code : '';
@@ -71,16 +105,19 @@ export class ReviewStore {
     try {
       let invalidCards = 0;
       let invalidItems = 0;
+      let logIdCollisions = 0;
       this.review = normalizeReview(JSON.parse(result.text), {
         onInvalidCard: () => { invalidCards += 1; },
         onInvalidItem: () => { invalidItems += 1; },
+        onLogIdCollision: () => { logIdCollisions += 1; },
       });
-      if (invalidCards > 0 || invalidItems > 0) {
+      if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
         await this.#backupCorrupt('review', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
       }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
+      if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
       await this.#backupCorrupt('review', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
@@ -110,7 +147,13 @@ export class ReviewStore {
     try {
       const parsed = JSON.parse(result.text);
       if (!Array.isArray(parsed)) throw new Error('log must be an array');
-      this.log = parsed.slice(-2000);
+      let collisions = 0;
+      this.log = uniqueLogEntries(parsed, () => { collisions += 1; }).slice(-2000);
+      if (collisions > 0) {
+        await this.#backupCorrupt('log', result.text, rootGeneration, generation);
+        if (this.#stale(generation, rootGeneration)) return;
+        this.notify(this.t.logIdCollisions(collisions));
+      }
     } catch {
       await this.#backupCorrupt('log', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
@@ -122,15 +165,27 @@ export class ReviewStore {
   }
 
   async #backupCorrupt(kind, text, rootGeneration = this.rootGeneration, generation = this.generation) {
-    const stamp = this.now().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-    await this.app.storage.write(rootGeneration, `${kind}.corrupt-${stamp}.json`, text);
+    const stamp = this.now().toISOString().replace(/[^0-9]/g, '').slice(0, 17);
+    let name;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      /* v8 ignore next -- supported hosts expose crypto.randomUUID; the fallback is for older runtimes only. */
+      const nonce = globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 12)
+        ?? `${Math.random().toString(36).slice(2, 10)}${attempt}`;
+      name = `${kind}.corrupt-${stamp}-${nonce}.json`;
+      try {
+        await this.app.storage.write(rootGeneration, name, text, { expectedRevision: null });
+        break;
+      } catch (error) {
+        if (codeOf(error) !== 'REVISION_CONFLICT' || attempt === 3) throw error;
+      }
+    }
     /* v8 ignore next -- repeated backup boundary for the same generation contract. */
     if (this.#stale(generation, rootGeneration)) return;
     const listed = await this.app.storage.list(rootGeneration);
     /* v8 ignore next -- repeated backup boundary for the same generation contract. */
     if (this.#stale(generation, rootGeneration)) return;
     const backups = listed
-      .filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+\\.json$`, 'u').test(item.name))
+      .filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, 'iu').test(item.name))
       .sort((a, b) => a.name.localeCompare(b.name));
     for (const item of backups.slice(0, -3)) {
       await this.app.storage.remove(rootGeneration, item.name);
@@ -205,8 +260,7 @@ export class ReviewStore {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const exists = entry?.id && this.log.some((item) => item?.id === entry.id);
-      const next = (exists ? this.log : [...this.log, entry]).slice(-2000);
+      const next = uniqueLogEntries([...this.log, entry]).slice(-2000);
       try {
         const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(next), {
           expectedRevision: this.logRevision,
@@ -225,10 +279,7 @@ export class ReviewStore {
   }
 
   effectiveLog() {
-    const entries = new Map();
-    for (const entry of this.log) entries.set(entry?.id ?? Symbol(), entry);
-    for (const entry of this.review.pendingLogs ?? []) entries.set(entry.id, entry);
-    return [...entries.values()].slice(-2000);
+    return uniqueLogEntries([...this.log, ...(this.review.pendingLogs ?? [])]).slice(-2000);
   }
 
   async flushPendingLogs() {
@@ -257,7 +308,7 @@ export class ReviewStore {
 
 export function applyReviewOperation(value, operation, now = new Date()) {
   const review = normalizeReview(value);
-  const previousCard = review.cards[operation.word] ?? null;
+  const previousCard = Object.hasOwn(review.cards, operation.word) ? review.cards[operation.word] : null;
   if (operation.type === 'restoreCardIfFingerprint' && JSON.stringify(previousCard) !== operation.expectedFingerprint) {
     return { review, previousCard, applied: false };
   }
@@ -280,12 +331,12 @@ export function applyReviewOperation(value, operation, now = new Date()) {
     const entry = operation.type === 'rateCard'
       ? { ...operation.logEntry, previousState: previousCard?.state ?? 'New' }
       : operation.logEntry;
-    review.pendingLogs = [...(review.pendingLogs ?? []).filter((item) => item.id !== entry.id), entry];
+    review.pendingLogs = uniqueLogEntries([...(review.pendingLogs ?? []), entry]);
   }
   return { review, previousCard, applied: true };
 }
 
-export function normalizeReview(value, { onInvalidCard = () => undefined, onInvalidItem = () => undefined } = {}) {
+export function normalizeReview(value, { onInvalidCard = () => undefined, onInvalidItem = () => undefined, onLogIdCollision = () => undefined } = {}) {
   if (value?.version !== undefined && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: 'UNSUPPORTED_REVIEW_VERSION' });
   }
@@ -320,12 +371,12 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
     else onInvalidItem(`flag:${word}`);
   }
   if (Array.isArray(value.pendingLogs)) {
-    review.pendingLogs = [];
+    const pendingLogs = [];
     for (const entry of value.pendingLogs) {
-      if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.id === 'string') review.pendingLogs.push(entry);
+      if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.id === 'string') pendingLogs.push(entry);
       else onInvalidItem('pendingLog');
     }
-    review.pendingLogs = review.pendingLogs.slice(-2000);
+    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision).slice(-2000);
   }
   return review;
 }
@@ -333,12 +384,13 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
 export function mergeReview(base, incoming) {
   const merged = normalizeReview(base);
   const other = normalizeReview(incoming);
-  for (const [word, card] of Object.entries(other.cards)) merged.cards[word] = newestCard(merged.cards[word], card);
-  merged.flags = { ...merged.flags, ...other.flags };
+  for (const [word, card] of Object.entries(other.cards)) {
+    const current = Object.hasOwn(merged.cards, word) ? merged.cards[word] : undefined;
+    merged.cards[word] = newestCard(current, card);
+  }
+  for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    const pending = new Map((merged.pendingLogs ?? []).map((entry) => [entry.id, entry]));
-    for (const entry of other.pendingLogs ?? []) pending.set(entry.id, entry);
-    merged.pendingLogs = [...pending.values()].slice(-2000);
+    merged.pendingLogs = uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]).slice(-2000);
   }
   return merged;
 }

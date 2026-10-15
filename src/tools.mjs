@@ -110,8 +110,9 @@ export function makeVocabLookup({ index, review, getReview = () => review }) {
     const word = normalizeWord(input?.word);
     const entry = index.get(word);
     const current = getReview();
-    const card = current.cards[word];
-    const familiarity = familiarityFor(card, current.flags[word]);
+    const card = Object.hasOwn(current.cards, word) ? current.cards[word] : undefined;
+    const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : undefined;
+    const familiarity = familiarityFor(card, flag);
     return JSON.stringify({
       collected: Boolean(entry),
       word,

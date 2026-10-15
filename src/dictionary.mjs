@@ -47,7 +47,7 @@ async function entryFor(word, importer) {
   const letter = firstLetter(word);
   if (!letter) return null;
   const chunk = await loadChunk(letter, importer);
-  return chunk?.[word] ?? null;
+  return chunk && Object.hasOwn(chunk, word) ? chunk[word] : null;
 }
 
 function exchangeLemma(entry) {

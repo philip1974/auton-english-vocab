@@ -47,6 +47,15 @@ describe('inflections', () => {
     for (const fake of ['axises', 'analysises', 'crisises', 'quicklier', 'quickliest']) expect(map.has(fake)).toBe(false);
   });
 
+  it('should handle prototype-shaped words without reading inherited irregular tables', () => {
+    const map = buildSurfaceMap(['constructor', '__proto__', 'toString', 'hasOwnProperty'].map((word) => ({ word, pos: 'noun' })));
+    expect(map.get('constructor')).toBe('constructor');
+    expect(map.get('constructors')).toBe('constructor');
+    expect(map.get('tostring')).toBe('tostring');
+    expect(map.get('hasownproperty')).toBe('hasownproperty');
+    expect(map.has('__proto__')).toBe(false);
+  });
+
   it('should include common irregular forms and map collected irregular forms back to their lemma', () => {
     const map = buildSurfaceMap([{ word: 'go', pos: 'verb' }, { word: 'child', pos: 'noun' }, { word: 'good', pos: 'adjective' }]);
     expect(map.get('went')).toBe('go');

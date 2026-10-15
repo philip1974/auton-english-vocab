@@ -145,7 +145,8 @@ export function renderPanel(container, controls) {
     midnight.setHours(24, 0, 0, 0);
     let wakeAt = midnight.getTime();
     for (const entry of state.entries) {
-      const due = Date.parse(state.review.cards?.[entry.word]?.due);
+      const card = state.review.cards && Object.hasOwn(state.review.cards, entry.word) ? state.review.cards[entry.word] : undefined;
+      const due = Date.parse(card?.due);
       if (Number.isFinite(due) && due > now.getTime() && due < wakeAt) wakeAt = due;
     }
     refreshTimer = setTimeout(() => {
@@ -412,13 +413,15 @@ export function renderPanel(container, controls) {
       const current = { entries: [], review: { cards: {}, flags: {} }, ...read() };
       const q = search.value.trim().toLowerCase();
       for (const entry of current.entries) {
-        const fam = familiarityFor(current.review.cards[entry.word], current.review.flags[entry.word]);
+        const card = Object.hasOwn(current.review.cards, entry.word) ? current.review.cards[entry.word] : undefined;
+        const currentFlag = Object.hasOwn(current.review.flags, entry.word) ? current.review.flags[entry.word] : undefined;
+        const fam = familiarityFor(card, currentFlag);
         if ((q && !entry.word.includes(q)) || (filter.value !== 'all' && fam !== filter.value)) continue;
         const row = el('div', 'ev-row');
         const head = el('div', 'ev-row-head');
         head.append(el('strong', 'ev-row-word', entry.word), el('small', 'ev-badge', t[fam] || fam));
         const actions = el('div', 'ev-row-actions');
-        const flag = current.review.flags[entry.word];
+        const flag = currentFlag;
         if (fam !== 'mastered' && flag !== 'ignored') actions.append(button(t.markMastered, () => setFlag(entry.word, 'mastered')));
         if (flag !== 'ignored') actions.append(button(t.ignore, () => setFlag(entry.word, 'ignored')));
         if (flag === 'mastered' || flag === 'ignored') actions.append(button(flag === 'mastered' ? t.restoreReview : t.restore, () => setFlag(entry.word, undefined)));
@@ -428,8 +431,11 @@ export function renderPanel(container, controls) {
     };
     const setFlag = (word, flag) => {
       if (controls.onFlag) controls.onFlag(word, flag);
-      else if (flag) state.review.flags[word] = flag;
-      else delete state.review.flags[word];
+      else {
+        state.review.flags = Object.assign(Object.create(null), state.review.flags);
+        if (flag) state.review.flags[word] = flag;
+        else delete state.review.flags[word];
+      }
       draw();
     };
     search.addEventListener('input', draw);

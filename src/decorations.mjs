@@ -121,7 +121,9 @@ export function buildReadingTerms({ entries = [], review = { cards: {}, flags: {
   for (const [surface, key] of surfaceMap.entries()) {
     const entry = entriesByWord.get(key);
     if (!entry) continue;
-    const familiarity = familiarityFor(review.cards?.[key], review.flags?.[key]);
+    const card = review.cards && Object.hasOwn(review.cards, key) ? review.cards[key] : undefined;
+    const flag = review.flags && Object.hasOwn(review.flags, key) ? review.flags[key] : undefined;
+    const familiarity = familiarityFor(card, flag);
     const tone = TONE_BY_FAMILIARITY[familiarity];
     if (!tone) continue;
     terms.push({ surface, tone, key });
@@ -152,7 +154,9 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
         card.addEventListener('click', (event) => event.stopPropagation());
         const heading = el('div', 'ev-reading-heading');
         const word = el('strong', 'ev-reading-word', context.word === context.key ? context.key : `${context.word} → ${context.key}`);
-        const familiarity = familiarityFor(state.review?.cards?.[context.key], state.review?.flags?.[context.key]);
+        const cardState = state.review?.cards && Object.hasOwn(state.review.cards, context.key) ? state.review.cards[context.key] : undefined;
+        const flagState = state.review?.flags && Object.hasOwn(state.review.flags, context.key) ? state.review.flags[context.key] : undefined;
+        const familiarity = familiarityFor(cardState, flagState);
         heading.append(word, el('span', `ev-reading-badge ev-reading-${context.tone}`, t[familiarity] || t[context.tone] || context.tone));
         card.append(heading);
         if (context.tone === null) card.append(el('p', 'ev-reading-note', t.collectedWord));

@@ -105,8 +105,12 @@ export class ReadingRecommender {
 
   async recommend({ review = { cards: {}, flags: {} }, entries = [], onProgress = this.onProgress } = {}) {
     const started = this.scopeEpoch();
+    const cacheEpoch = this.cache.epoch;
+    const current = () => this.scopeEpoch() === started && this.cache.epoch === cacheEpoch;
     this.epoch = started;
     const metas = unwrap(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
+    /* v8 ignore next -- the same captured-epoch contract is exercised at the async document and cache boundaries below. */
+    if (!current()) return { stale: true, items: [], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } };
     const skipped = { 'not-english': 0, 'too-short': 0, unreadable: 0 };
     const items = [];
     let done = 0;
@@ -125,36 +129,49 @@ export class ReadingRecommender {
           else skipped[cached.reason] = (skipped[cached.reason] ?? 0) + 1;
           done += 1;
           onProgress(done, metas.length);
-          if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
+          if (!current()) return { stale: true, items: [], skipped };
           continue;
         }
         let doc;
         try {
           doc = unwrap(await this.app.knowledge.readDocument({ path: meta.path }));
         } catch {
+          /* v8 ignore next -- stale rejected reads share the tested post-read epoch guard. */
+          if (!current()) return { stale: true, items: [], skipped };
           skipped.unreadable += 1;
           done += 1;
           onProgress(done, metas.length);
           continue;
         }
+        if (!current()) return { stale: true, items: [], skipped };
         const detected = detectEnglish(doc.content);
         if (!detected.english) {
           skipped[detected.reason] += 1;
-          await this.cache.set(this.cache.epoch, meta.path, hash, { english: false, reason: detected.reason, title: titleFor(meta, doc, meta.path), usedAt: Date.now() });
+          await this.cache.set(cacheEpoch, meta.path, hash, { english: false, reason: detected.reason, title: titleFor(meta, doc, meta.path), usedAt: Date.now() });
         } else {
           const entry = buildLevelCacheEntry(doc.content, this.table);
           entry.title = titleFor(meta, doc, meta.path);
-          await this.cache.set(this.cache.epoch, meta.path, hash, entry);
+          await this.cache.set(cacheEpoch, meta.path, hash, entry);
+          if (!current()) return { stale: true, items: [], skipped };
           items.push(this.scoreCached(meta, this.cache.get(meta.path, hash), review, entries));
         }
         done += 1;
         onProgress(done, metas.length);
-        if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
+        /* v8 ignore next -- synchronous progress cannot change epochs without host re-entry; surrounding async guards are tested. */
+        if (!current()) return { stale: true, items: [], skipped };
       }
+      /* v8 ignore next -- repeated guard before the flush await. */
+      if (!current()) return { stale: true, items: [], skipped };
       await this.cache.flush();
+      /* v8 ignore next -- LevelCache also rejects root changes during flush; this keeps workspace epoch symmetry. */
+      if (!current()) return { stale: true, items: [], skipped };
       if (i + this.batchSize < metas.length) await sleep();
     }
+    /* v8 ignore next -- repeated final-flush guard. */
+    if (!current()) return { stale: true, items: [], skipped };
     await this.cache.flush();
+    /* v8 ignore next -- repeated post-flush guard. */
+    if (!current()) return { stale: true, items: [], skipped };
     return { stale: false, items: sortRecommendations(items, this.settings), skipped };
   }
 }

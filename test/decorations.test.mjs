@@ -35,6 +35,11 @@ describe('reading decorations', () => {
     expect(bySurface.has('missing')).toBe(false);
   });
 
+  it('should publish prototype-shaped collected words without inherited review state', () => {
+    const terms = buildReadingTerms({ entries: [entry('constructor', { pos: 'noun' }), entry('toString', { pos: 'noun' }), entry('hasOwnProperty', { pos: 'noun' })], review: JSON.parse('{"version":1,"cards":{},"flags":{}}') });
+    expect(terms.map((item) => item.surface)).toEqual(expect.arrayContaining(['constructor', 'constructors', 'tostring', 'hasownproperty']));
+  });
+
   it('should cap reading terms while keeping lemmas before generated forms', () => {
     const terms = buildReadingTerms({ entries: [entry('run'), entry('walk')] }, 3);
     expect(terms).toHaveLength(3);

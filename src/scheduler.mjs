@@ -67,8 +67,8 @@ export function dueQueue(words, review, options = {}, now = new Date()) {
   const dueReview = [];
   for (const item of words) {
     const word = item.word;
-    const card = review.cards[word];
-    const flag = review.flags[word];
+    const card = Object.hasOwn(review.cards, word) ? review.cards[word] : undefined;
+    const flag = Object.hasOwn(review.flags, word) ? review.flags[word] : undefined;
     if (!isReviewable(card, flag)) continue;
     const familiarity = familiarityFor(card, flag);
     if (!card || familiarity === 'new') dueNew.push({ ...item, familiarity });
@@ -81,7 +81,7 @@ export function dueQueue(words, review, options = {}, now = new Date()) {
   };
   const today = localDay(now);
   const introduced = new Set(activeReviewLog(options.log)
-    .filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0 || entry.previousState == null))
+    .filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0))
     .map((entry) => entry.word)).size;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];
 }

@@ -5,7 +5,7 @@ const DENYLIST = new Set([
   'his', 'hers', 'ours', 'news', 'series', 'species', 'basis', 'analysis',
 ]);
 
-const IRREGULAR_VERBS = {
+const IRREGULAR_VERBS = new Map(Object.entries({
   abide: ['abode', 'abode'],
   alight: ['alit', 'alit'],
   arise: ['arose', 'arisen'],
@@ -194,15 +194,15 @@ const IRREGULAR_VERBS = {
   withstand: ['withstood', 'withstood'],
   wring: ['wrung', 'wrung'],
   write: ['wrote', 'written'],
-};
+}));
 
-const IRREGULAR_NOUNS = {
+const IRREGULAR_NOUNS = new Map(Object.entries({
   analysis: ['analyses'],
   axis: ['axes'],
   crisis: ['crises'],
   child: ['children'], man: ['men'], woman: ['women'], person: ['people'], mouse: ['mice'],
   tooth: ['teeth'], foot: ['feet'], goose: ['geese'], ox: ['oxen'],
-};
+}));
 
 const O_ES_NOUNS = new Set(['echo', 'hero', 'potato', 'tomato']);
 const VES_NOUNS = new Map([
@@ -211,13 +211,12 @@ const VES_NOUNS = new Map([
   ['thief', 'thieves'], ['wife', 'wives'], ['wolf', 'wolves'],
 ]);
 
-const IRREGULAR_COMPARATIVES = {
+const IRREGULAR_COMPARATIVES = new Map(Object.entries({
   good: ['better', 'best'], well: ['better', 'best'], bad: ['worse', 'worst'],
   far: ['farther', 'farthest', 'further', 'furthest'],
-};
+}));
 
-const IRREGULAR = new Map(Object.entries({
-  ...IRREGULAR_VERBS,
+const IRREGULAR = new Map([...IRREGULAR_VERBS.entries(), ...Object.entries({
   be: ['am', 'are', 'is', 'was', 'were', 'been', 'being'],
   child: ['children'],
   man: ['men'],
@@ -232,7 +231,7 @@ const IRREGULAR = new Map(Object.entries({
   well: ['better', 'best'],
   bad: ['worse', 'worst'],
   far: ['farther', 'farthest', 'further', 'furthest'],
-}).map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
+})].map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
 
 function normalize(value) {
   return String(value ?? '').normalize('NFC').trim().toLowerCase().replaceAll('’', "'");
@@ -285,9 +284,9 @@ function partsOf(value) {
 }
 
 const INFLECTED_VERB_SURFACES = new Set([
-  ...Object.values(IRREGULAR_VERBS).flat(), 'am', 'are', 'is', 'does', 'has',
+  ...[...IRREGULAR_VERBS.values()].flat(), 'am', 'are', 'is', 'does', 'has',
 ]);
-const INFLECTED_NOUN_SURFACES = new Set(Object.values(IRREGULAR_NOUNS).flat());
+const INFLECTED_NOUN_SURFACES = new Set([...IRREGULAR_NOUNS.values()].flat());
 
 function thirdPerson(lemma) {
   if (lemma === 'be') return 'is';
@@ -322,8 +321,8 @@ function generatedForms(lemma, pos) {
   const forms = new Set();
   if (lemma.includes("'")) return forms;
   if (pos === 'noun') {
-    if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
-    const irregular = IRREGULAR_NOUNS[lemma];
+    if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS.has(lemma)) return forms;
+    const irregular = IRREGULAR_NOUNS.get(lemma);
     if (irregular) for (const form of irregular) addCandidate(forms, form, true);
     else if (VES_NOUNS.has(lemma)) addCandidate(forms, VES_NOUNS.get(lemma));
     else if (/fe?$/u.test(lemma)) return forms;
@@ -336,7 +335,7 @@ function generatedForms(lemma, pos) {
     return forms;
   }
   if (pos === 'comparative') {
-    const irregular = IRREGULAR_COMPARATIVES[lemma];
+    const irregular = IRREGULAR_COMPARATIVES.get(lemma);
     if (irregular) for (const form of irregular) addCandidate(forms, form, true);
     else if (endsConsonantY(lemma)) {
       addCandidate(forms, `${lemma.slice(0, -1)}ier`);
@@ -351,8 +350,8 @@ function generatedForms(lemma, pos) {
     return forms;
   }
   if (pos !== 'verb') return forms;
-  if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS[lemma]) return forms;
-  const irregular = IRREGULAR_VERBS[lemma];
+  if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS.has(lemma)) return forms;
+  const irregular = IRREGULAR_VERBS.get(lemma);
   for (const form of irregular ?? []) addCandidate(forms, form, true);
   if (lemma === 'be') for (const form of ['am', 'are', 'is', 'was', 'were', 'been', 'being']) addCandidate(forms, form, true);
   addCandidate(forms, thirdPerson(lemma), lemma === 'be' || lemma === 'have');
@@ -369,10 +368,10 @@ export function inflectionKindsFor(lemmaValue, surfaceValue) {
   if (generatedForms(lemma, 'noun').has(surface)) kinds.add('plural');
   if (thirdPerson(lemma) === surface) kinds.add('thirdPerson');
   if (presentParticiple(lemma) === surface) kinds.add('presentParticiple');
-  const irregular = IRREGULAR_VERBS[lemma];
+  const irregular = IRREGULAR_VERBS.get(lemma);
   if (irregular?.[0] === surface || (!irregular && regularPast(lemma) === surface)) kinds.add('past');
   if (irregular?.[1] === surface || (!irregular && regularPast(lemma) === surface)) kinds.add('pastParticiple');
-  const comparative = IRREGULAR_COMPARATIVES[lemma];
+  const comparative = IRREGULAR_COMPARATIVES.get(lemma);
   if (comparative?.[0] === surface) kinds.add('comparative');
   if (comparative?.[1] === surface) kinds.add('superlative');
   if (!comparative) {

@@ -47,6 +47,14 @@ describe('level cache and novel word scoring', () => {
     expect(scoreCachedEntry(entry, { table, review: { cards: { beta: { state: 'New' } }, flags: { gamma: 'mastered' } }, settings: { vocabularySize: 1002, easyMax: 2, goodMax: 5 }, entries: [{ word: 'beta' }, { word: 'gamma' }] })).toMatchObject({ novel: 1 });
   });
 
+  it('should count prototype-shaped tokens with finite numeric novel rates', () => {
+    const entry = buildLevelCacheEntry(Array.from({ length: 60 }, () => 'constructor').join(' '), [], 1);
+    expect(entry.words).toMatchObject({ constructor: 60 });
+    const scored = scoreCachedEntry(entry, { table: [], review: JSON.parse('{"cards":{},"flags":{}}'), settings: { vocabularySize: 0, easyMax: 2, goodMax: 5 } });
+    expect(scored).toMatchObject({ counted: 60, novel: 60, rate: 100 });
+    expect(Number.isFinite(scored.rate)).toBe(true);
+  });
+
   it('should use notebook entries plus FSRS familiarity when deciding whether collected words are novel', () => {
     const table = rankMapFromWords(['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'alpha', 'beta', 'gamma', 'delta']);
     const entry = buildLevelCacheEntry('alpha beta gamma delta', table, 1);

@@ -2098,6 +2098,46 @@ describe('main plugin', () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it('should reload all root projections when storage changes after the first silent-root probe', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let root = 'root-a';
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const cards = {
+      'root-a': { alpha: { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')) } },
+      'root-b': { beta: { ...newSerializedCard(new Date('2026-10-02T00:00:00Z')) } },
+    };
+    app.storage.scope = async () => ({ rootGeneration: root });
+    app.storage.read = async (requestedRoot, name) => {
+      if (requestedRoot !== root) throw Object.assign(new Error('changed'), { code: 'ROOT_CHANGED' });
+      if (name === 'review.json') return { found: true, text: JSON.stringify({ version: 1, cards: cards[root], flags: {} }), revision: `${root}-review` };
+      return { found: false };
+    };
+    app.knowledge.listDocuments = async () => [{ path: `wiki/vocab/${root === 'root-a' ? 'alpha' : 'beta'}.md`, title: root, revision: { contentHash: root } }];
+    app.knowledge.readDocument = async ({ path }) => ({ content: buildNote({ word: path.includes('alpha') ? 'alpha' : 'beta', definition: root }), meta: { title: root } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+
+    const originalScope = app.storage.scope;
+    let firstProbe = true;
+    app.storage.scope = async () => {
+      if (firstProbe) {
+        firstProbe = false;
+        const stale = { rootGeneration: 'root-a' };
+        root = 'root-b';
+        epoch = 'epoch-b';
+        return stale;
+      }
+      return originalScope();
+    };
+    await plugin.refreshIndex();
+    expect(Object.keys(plugin.state.review.cards)).toEqual(['beta']);
+    expect(plugin.state.entries.map((entry) => entry.word)).toEqual(['beta']);
+    expect(plugin.indexBinding).toMatchObject({ epoch: 'epoch-b', storageRootGeneration: 'root-b' });
+  });
+
   it('should create review operation ids that remain unique across plugin instances in the same millisecond', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');

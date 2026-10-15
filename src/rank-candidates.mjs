@@ -10,7 +10,7 @@ export const RANK_DENYLIST = new Set([
   'wretched', 'rugged', 'beloved', 'learned', 'aged', 'blessed', 'cursed',
 ]);
 
-const IRREGULAR_BASE = {
+const IRREGULAR_BASE = new Map(Object.entries({
   take: ['taken', 'took'],
   run: ['ran'],
   be: ['am', 'are', 'been', 'being', 'were'],
@@ -18,10 +18,10 @@ const IRREGULAR_BASE = {
   write: ['wrote', 'written'],
   speak: ['spoke', 'spoken'],
   see: ['saw', 'seen'],
-};
+}));
 
 const IRREGULAR_SURFACE = new Map();
-for (const [base, forms] of Object.entries(IRREGULAR_BASE)) {
+for (const [base, forms] of IRREGULAR_BASE.entries()) {
   for (const form of forms) IRREGULAR_SURFACE.set(form, base);
 }
 

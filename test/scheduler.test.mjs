@@ -34,6 +34,12 @@ describe('scheduler and familiarity', () => {
     expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2 })).toHaveLength(2);
   });
 
+  it('should treat prototype-shaped vocabulary keys as ordinary new words', () => {
+    const words = ['constructor', '__proto__', 'toString', 'hasOwnProperty'].map((word) => ({ word, definition: word }));
+    const review = JSON.parse('{"version":1,"cards":{},"flags":{}}');
+    expect(dueQueue(words, review, { newLimit: 10 }).map((item) => item.word)).toEqual(words.map((item) => item.word));
+  });
+
   it('should keep inferred mastered cards reviewable when they are due without a manual flag', () => {
     const card = { ...newSerializedCard(new Date('2026-09-01T00:00:00Z')), state: 'Review', stability: 30, due: '2026-10-13T00:00:00.000Z' };
     const queue = dueQueue([{ word: 'durable', definition: '持久的' }], { version: 1, cards: { durable: card }, flags: {} }, {}, new Date('2026-10-14T00:00:00Z'));
@@ -49,6 +55,12 @@ describe('scheduler and familiarity', () => {
     ];
     const queue = dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'));
     expect(queue.map((item) => item.word)).toEqual(['a']);
+  });
+
+  it('should not count legacy ratings without an explicit previous new state against the daily allowance', () => {
+    const words = ['a', 'b'].map((word) => ({ word, definition: word }));
+    const log = Array.from({ length: 50 }, (_, index) => ({ word: `old${index}`, rating: 'Good', reviewedAt: '2026-10-15T01:00:00' }));
+    expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 50, log }, new Date('2026-10-15T12:00:00'))).toHaveLength(2);
   });
 
   it('should ignore undone ratings for daily allowance and review counts', () => {

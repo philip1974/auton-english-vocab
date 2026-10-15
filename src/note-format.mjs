@@ -116,11 +116,13 @@ export function parseNote(text) {
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return { ok: false, error: 'missing frontmatter' };
   try {
-    const fields = {};
+    const fields = Object.create(null);
     for (const line of match[1].split('\n')) {
+      if (!line.trim() || /^\s*#/u.test(line)) continue;
       const index = line.indexOf(':');
-      if (index <= 0) continue;
-      fields[line.slice(0, index).trim()] = parseYamlScalar(line.slice(index + 1));
+      const key = line.slice(0, Math.max(0, index)).trim();
+      if (index <= 0 || /^\s/u.test(line) || !/^[A-Za-z][A-Za-z0-9_-]*$/u.test(key)) throw new Error(`unsupported frontmatter line: ${line}`);
+      fields[key] = parseYamlScalar(line.slice(index + 1));
     }
     if (fields.type !== 'vocab' || !fields.word) return { ok: false, error: 'missing word' };
     const word = assertEnglishWord(fields.word);

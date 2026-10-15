@@ -83,9 +83,15 @@ describe('note format', () => {
     expect(parseExampleLine(line)).toEqual({ sentence: 'Use run.', source: { url: 'https://example.com/a_%28b%29_%28c%29', title: 'A [title]' } });
   });
 
-  it('should parse unquoted and single quoted scalars when frontmatter is hand edited', () => {
-    const parsed = parseNote("---\ntype: vocab\nword: plain\ndefinition: '单独'\nignored-line\n---\n# plain\n\n## Examples\n- one\n");
+  it('should parse unquoted and single quoted scalars when every frontmatter line is recognized', () => {
+    const parsed = parseNote("---\ntype: vocab\nword: plain\ndefinition: '单独'\n---\n# plain\n\n## Examples\n- one\n");
     expect(parsed).toMatchObject({ ok: true, entry: { word: 'plain', definition: '单独', examples: ['one'] } });
+  });
+
+  it('should reject every unrecognized or indented frontmatter line instead of truncating yaml', () => {
+    for (const line of ['ignored-line', '  continued line', '\tcontinued line', '- list item']) {
+      expect(parseNote(`---\ntype: vocab\nword: run\ndefinition: first line\n${line}\n---\n# run\n`)).toMatchObject({ ok: false, error: expect.stringContaining('unsupported frontmatter line') });
+    }
   });
 
   it('should parse quoted scalar comments and reject unsupported yaml block scalars', () => {

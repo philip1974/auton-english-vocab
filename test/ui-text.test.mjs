@@ -39,6 +39,7 @@ describe('ui text', () => {
         text.invalidNoteReason({ kind: 'read', code: 'DOCUMENT_NOT_TEXT' }),
         text.invalidNoteReason({ kind: 'read', code: 'READ_FAILED' }),
         text.invalidReviewCards(1),
+        text.logIdCollisions(1),
         text.unsupportedReviewVersion,
         text.pendingLogRecoveryFailed,
         text.emptyNotebook,

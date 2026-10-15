@@ -28,7 +28,8 @@ function isRootChanged(error) {
 function familiarityForCollected(review, word, surfaceMap) {
   if (!surfaceMap.has(word)) return null;
   const lemma = surfaceMap.get(word);
-  return familiarityFor(review?.cards?.[lemma] ?? review?.cards?.[word], review?.flags?.[lemma] ?? review?.flags?.[word]);
+  const own = (record, key) => record && Object.hasOwn(record, key) ? record[key] : undefined;
+  return familiarityFor(own(review?.cards, lemma) ?? own(review?.cards, word), own(review?.flags, lemma) ?? own(review?.flags, word));
 }
 
 export function cacheShardNames() {
@@ -41,7 +42,7 @@ export function cacheShardNameForPath(path) {
 
 export function buildLevelCacheEntry(markdown, table, now = Date.now()) {
   const ranks = table instanceof Map ? table : rankMapFromWords(table);
-  const words = {};
+  const words = Object.create(null);
   let base = 0;
   let counted = 0;
   for (const token of extractReadingTokens(markdown)) {
@@ -49,7 +50,7 @@ export function buildLevelCacheEntry(markdown, table, now = Date.now()) {
     counted += 1;
     const rank = rankOf(token.word, ranks);
     if (rank !== null && rank <= 1000) base += 1;
-    else words[token.word] = (words[token.word] ?? 0) + 1;
+    else words[token.word] = (Object.hasOwn(words, token.word) ? words[token.word] : 0) + 1;
   }
   return { english: true, counted, base, words, usedAt: now };
 }

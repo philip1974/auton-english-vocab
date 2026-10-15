@@ -144,20 +144,20 @@ describe('review store', () => {
     expect(store.log[0]).toBe(1);
   });
 
-  it('should project pending logs without duplicates and keep legacy entries when a flush is pending', async () => {
+  it('should project pending logs without dropping conflicting legacy entries when a flush is pending', async () => {
     const store = new ReviewStore(appWithStorage({
       'log.json': JSON.stringify([{ id: 'same', word: 'old' }, 1]),
     }));
     await store.load();
     store.review.pendingLogs = [{ id: 'same', word: 'new' }];
-    expect(store.effectiveLog()).toEqual([{ id: 'same', word: 'new' }, 1]);
-    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1]);
-    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1]);
+    expect(store.effectiveLog()).toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
+    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
+    await expect(store.flushPendingLogs()).resolves.toEqual([{ id: 'same', word: 'old' }, 1, { id: 'same~recovered-1', word: 'new' }]);
     expect(normalizeReview({ version: 1, cards: {}, flags: {}, pendingLogs: [null, { word: 'missing-id' }, { id: 'valid' }] }).pendingLogs).toEqual([{ id: 'valid' }]);
     expect(mergeReview(
       { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first' }] },
       { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', value: 'new' }, { id: 'second' }] },
-    ).pendingLogs).toEqual([{ id: 'first', value: 'new' }, { id: 'second' }]);
+    ).pendingLogs).toEqual([{ id: 'first' }, { id: 'first~recovered-1', value: 'new' }, { id: 'second' }]);
   });
 
   it('should merge review flags when merging reviews directly', () => {
@@ -194,6 +194,83 @@ describe('review store', () => {
     expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
     await store.mutateReview({ type: 'setFlag', word: 'valid', flag: 'ignored' });
     expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
+  });
+
+  it('should store prototype-shaped card and flag keys as own properties', async () => {
+    const store = new ReviewStore(appWithStorage());
+    await store.load();
+    for (const word of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      await store.mutateReview({ type: 'setFlag', word, flag: 'ignored' });
+      expect(Object.hasOwn(store.review.flags, word)).toBe(true);
+    }
+    await expect(store.mutateReview({ type: 'rateCard', word: 'constructor', rating: 'Good', logEntry: { id: 'constructor-rating', word: 'constructor' } })).resolves.toMatchObject({ applied: true });
+    expect(Object.hasOwn(store.review.cards, 'constructor')).toBe(true);
+  });
+
+  it('should preserve different legacy log entries that share an id and back up the source log', async () => {
+    const original = [
+      { id: 'same', word: 'alpha', rating: 'Good' },
+      { id: 'same', word: 'beta', rating: 'Again' },
+    ];
+    const app = appWithStorage({ 'log.json': JSON.stringify(original) });
+    const notices = [];
+    const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
+    await store.load();
+    expect(store.effectiveLog().map((entry) => entry.word)).toEqual(['alpha', 'beta']);
+    expect(new Set(store.effectiveLog().map((entry) => entry.id)).size).toBe(2);
+    expect(Object.keys(app.files).some((name) => name.startsWith('log.corrupt-'))).toBe(true);
+    expect(notices.join('\n')).toMatch(/日志/u);
+  });
+
+  it('should preserve colliding pending log ids when reviews are merged', () => {
+    const base = { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'same', word: 'alpha', rating: 'Good' }] };
+    const incoming = { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'same', word: 'beta', rating: 'Again' }] };
+    const merged = mergeReview(base, incoming);
+    expect(merged.pendingLogs.map((entry) => entry.word)).toEqual(['alpha', 'beta']);
+    expect(new Set(merged.pendingLogs.map((entry) => entry.id)).size).toBe(2);
+  });
+
+  it('should recover repeated pending ids without colliding with an existing recovery suffix', () => {
+    const app = appWithStorage({ 'review.json': JSON.stringify({
+      version: 1,
+      cards: {},
+      flags: {},
+      pendingLogs: [
+        { id: 'same', word: 'alpha' },
+        { id: 'same~recovered-1', word: 'legacy' },
+        { id: 'same', word: 'beta' },
+      ],
+    }) });
+    const originalWrite = app.storage.write;
+    app.storage.write = async (...args) => {
+      if (args[1] === 'log.json') throw Object.assign(new Error('offline'), { code: 'STORAGE_WRITE_FAILED' });
+      return originalWrite(...args);
+    };
+    const notices = [];
+    const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
+    return store.load().then(() => {
+      expect(store.review.pendingLogs.map((entry) => entry.id)).toEqual(['same', 'same~recovered-1', 'same~recovered-2']);
+      expect(Object.keys(app.files).some((name) => name.startsWith('review.corrupt-'))).toBe(true);
+      expect(notices.join('\n')).toMatch(/ID/u);
+    });
+  });
+
+  it('should create distinct non-overwriting corrupt backups within the same millisecond', async () => {
+    const now = () => new Date('2026-10-15T12:34:56.789Z');
+    const app = appWithStorage({ 'review.json': '{broken-one' });
+    await new ReviewStore(app, { now }).load();
+    app.files['review.json'] = '{broken-two';
+    await new ReviewStore(app, { now }).load();
+    const backups = Object.entries(app.files).filter(([name]) => name.startsWith('review.corrupt-'));
+    expect(backups).toHaveLength(2);
+    expect(new Set(backups.map(([, content]) => content))).toEqual(new Set(['{broken-one', '{broken-two']));
+  });
+
+  it('should retry a corrupt backup with a fresh exclusive name when creation conflicts', async () => {
+    const app = appWithStorage({ 'review.json': '{broken' }, { conflictOnce: true });
+    const store = new ReviewStore(app, { now: () => new Date('2026-10-15T12:34:56.789Z') });
+    await expect(store.load()).resolves.toBeDefined();
+    expect(Object.keys(app.files).filter((name) => name.startsWith('review.corrupt-'))).toHaveLength(1);
   });
 
   it('should back up valid json when the review container schema is damaged', async () => {

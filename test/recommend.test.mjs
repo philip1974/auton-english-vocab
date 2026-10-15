@@ -100,6 +100,16 @@ describe('reading recommendations', () => {
     expect(app.knowledge.readDocument).toHaveBeenCalledTimes(2);
   });
 
+  it('should discard a cached recommendation when progress re-entry changes the workspace epoch', async () => {
+    const app = appFor([{ path: 'wiki/cached.md', title: 'Cached', hash: 'same', content: english('the') }]);
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    await recommender.recommend();
+    app.workspace.value = 'e1';
+    const result = await recommender.recommend({ onProgress: () => { app.workspace.value = 'e2'; } });
+    expect(result).toMatchObject({ stale: true, items: [] });
+  });
+
   it('should skip unreadable or hashless metadata without reading or caching it', async () => {
     const app = appFor([
       { path: 'wiki/good.md', title: 'Good', hash: 'h-good', content: english('the') },
@@ -190,6 +200,22 @@ describe('reading recommendations', () => {
       return doc;
     };
     expect(await recommender.recommend()).toMatchObject({ stale: true, items: [] });
+  });
+
+  it('should not write an old recommendation document into a reloaded cache epoch', async () => {
+    const app = appFor([{ path: 'wiki/a.md', title: 'Old A', hash: 'same', content: english('the') }]);
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    let release;
+    app.knowledge.readDocument = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const pending = recommender.recommend();
+    await Promise.resolve();
+    app.workspace.value = 'e2';
+    recommender.cache.epoch = 'root-b';
+    recommender.cache.items = new Map();
+    release({ content: english('the'), meta: { title: 'Old A' } });
+    await expect(pending).resolves.toMatchObject({ stale: true, items: [] });
+    expect(recommender.cache.get('wiki/a.md', 'same')).toBeNull();
   });
 
   it('should fall back to a legacy epoch and unwrap host errors when optional workspace scope is missing', async () => {
