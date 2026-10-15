@@ -55,11 +55,11 @@ async function withSoftTimeout(promise, ms) {
   return result;
 }
 
-async function resolveSource(app, source, notes, guard) {
+async function resolveSource(app, source, notes, guard, t) {
   if (!source?.path || !isSafeDocumentSourcePath(source.path)) return source;
   const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap).catch(() => null), 3000));
   if (!doc) {
-    notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
+    notes.push(t.toolSourceOmitted(source.path));
     return undefined;
   }
   const rel = source.path.startsWith('wiki/vocab/')
@@ -135,7 +135,10 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     }
     const notes = [];
     const validated = entries.map(validateEntry);
-    const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes, guard) })));
+    const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({
+      ...entry,
+      source: entry.example ? await resolveSource(app, entry.source, notes, guard, t) : undefined,
+    })));
     const groups = new Map();
     for (const entry of normalized) {
       const group = groups.get(entry.word) ?? { ...entry, examples: [] };
@@ -174,11 +177,11 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       changes.push({ path, newContent: content });
       accepted.push(entry.word);
     }
-    if (!changes.length) return ['No vocabulary entries changed.', ...notes].join('\n');
+    if (!changes.length) return [t.toolNoChanges, ...notes].join('\n');
     if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error('duplicate vocabulary proposal path');
     const number = nextNumber();
     const words = accepted;
-    guard.assertCurrent();
+    await guard.assertCurrent();
     const proposal = app.knowledge.propose({
       description: t.proposalDescription(number, words.join(', ')),
       changes,
@@ -187,7 +190,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       notify(noticeText(receipt, number, words, t));
       refresh?.();
     }).catch(() => notify(t.proposalFailed(number)));
-    return [`Submitted for review #${number}: ${words.length} ${words.length === 1 ? 'word' : 'words'}.`, ...notes].join('\n');
+    return [t.toolSubmitted(number, words.length), ...notes].join('\n');
     }, t.knowledgeWriteAborted);
   };
 }

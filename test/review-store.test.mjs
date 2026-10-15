@@ -127,6 +127,26 @@ describe('review store', () => {
     expect(restarted.review.pendingLogs).toEqual([]);
   });
 
+  it('should report a root change that occurs after log persistence but before pending cleanup', async () => {
+    const app = appWithStorage();
+    const store = new ReviewStore(app, { now: () => new Date('2026-10-15T12:00:00Z') });
+    await store.load();
+    await store.mutateReview({
+      type: 'rateCard',
+      word: 'alpha',
+      rating: 'Good',
+      logEntry: { id: 'rating-a', word: 'alpha', rating: 'Good', reviewedAt: '2026-10-15T12:00:00.000Z' },
+    });
+    const originalWrite = app.storage.write;
+    app.storage.write = async (...args) => {
+      const result = await originalWrite(...args);
+      if (args[1] === 'log.json') app.setRoot('root-b');
+      return result;
+    };
+    await expect(store.flushPendingLogs()).resolves.toMatchObject({ rootChanged: true });
+    expect(store.rootGeneration).toBe('root-b');
+  });
+
   it('should reload state when root changes during save', async () => {
     const app = appWithStorage();
     const store = new ReviewStore(app);
@@ -152,9 +172,9 @@ describe('review store', () => {
     store.review.pendingLogs = [{ id: 'same', word: 'new', rating: 'Good' }];
     expect(store.effectiveLog().map((entry) => entry.id)).toEqual(['same', 'same~recovered-1']);
     const flushed = await store.flushPendingLogs();
-    expect(flushed).toHaveLength(2);
+    expect(flushed.log).toHaveLength(2);
     expect(flushed.idMap.get('same')).toBe('same~recovered-1');
-    await expect(store.flushPendingLogs()).resolves.toHaveLength(2);
+    await expect(store.flushPendingLogs()).resolves.toMatchObject({ log: expect.any(Array), rootChanged: false });
     expect(normalizeReview({ version: 1, cards: {}, flags: {}, pendingLogs: [null, { word: 'missing-id' }, { id: 'valid', word: 'run', rating: 'Good' }] }).pendingLogs).toEqual([{ id: 'valid', word: 'run', rating: 'Good' }]);
     expect(mergeReview(
       { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', word: 'alpha', rating: 'Good' }] },

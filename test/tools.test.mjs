@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { makeVocabAdd, makeVocabLookup } from '../src/tools.mjs';
 import { buildNote } from '../src/note-format.mjs';
+import { uiText } from '../src/ui-text.mjs';
 
 function app(proposalReceipt = { outcome: 'applied' }) {
   const proposals = [];
@@ -30,6 +31,14 @@ function app(proposalReceipt = { outcome: 'applied' }) {
 }
 
 describe('tools', () => {
+  it('should provide localized submitted and omitted-source tool results in every supported locale', () => {
+    for (const locale of ['en', 'zh', 'ja', 'ko']) {
+      const text = uiText(locale);
+      expect(text.toolSubmitted(3, 2)).toBeTruthy();
+      expect(text.toolSourceOmitted('wiki/missing.md')).toContain('wiki/missing.md');
+    }
+  });
+
   it('should return lookup details when a word is collected', async () => {
     const lookup = makeVocabLookup({
       index: { get: () => ({ word: 'alpha', definition: 'a' }) },
@@ -126,6 +135,33 @@ describe('tools', () => {
       notify: () => undefined,
     });
     await expect(add({ entries: [{ word: 'Beta', definition: '测试', example: 'Beta test.', source: { path: 'wiki/sources/missing.md' } }] })).resolves.toMatch(/without a link/);
+  });
+
+  it('should localize vocab add results and only mention omitted sources when an example exists', async () => {
+    const addJapanese = makeVocabAdd({
+      app: app(),
+      index: { get: () => null },
+      nextNumber: () => 11,
+      notify: () => undefined,
+      locale: 'ja',
+    });
+    const withoutExample = await addJapanese({ entries: [{ word: 'beta', definition: 'テスト', source: { path: 'wiki/sources/missing.md' } }] });
+    expect(withoutExample).toContain('レビューに提出');
+    expect(withoutExample).not.toContain('Submitted for review');
+    expect(withoutExample).not.toContain('wiki/sources/missing.md');
+
+    const withExample = await addJapanese({ entries: [{ word: 'gamma', definition: 'テスト', example: 'Gamma.', source: { path: 'wiki/sources/missing.md' } }] });
+    expect(withExample).toContain('wiki/sources/missing.md');
+    expect(withExample).toContain('リンク');
+
+    const noChanges = makeVocabAdd({
+      app: app(),
+      index: { get: () => ({ word: 'old', path: 'wiki/vocab/old.md' }) },
+      nextNumber: () => 12,
+      notify: () => undefined,
+      locale: 'ko',
+    });
+    await expect(noChanges({ entries: [{ word: 'old', definition: '旧' }] })).resolves.toContain('변경된 단어');
   });
 
   it('should reject invalid source paths when entries are unsafe', async () => {
@@ -314,14 +350,14 @@ describe('tools', () => {
     await expect(add({ entries: [{ word: 'beta', definition: 'x', source: { url: 'https://example.com/<x>' } }] })).rejects.toThrow(/invalid source/);
   });
 
-  it('should return English model text while localizing proposal notices', async () => {
+  it('should localize the tool result and proposal notice when the locale is Japanese', async () => {
     const notices = [];
     const fake = app({ outcome: 'applied' });
     fake.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } });
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 12, notify: (message) => notices.push(message), locale: 'ja' });
     const result = await add({ entries: [{ word: 'alpha', definition: 'x' }] });
     await Promise.resolve();
-    expect(result).toBe('Submitted for review #12: 1 word.');
+    expect(result).toBe('レビューに提出しました #12：1語。');
     expect(notices[0]).toMatch(/#12/);
     expect(notices[0]).not.toMatch(/已应用/);
     expect(fake.proposals[0].description).toMatch(/^英単語帳 #12/);

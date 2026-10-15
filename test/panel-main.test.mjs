@@ -33,9 +33,25 @@ function fullApp() {
     panels: [],
     commands: [],
     events: [],
+    emit(name, payload) {
+      const listeners = this.events.filter((event) => event.name === name);
+      return Promise.all(listeners.map((event) => event.listener(payload)));
+    },
     opened: [],
     notices: [],
     tools: new Map(),
+    learningSuggestions: {
+      active: new Map(),
+      register(spec) {
+        if (this.active.has(spec.id)) throw new Error(`already registered: ${spec.id}`);
+        const handle = {
+          set: vi.fn((epoch, items) => new Set(items.map((item) => item.id)).size === items.length),
+          dispose: vi.fn(() => { if (this.active.get(spec.id) === handle) this.active.delete(spec.id); }),
+        };
+        this.active.set(spec.id, handle);
+        return handle;
+      },
+    },
     storage: {
       writes: [],
       setRoot(next) { rootGeneration = next; },
@@ -112,6 +128,25 @@ beforeEach(() => {
 });
 
 describe('panel', () => {
+  it('should make the learning suggestion fake reject duplicate registrations and suggestion ids like the host', () => {
+    const app = fullApp();
+    const first = app.learningSuggestions.register({ id: 'reading' });
+    expect(() => app.learningSuggestions.register({ id: 'reading' })).toThrow(/already registered/u);
+    expect(first.set('epoch', [{ id: 'same' }, { id: 'same' }])).toBe(false);
+    first.dispose();
+    expect(() => app.learningSuggestions.register({ id: 'reading' })).not.toThrow();
+  });
+
+  it('should drop events emitted before a listener is registered', async () => {
+    const app = fullApp();
+    const listener = vi.fn();
+    await app.emit('knowledge.root-changed', { root: 'early' });
+    app.events.push({ name: 'knowledge.root-changed', listener });
+    expect(listener).not.toHaveBeenCalled();
+    await app.emit('knowledge.root-changed', { root: 'late' });
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('should choose each card automatic mode without persisting it until the user selects a mode', () => {
     const container = document.createElement('div');
     let listener;
@@ -1202,7 +1237,7 @@ describe('main plugin', () => {
       log.push(operation.logEntry);
       return { review: plugin.reviewStore.review, previousCard: reps === 1 ? null : { state: 'Learning', reps: reps - 1 }, rootChanged: false };
     });
-    plugin.reviewStore.flushPendingLogs = vi.fn(async () => [...log]);
+    plugin.reviewStore.flushPendingLogs = vi.fn(async () => ({ log: [...log], idMap: new Map(), rootChanged: false }));
     const first = plugin.rateWord('alpha', 'Good', 'flip');
     const second = plugin.rateWord('alpha', 'Again', 'flip');
     expect(plugin.state.mutationPending).toBe(true);
@@ -1282,11 +1317,11 @@ describe('main plugin', () => {
     const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
     await plugin.onload();
 
-    let releaseMoved;
-    plugin.rootMoved = () => new Promise((resolve) => { releaseMoved = resolve; });
+    let releaseConsistency;
+    plugin.ensureRootConsistent = () => new Promise((resolve) => { releaseConsistency = resolve; });
     const staleIndex = plugin.refreshIndex(plugin.rootGeneration);
     plugin.invalidateRoot();
-    releaseMoved(false);
+    releaseConsistency({ ok: false, binding: null });
     await staleIndex;
 
     plugin.reviewStore.reloadForRootChange = async () => ({ version: 1, cards: {}, flags: {} });
@@ -1448,7 +1483,7 @@ describe('main plugin', () => {
     expect(app.commands[0].id).toBe('start-review');
     expect(app.selectionActions.items[0].surfaces).toEqual(['reading', 'web']);
     expect([...app.tools.keys()]).toEqual(['vocab_lookup', 'vocab_add']);
-    expect(app.events.map((event) => event.name)).toEqual(['appearance.locale-changed', 'knowledge.index-changed', 'knowledge.root-changed']);
+    expect(app.events.map((event) => event.name)).toEqual(['appearance.locale-changed', 'knowledge.root-changed', 'knowledge.index-changed', 'knowledge.document-opened']);
     const rendered = document.createElement('div');
     app.panels[0].render(rendered);
     expect(rendered.textContent).toContain('今日复习');
@@ -1751,7 +1786,7 @@ describe('main plugin', () => {
     await plugin.setHighlight(false);
     expect(plugin.state.highlight).toBe(false);
     app.storage.scope = async () => { throw new Error('gone'); };
-    await expect(plugin.rootMoved()).resolves.toBe(false);
+    await expect(plugin.ensureRootConsistent({ recover: false, requireIndex: false })).resolves.toMatchObject({ ok: false });
   });
 
   it('should undo the latest reading-card rating and append an undo log', async () => {
@@ -1825,13 +1860,14 @@ describe('main plugin', () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
     const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'locale-startup' }) };
     let releasePreferences;
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     plugin.loadData = () => new Promise((resolve) => { releasePreferences = () => resolve({}); });
     const loading = plugin.onload();
     await vi.waitFor(() => expect(app.events.some((event) => event.name === 'appearance.locale-changed')).toBe(true));
     document.documentElement.lang = 'en';
-    await app.events.find((event) => event.name === 'appearance.locale-changed').listener({ locale: 'en' });
+    await app.emit('appearance.locale-changed', { locale: 'en' });
     releasePreferences();
     await loading;
     expect(plugin.locale).toBe('en');
@@ -1855,6 +1891,63 @@ describe('main plugin', () => {
     await loading;
     expect(plugin.locale).toBe('en');
     expect(app.commands.at(-1).title).toContain('start review');
+  });
+
+  it('should replay a root change emitted while tool registration is still loading', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    app.knowledge.listDocuments = async () => [{ path: `wiki/vocab/${epoch === 'epoch-a' ? 'alpha' : 'beta'}.md`, title: epoch, revision: { contentHash: epoch } }];
+    app.knowledge.readDocument = async ({ path }) => ({
+      content: buildNote({ word: path.includes('alpha') ? 'alpha' : 'beta', definition: epoch }),
+      meta: { path, title: epoch, revision: { contentHash: epoch } },
+      revision: { contentHash: epoch },
+    });
+    const terms = [];
+    app.readingDecorations = { register: () => ({ setTerms: (items) => { terms.push(items); return true; }, dispose() {} }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    let releaseTools;
+    let toolsStarted;
+    plugin.registerTools = () => new Promise((resolve) => {
+      toolsStarted = true;
+      releaseTools = resolve;
+    });
+    const loading = plugin.onload();
+    await vi.waitFor(() => expect(toolsStarted).toBe(true));
+    app.storage.setRoot('root-b');
+    epoch = 'epoch-b';
+    await app.emit('knowledge.root-changed');
+    releaseTools();
+    await loading;
+    expect(plugin.state.entries.map((entry) => entry.word)).toEqual(['beta']);
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    expect(terms.at(-1).map((term) => term.key)).toContain('beta');
+    expect(terms.at(-1).map((term) => term.key)).not.toContain('alpha');
+  });
+
+  it('should self-heal a silent root change when the next document-opened event arrives', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const statusSet = vi.fn(() => true);
+    app.readingStatus = { register: () => ({ set: statusSet, dispose() {} }) };
+    app.knowledge.listDocuments = async () => [{ path: `wiki/vocab/${epoch === 'epoch-a' ? 'alpha' : 'beta'}.md`, title: epoch, revision: { contentHash: epoch } }];
+    app.knowledge.readDocument = async ({ path }) => path.startsWith('wiki/vocab/')
+      ? { content: buildNote({ word: path.includes('alpha') ? 'alpha' : 'beta', definition: epoch }), meta: { path, title: epoch }, revision: { contentHash: epoch } }
+      : { content: `${'the '.repeat(80)}rareword`, meta: { path, title: epoch }, revision: { contentHash: epoch } };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    statusSet.mockClear();
+    app.storage.setRoot('root-b');
+    epoch = 'epoch-b';
+    await app.emit('knowledge.document-opened', { path: 'wiki/read.md', contentHash: 'epoch-b' });
+    expect(plugin.state.entries.map((entry) => entry.word)).toEqual(['beta']);
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    expect(statusSet).toHaveBeenCalled();
   });
 
   it('should fall back to complete default level settings when persisted settings are partial or invalid', async () => {
@@ -1935,7 +2028,7 @@ describe('main plugin', () => {
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
     await expect(app.tools.get('vocab_lookup').run({ word: 'alpha' })).resolves.toContain('"collected":true');
-    await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '测试' }] })).resolves.toContain('Submitted for review');
+    await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '测试' }] })).resolves.toContain('已提交审核');
   });
 
   it('should submit dictionary collection as a knowledge proposal with note metadata and skip existing words', async () => {
@@ -2001,6 +2094,34 @@ describe('main plugin', () => {
     const persisted = JSON.parse((await app.storage.read('root', 'log.json')).text);
     expect(persisted.at(-1).undoOf).toBe('same~recovered-1');
     expect(activeReviewLog(persisted).map((entry) => entry.id)).toEqual(['same']);
+  });
+
+  it('should recover when pending cleanup changes roots and invalidate queued old-root mutations', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const originalWrite = app.storage.write.bind(app.storage);
+    let switched = false;
+    app.storage.write = async (...args) => {
+      const written = await originalWrite(...args);
+      if (!switched && args[0] === 'root' && args[1] === 'log.json') {
+        switched = true;
+        app.storage.setRoot('root-b');
+        epoch = 'epoch-b';
+      }
+      return written;
+    };
+    const rating = plugin.rateWord('alpha', 'Good', 'reading-card');
+    const queuedFlag = plugin.setFlag('alpha', 'ignored');
+    await expect(rating).resolves.toBe(false);
+    await expect(queuedFlag).resolves.toBe(false);
+    expect(plugin.reviewStore.rootGeneration).toBe('root-b');
+    const rootB = await app.storage.read('root-b', 'review.json');
+    expect(rootB.found ? JSON.parse(rootB.text).flags.alpha : undefined).toBeUndefined();
   });
 
   it('should write a web url source when collecting a dictionary word from web lookup', async () => {
@@ -2545,6 +2666,7 @@ describe('main plugin', () => {
     plugin.reviewStore = { rootGeneration: 'root' };
     plugin.indexBinding = { generation: 0, epoch: 'epoch-1', storageRootGeneration: 'root' };
     plugin.indexProjectionReady = true;
+    plugin.initialized = true;
     await plugin.initializeReadingLevel();
     plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
     await plugin.refreshLatestReadingStatus();
@@ -2586,6 +2708,7 @@ describe('main plugin', () => {
     app.knowledge.readDocument = vi.fn(() => new Promise((resolve) => { release = resolve; }));
     plugin.recommender.scoreDocument = vi.fn();
     const pending = plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'same' });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     epoch = 'epoch-b';
     release({ content: `${'the '.repeat(80)}run`, meta: { title: 'Old' }, revision: { contentHash: 'same' } });
     await expect(pending).resolves.toBe(false);
@@ -2669,6 +2792,7 @@ describe('main plugin', () => {
     app.knowledge.readDocument = ({ path }) => new Promise((resolve) => resolvers.set(path, resolve));
     const older = plugin.updateReadingStatus({ path: 'wiki/old.md', contentHash: 'old' });
     const newer = plugin.updateReadingStatus({ path: 'wiki/new.md', contentHash: 'new' });
+    await vi.waitFor(() => expect(resolvers.size).toBe(2));
     resolvers.get('wiki/new.md')({ content: 'the '.repeat(80), meta: { title: 'New' }, revision: { contentHash: 'new' } });
     await newer;
     resolvers.get('wiki/old.md')({ content: 'the '.repeat(80), meta: { title: 'Old' }, revision: { contentHash: 'old' } });
@@ -2757,6 +2881,7 @@ describe('main plugin', () => {
     plugin.learningSuggestionsHandle = { set: (...args) => suggestions.push(args) };
     const older = plugin.refreshRecommendations();
     const newer = plugin.refreshRecommendations();
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
     resolvers[1]({ stale: false, items: [{ title: 'new', path: 'wiki/new.md', band: 'good', bandLabel: '适合', rate: 3 }], skipped: {} });
     await newer;
     resolvers[0]({ stale: false, items: [{ title: 'old', path: 'wiki/old.md', band: 'good', bandLabel: '适合', rate: 3 }], skipped: {} });

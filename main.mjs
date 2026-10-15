@@ -115,6 +115,9 @@ var TEXT = {
     proposalTimeout: (number, words) => `Vocabulary proposal #${number} timed out: ${words}`,
     proposalAborted: (number, words) => `Vocabulary proposal #${number} was aborted: ${words}`,
     proposalFailed: (number) => `Vocabulary proposal #${number} could not be submitted.`,
+    toolNoChanges: "No vocabulary entries changed.",
+    toolSubmitted: (number, count) => `Submitted for review #${number}: ${count} ${count === 1 ? "word" : "words"}.`,
+    toolSourceOmitted: (path) => `Source ${path} was missing or timed out; the example was kept without a link.`,
     knowledgeWriteAborted: "The knowledge base changed, so the operation was aborted.",
     corruptBackupFailed: "Damaged data could not be backed up. Saving is disabled to protect the original file; browsing remains available.",
     proposalDescription: (number, words) => `English Vocab #${number}: ${words}`,
@@ -238,6 +241,9 @@ var TEXT = {
     proposalTimeout: (number, words) => `生词提案 #${number} 审阅超时：${words}`,
     proposalAborted: (number, words) => `生词提案 #${number} 已中止：${words}`,
     proposalFailed: (number) => `生词提案 #${number} 提交失败。`,
+    toolNoChanges: "没有生词条目发生变化。",
+    toolSubmitted: (number, count) => `已提交审核 #${number}：${count} 个词。`,
+    toolSourceOmitted: (path) => `来源 ${path} 不存在或读取超时；例句已保留但省略链接。`,
     knowledgeWriteAborted: "知识库已切换，操作已中止。",
     corruptBackupFailed: "损坏数据无法备份。为保护原文件，保存已进入只读模式；仍可继续浏览。",
     proposalDescription: (number, words) => `英语生词本 #${number}：${words}`,
@@ -361,6 +367,9 @@ var TEXT = {
     proposalTimeout: (number, words) => `単語提案 #${number} はタイムアウトしました：${words}`,
     proposalAborted: (number, words) => `単語提案 #${number} は中止されました：${words}`,
     proposalFailed: (number) => `単語提案 #${number} を送信できませんでした。`,
+    toolNoChanges: "変更された単語項目はありません。",
+    toolSubmitted: (number, count) => `レビューに提出しました #${number}：${count}語。`,
+    toolSourceOmitted: (path) => `出典 ${path} が見つからないかタイムアウトしたため、例文は残してリンクを省略しました。`,
     knowledgeWriteAborted: "ナレッジベースが切り替わったため、操作を中止しました。",
     corruptBackupFailed: "破損データをバックアップできませんでした。元ファイルを保護するため保存は読み取り専用です。閲覧は続けられます。",
     proposalDescription: (number, words) => `英単語帳 #${number}：${words}`,
@@ -484,6 +493,9 @@ var TEXT = {
     proposalTimeout: (number, words) => `단어 제안 #${number} 검토 시간이 초과되었습니다: ${words}`,
     proposalAborted: (number, words) => `단어 제안 #${number}이 중단되었습니다: ${words}`,
     proposalFailed: (number) => `단어 제안 #${number}을 제출할 수 없습니다.`,
+    toolNoChanges: "변경된 단어 항목이 없습니다.",
+    toolSubmitted: (number, count) => `검토를 위해 제출했습니다 #${number}: ${count}개 단어.`,
+    toolSourceOmitted: (path) => `출처 ${path}을(를) 찾지 못했거나 시간이 초과되어 예문은 유지하고 링크는 생략했습니다.`,
     knowledgeWriteAborted: "지식베이스가 전환되어 작업을 중단했습니다.",
     corruptBackupFailed: "손상된 데이터를 백업할 수 없습니다. 원본 보호를 위해 저장은 읽기 전용이며 탐색은 계속할 수 있습니다.",
     proposalDescription: (number, words) => `영어 단어장 #${number}: ${words}`,
@@ -1512,12 +1524,21 @@ var ReviewStore = class {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     const pending = [...this.review.pendingLogs ?? []];
-    if (pending.length === 0) return this.log;
-    await this.appendLogs(pending);
-    if (this.#stale(generation, rootGeneration)) return this.log;
+    if (pending.length === 0) return { log: this.log, idMap: /* @__PURE__ */ new Map(), rootChanged: false };
+    let persisted;
+    try {
+      persisted = await this.appendLogs(pending);
+    } catch (error) {
+      if (codeOf(error) !== "ROOT_CHANGED") throw error;
+      await this.reloadForRootChange();
+      return { log: this.log, idMap: /* @__PURE__ */ new Map(), rootChanged: true };
+    }
+    const idMap = persisted.idMap ?? /* @__PURE__ */ new Map();
+    if (this.#stale(generation, rootGeneration)) return { log: this.log, idMap, rootChanged: true };
     const ids = pending.map((entry) => entry.id);
-    await this.mutateReview({ type: "removePendingLogs", ids });
-    return this.log;
+    const cleanup = await this.mutateReview({ type: "removePendingLogs", ids });
+    if (cleanup.rootChanged || this.#stale(generation, rootGeneration)) return { log: this.log, idMap, rootChanged: true };
+    return { log: this.log, idMap, rootChanged: false };
   }
   #assertReviewWritable() {
     if (this.reviewWritable) return;
@@ -1613,6 +1634,53 @@ function mergeReview(base, incoming) {
   return merged;
 }
 
+// src/ambiguous-inflections.generated.mjs
+var AMBIGUOUS_INFLECTION_METADATA = Object.freeze({
+  source: "dict/*.mjs + data/en-wordfreq-30k.json",
+  frequencyLimit: 5e3,
+  count: 38
+});
+var AMBIGUOUS_INFLECTION_SURFACES = Object.freeze([
+  "does",
+  "found",
+  "left",
+  "thought",
+  "bit",
+  "saw",
+  "shot",
+  "training",
+  "ground",
+  "feeling",
+  "felt",
+  "feels",
+  "programs",
+  "putting",
+  "fell",
+  "wedding",
+  "rose",
+  "engineering",
+  "marketing",
+  "clothes",
+  "feed",
+  "lay",
+  "sat",
+  "falls",
+  "spoke",
+  "painting",
+  "rent",
+  "manufacturing",
+  "chose",
+  "advertising",
+  "pants",
+  "bound",
+  "programming",
+  "drove",
+  "timing",
+  "feeding",
+  "wound",
+  "rangers"
+]);
+
 // src/inflections.mjs
 var SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 var VOWELS = /* @__PURE__ */ new Set(["a", "e", "i", "o", "u"]);
@@ -1638,7 +1706,7 @@ var DENYLIST = /* @__PURE__ */ new Set([
   "basis",
   "analysis"
 ]);
-var AMBIGUOUS_INFLECTION_SURFACES = /* @__PURE__ */ new Set(["does", "left", "saw"]);
+var AMBIGUOUS_INFLECTION_SURFACES2 = new Set(AMBIGUOUS_INFLECTION_SURFACES);
 var IRREGULAR_VERBS = new Map(Object.entries({
   abide: ["abode", "abode"],
   alight: ["alit", "alit"],
@@ -2045,7 +2113,7 @@ function buildSurfaceMap(words, { permissive = false } = {}) {
     for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
-      if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;
+      if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES2.has(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }
@@ -3594,11 +3662,11 @@ async function withSoftTimeout(promise, ms) {
   clearTimeout(timer);
   return result;
 }
-async function resolveSource(app, source, notes, guard) {
+async function resolveSource(app, source, notes, guard, t) {
   if (!source?.path || !isSafeDocumentSourcePath(source.path)) return source;
   const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap2).catch(() => null), 3e3));
   if (!doc) {
-    notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
+    notes.push(t.toolSourceOmitted(source.path));
     return void 0;
   }
   const rel = source.path.startsWith("wiki/vocab/") ? source.path.slice("wiki/vocab/".length) : source.path.startsWith("wiki/") ? `../${source.path.slice("wiki/".length)}` : source.path;
@@ -3667,7 +3735,10 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
       }
       const notes = [];
       const validated = entries.map(validateEntry);
-      const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes, guard) })));
+      const normalized = await guard.wait(mapConcurrent(validated, 4, async (entry) => ({
+        ...entry,
+        source: entry.example ? await resolveSource(app, entry.source, notes, guard, t) : void 0
+      })));
       const groups = /* @__PURE__ */ new Map();
       for (const entry of normalized) {
         const group = groups.get(entry.word) ?? { ...entry, examples: [] };
@@ -3706,11 +3777,11 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
         changes.push({ path, newContent: content });
         accepted.push(entry.word);
       }
-      if (!changes.length) return ["No vocabulary entries changed.", ...notes].join("\n");
+      if (!changes.length) return [t.toolNoChanges, ...notes].join("\n");
       if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error("duplicate vocabulary proposal path");
       const number = nextNumber();
       const words = accepted;
-      guard.assertCurrent();
+      await guard.assertCurrent();
       const proposal = app.knowledge.propose({
         description: t.proposalDescription(number, words.join(", ")),
         changes
@@ -3719,7 +3790,7 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
         notify(noticeText(receipt, number, words, t));
         refresh?.();
       }).catch(() => notify(t.proposalFailed(number)));
-      return [`Submitted for review #${number}: ${words.length} ${words.length === 1 ? "word" : "words"}.`, ...notes].join("\n");
+      return [t.toolSubmitted(number, words.length), ...notes].join("\n");
     }, t.knowledgeWriteAborted);
   };
 }
@@ -34627,7 +34698,20 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.localizedPanelHandle = null;
     this.localizedCommandHandle = null;
     this.selectionActionHandle = null;
+    this.initialized = false;
+    this.rootChangedPending = false;
+    this.indexChangedPending = false;
+    this.rootRecoveryPromise = null;
     this.onEvent?.("appearance.locale-changed", (event) => this.handleLocaleChanged(event));
+    this.onEvent?.("knowledge.root-changed", () => {
+      return this.ensureRootConsistent({ forceRecover: true, invalidate: true });
+    });
+    this.onEvent?.("knowledge.index-changed", () => {
+      this.indexChangedPending = true;
+      if (!this.initialized) return false;
+      return this.handleIndexChanged();
+    });
+    this.onEvent?.("knowledge.document-opened", (event) => this.updateReadingStatus(event));
     this.registerLocalizedShell();
     if (!hasRequiredHost(this.app)) return;
     await this.loadPreferences();
@@ -34635,13 +34719,13 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.syncReadingDecorations();
     this.registerSelectionAction();
     await this.registerTools();
-    this.onEvent?.("knowledge.index-changed", () => this.refreshIndex());
-    this.onEvent?.("knowledge.root-changed", () => {
-      const generation = this.invalidateRoot();
-      return this.handleRootChanged(generation);
-    });
+    this.initialized = true;
+    if (this.rootChangedPending) await this.ensureRootConsistent({ forceRecover: true });
+    else await this.ensureRootConsistent();
+    if (this.indexChangedPending) await this.handleIndexChanged();
     const finalLocale = currentLocale();
     if (finalLocale !== this.locale) await this.handleLocaleChanged(finalLocale);
+    if (this.readingStatusDirty) await this.refreshLatestReadingStatus();
   }
   registerLocalizedShell() {
     this.localizedPanelHandle?.dispose?.();
@@ -34707,29 +34791,86 @@ var EnglishVocabPlugin = class extends BasePlugin {
       return "legacy";
     }
   }
+  rootBindingMatches(binding, { requireIndex = true, expectedBinding } = {}) {
+    if (!binding?.stable || !this.reviewStore || binding.storageRootGeneration !== this.reviewStore.rootGeneration) return false;
+    if (expectedBinding && (binding.storageRootGeneration !== expectedBinding.storageRootGeneration || binding.workspaceEpoch !== expectedBinding.workspaceEpoch)) return false;
+    if (!requireIndex) return true;
+    return this.indexBinding?.generation === this.rootGeneration && this.indexBinding?.epoch === binding.workspaceEpoch && this.indexBinding?.storageRootGeneration === binding.storageRootGeneration;
+  }
+  async ensureRootConsistent({ recover = true, requireIndex = true, expectedBinding, forceRecover = false, invalidate = false } = {}) {
+    const invalidatedGeneration = invalidate ? this.invalidateRoot() : null;
+    let binding;
+    try {
+      binding = await this.captureRootBinding();
+    } catch {
+      return { ok: false, binding: null };
+    }
+    if (!forceRecover && this.rootBindingMatches(binding, { requireIndex, expectedBinding })) {
+      this.rootChangedPending = false;
+      return { ok: true, binding };
+    }
+    this.rootChangedPending = true;
+    if (!recover || !this.initialized || !this.reviewStore) return { ok: false, binding };
+    if (invalidate || !this.rootRecoveryPromise) {
+      const recovery = this.recoverSilentRootChange(invalidatedGeneration ?? void 0);
+      const tracked = recovery.finally(() => {
+        if (this.rootRecoveryPromise === tracked) this.rootRecoveryPromise = null;
+      });
+      this.rootRecoveryPromise = tracked;
+    }
+    await this.rootRecoveryPromise;
+    const current = await this.captureRootBinding().catch(() => null);
+    if (current && this.rootBindingMatches(current, { requireIndex })) {
+      this.rootChangedPending = false;
+      return { ok: false, binding };
+    }
+    if (recover && this.initialized) return this.ensureRootConsistent({ requireIndex });
+    return { ok: false, binding };
+  }
+  async recoverDetectedRootChange() {
+    this.rootChangedPending = true;
+    await this.ensureRootConsistent({ forceRecover: true });
+    return false;
+  }
+  async rootStillConsistent(binding, { requireIndex = true } = {}) {
+    const result = await this.ensureRootConsistent({ recover: false, requireIndex, expectedBinding: binding });
+    if (!result.ok) void this.ensureRootConsistent().catch(() => void 0);
+    return result.ok;
+  }
+  async handleIndexChanged() {
+    this.indexChangedPending = false;
+    const consistent = await this.ensureRootConsistent();
+    if (!consistent.ok) return false;
+    await this.refreshIndex();
+    return true;
+  }
   async withRootBoundKnowledgeWrite(operation, abortedValue = { outcome: "aborted", summary: this.t.knowledgeWriteAborted }) {
+    const initial = await this.ensureRootConsistent();
+    if (!initial.ok) return abortedValue;
     const generation = this.rootGeneration;
-    const epoch = this.workspaceEpoch();
-    const current = () => generation === this.rootGeneration && epoch === this.workspaceEpoch();
-    const indexCurrent = () => this.indexBinding?.generation === generation && this.indexBinding?.epoch === epoch;
-    const assertCurrent = () => {
-      if (!current() || !indexCurrent()) throw Object.assign(new Error("knowledge root or vocabulary index changed"), { code: "KNOWLEDGE_WRITE_ABORTED" });
+    const binding = initial.binding;
+    const assertCurrent = async () => {
+      const current = generation === this.rootGeneration && (await this.ensureRootConsistent({ recover: false, expectedBinding: binding })).ok;
+      if (!current) {
+        void this.ensureRootConsistent().catch(() => void 0);
+        throw Object.assign(new Error("knowledge root or vocabulary index changed"), { code: "KNOWLEDGE_WRITE_ABORTED" });
+      }
     };
     const guard = {
       assertCurrent,
       wait: async (promise) => {
         try {
           const value = await promise;
-          assertCurrent();
+          await assertCurrent();
           return value;
         } catch (error) {
-          assertCurrent();
+          await assertCurrent();
           throw error;
         }
       }
     };
     try {
-      assertCurrent();
+      await assertCurrent();
       return await operation(guard);
     } catch (error) {
       if (error?.code === "KNOWLEDGE_WRITE_ABORTED") {
@@ -34843,13 +34984,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async refreshIndex(generation = this.rootGeneration) {
     if (!this.index) return;
-    const moved = this.reviewStore !== null && await this.rootMoved();
-    if (generation !== this.rootGeneration) return;
-    const binding = await this.captureRootBinding();
-    if (generation !== this.rootGeneration) return;
-    if (moved || !binding.stable || binding.storageRootGeneration !== this.reviewStore?.rootGeneration) {
-      return this.handleRootChanged(this.invalidateRoot());
-    }
+    const initial = await this.ensureRootConsistent({ requireIndex: false });
+    if (!initial.ok || generation !== this.rootGeneration) return false;
+    const binding = initial.binding;
     try {
       this.indexBinding = { generation, epoch: binding.workspaceEpoch, storageRootGeneration: binding.storageRootGeneration };
       this.indexProjectionReady = false;
@@ -34857,50 +34994,26 @@ var EnglishVocabPlugin = class extends BasePlugin {
       try {
         result = await this.index.refresh();
       } catch (error) {
-        if (error?.code === "ROOT_CHANGED") return this.handleRootChanged(this.invalidateRoot());
+        if (error?.code === "ROOT_CHANGED") return this.recoverDetectedRootChange();
         throw error;
       }
-      const afterIndex = await this.captureRootBinding();
-      if (generation !== this.rootGeneration) return;
-      if (!afterIndex.stable || afterIndex.workspaceEpoch !== binding.workspaceEpoch || afterIndex.storageRootGeneration !== binding.storageRootGeneration) {
-        return this.handleRootChanged(this.invalidateRoot());
-      }
+      if (generation !== this.rootGeneration || !(await this.ensureRootConsistent({ requireIndex: false, expectedBinding: binding })).ok) return false;
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
       this.indexProjectionReady = true;
-      const beforeRecommendations = await this.captureRootBinding();
-      if (generation !== this.rootGeneration) return;
-      if (!beforeRecommendations.stable || beforeRecommendations.workspaceEpoch !== binding.workspaceEpoch || beforeRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
-        return this.handleRootChanged(this.invalidateRoot());
-      }
+      if (generation !== this.rootGeneration || !(await this.ensureRootConsistent({ expectedBinding: binding })).ok) return false;
       await this.refreshRecommendations({ silent: true });
-      if (generation !== this.rootGeneration) return;
-      const afterRecommendations = await this.captureRootBinding();
-      if (generation !== this.rootGeneration) return;
-      if (!afterRecommendations.stable || afterRecommendations.workspaceEpoch !== binding.workspaceEpoch || afterRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
-        return this.handleRootChanged(this.invalidateRoot());
-      }
+      if (generation !== this.rootGeneration || !(await this.ensureRootConsistent({ expectedBinding: binding })).ok) return false;
       await this.refreshLatestReadingStatus();
-      const finalBinding = await this.captureRootBinding();
-      if (generation !== this.rootGeneration) return;
-      if (!finalBinding.stable || finalBinding.workspaceEpoch !== binding.workspaceEpoch || finalBinding.storageRootGeneration !== binding.storageRootGeneration) {
-        return this.handleRootChanged(this.invalidateRoot());
-      }
+      if (generation !== this.rootGeneration || !(await this.ensureRootConsistent({ expectedBinding: binding })).ok) return false;
       if (this.readingStatusDirty) await this.refreshLatestReadingStatus();
+      return true;
     } finally {
       if (generation === this.rootGeneration) {
         this.state.loading = null;
         this.emitState();
       }
-    }
-  }
-  async rootMoved() {
-    try {
-      const { rootGeneration } = await this.app.storage.scope();
-      return rootGeneration !== this.reviewStore.rootGeneration;
-    } catch {
-      return false;
     }
   }
   async captureRootBinding() {
@@ -34919,15 +35032,17 @@ var EnglishVocabPlugin = class extends BasePlugin {
     await this.recommender?.reload();
     if (generation !== this.rootGeneration) return;
     await this.refreshIndex(generation);
+    if (generation === this.rootGeneration) this.rootChangedPending = false;
   }
-  async recoverSilentRootChange() {
-    const generation = this.invalidateRoot();
+  async recoverSilentRootChange(existingGeneration) {
+    const generation = existingGeneration ?? this.invalidateRoot();
     await this.handleRootChanged(generation);
     if (generation === this.rootGeneration) this.notice(this.t.rootChangedDuringReview);
     return false;
   }
   async rateWord(word, rating, mode) {
     return this.enqueueMutation(async (isCurrent) => {
+      if (!(await this.ensureRootConsistent()).ok || !isCurrent()) return false;
       const id = this.nextLogId();
       const entry = { id, word, rating, reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), mode };
       let result;
@@ -34940,7 +35055,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       }
       if (!isCurrent()) return false;
       if (result.rootChanged) {
-        return this.recoverSilentRootChange();
+        return this.recoverDetectedRootChange();
       }
       this.state.review = result.review;
       this.state.log = this.reviewStore.effectiveLog();
@@ -34956,11 +35071,12 @@ var EnglishVocabPlugin = class extends BasePlugin {
         });
       }
       try {
-        const log = await this.reviewStore.flushPendingLogs();
+        const flushed = await this.reviewStore.flushPendingLogs();
         if (!isCurrent()) return false;
-        this.state.log = log;
+        if (flushed.rootChanged) return this.recoverDetectedRootChange();
+        this.state.log = flushed.log;
         this.state.review = this.reviewStore.review;
-        const persistedId = log.idMap?.get(id) ?? id;
+        const persistedId = flushed.idMap.get(id) ?? id;
         const snapshot = this.readingUndoSnapshots.get(word);
         if (snapshot?.logId === id) snapshot.logId = persistedId;
         this.emitState();
@@ -34983,6 +35099,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       return false;
     }
     return this.enqueueMutation(async (isCurrent) => {
+      if (!(await this.ensureRootConsistent()).ok || !isCurrent()) return false;
       const snapshot = this.readingUndoSnapshots.get(word);
       if (!snapshot || expectedId && snapshot.logId !== expectedId || !await this.readingUndoSnapshotValid(word, snapshot) || !isCurrent()) {
         if (this.readingUndoSnapshots.get(word) === snapshot) this.readingUndoSnapshots.delete(word);
@@ -35002,15 +35119,19 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.state.log = this.reviewStore.effectiveLog();
         if (result.rootChanged) {
           this.readingUndoSnapshots.delete(word);
-          return this.recoverSilentRootChange();
+          return this.recoverDetectedRootChange();
         }
         if (!result.applied) {
           this.readingUndoSnapshots.delete(word);
           return false;
         }
-        const log = await this.reviewStore.flushPendingLogs();
+        const flushed = await this.reviewStore.flushPendingLogs();
         if (!isCurrent()) return false;
-        this.state.log = log;
+        if (flushed.rootChanged) {
+          this.readingUndoSnapshots.delete(word);
+          return this.recoverDetectedRootChange();
+        }
+        this.state.log = flushed.log;
         this.state.review = this.reviewStore.review;
         this.readingUndoSnapshots.delete(word);
         this.updateReadingTerms();
@@ -35027,8 +35148,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async readingUndoSnapshotValid(word, snapshot) {
     try {
-      const { rootGeneration } = await this.app.storage.scope();
-      return rootGeneration === snapshot.rootGeneration && this.reviewStore.rootGeneration === snapshot.rootGeneration && cardFingerprint(ownValue(this.reviewStore.review.cards, word)) === snapshot.resultingCard;
+      const consistent = await this.ensureRootConsistent();
+      return consistent.ok && consistent.binding.storageRootGeneration === snapshot.rootGeneration && cardFingerprint(ownValue(this.reviewStore.review.cards, word)) === snapshot.resultingCard;
     } catch {
       return false;
     }
@@ -35036,10 +35157,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async setFlag(word, flag) {
     return this.enqueueMutation(async (isCurrent) => {
       try {
+        if (!(await this.ensureRootConsistent()).ok || !isCurrent()) return false;
         const result = await this.reviewStore.mutateReview(flag ? { type: "setFlag", word, flag } : { type: "removeFlag", word });
         if (!isCurrent()) return false;
         if (result.rootChanged) {
-          return this.recoverSilentRootChange();
+          return this.recoverDetectedRootChange();
         }
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();
@@ -35157,11 +35279,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
     });
     if (this.app.readingStatus?.register) {
       this.readingStatusHandle = this.register(this.app.readingStatus.register({ id: "reading-level" }));
-      this.onEvent?.("knowledge.document-opened", (event) => this.updateReadingStatus(event));
     }
-    if (this.app.learningSuggestions?.register) {
-      this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: "reading-recommendations", heading: this.t.recommendations }));
-    }
+    this.registerLocalizedLearningSuggestions({ publish: false });
     try {
       await this.recommender.reload();
       await this.refreshRecommendations({ silent: true });
@@ -35202,8 +35321,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async refreshRecommendations({ silent = false } = {}) {
     if (!this.recommender) return null;
+    const initial = await this.ensureRootConsistent();
+    if (!initial.ok) return null;
+    const binding = initial.binding;
     const request = ++this.recommendationRequest;
-    const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
+    const epoch = binding.workspaceEpoch;
     if (!silent) {
       this.state.recommendationLoading = { done: 0, total: 0 };
       this.emitState();
@@ -35218,7 +35340,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
           this.emitState();
         }
       });
-      if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch) return null;
+      if (request !== this.recommendationRequest || result.stale || !await this.rootStillConsistent(binding)) return null;
       this.state.recommendations = result;
       const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
       if (accepted === false) this.notice(this.t.recommendationFailed);
@@ -35240,24 +35362,25 @@ var EnglishVocabPlugin = class extends BasePlugin {
     const request = this.readingStatusRequest;
     this.latestReadingEvent = { ...event, path };
     this.readingStatusDirty = true;
-    if (!this.readingStatusHandle || !this.recommender || !this.indexProjectionReady) return false;
+    if (!this.initialized || !this.readingStatusHandle || !this.recommender || !this.indexProjectionReady) return false;
+    const initial = await this.ensureRootConsistent();
+    if (!initial.ok) {
+      this.latestReadingEvent = { ...event, path };
+      this.readingStatusDirty = true;
+      const healed = await this.ensureRootConsistent({ recover: false });
+      return healed.ok ? this.updateReadingStatus(this.latestReadingEvent) : false;
+    }
     const generation = this.rootGeneration;
-    const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
+    const binding = initial.binding;
+    const epoch = binding.workspaceEpoch;
     let doc;
     try {
       doc = await this.app.knowledge.readDocument({ path });
     } catch {
       return false;
     }
-    if (request !== this.readingStatusRequest || this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
+    if (request !== this.readingStatusRequest || generation !== this.rootGeneration || !await this.rootStillConsistent(binding)) return false;
     if (doc?._tag === "Err") return false;
-    let binding;
-    try {
-      binding = await this.captureRootBinding();
-    } catch {
-      return false;
-    }
-    if (request !== this.readingStatusRequest || generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch || this.reviewStore?.rootGeneration !== binding.storageRootGeneration || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
     const review = this.state.review;
     const entries = this.state.entries;
     const detected = detectEnglish(doc.content);
@@ -35269,7 +35392,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? "" } };
     const item = await this.recommender.scoreDocument(meta, doc, review, entries, epoch);
     if (!item) return false;
-    if (request !== this.readingStatusRequest || (this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch || generation !== this.rootGeneration || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
+    if (request !== this.readingStatusRequest || generation !== this.rootGeneration || review !== this.state.review || !await this.rootStillConsistent(binding)) return false;
     const accepted = this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
       tone: item.tone,
@@ -35315,15 +35438,20 @@ var EnglishVocabPlugin = class extends BasePlugin {
     if (hasRequiredHost(this.app)) this.registerSelectionAction();
     this.disposeReadingDecorations();
     this.syncReadingDecorations();
-    if (this.app.learningSuggestions?.register) {
-      this.learningSuggestionsHandle?.dispose?.();
-      this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: "reading-recommendations", heading: this.t.recommendations }));
-      const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
-      const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
-      if (accepted === false) this.notice(this.t.recommendationFailed);
-    }
+    this.registerLocalizedLearningSuggestions();
     this.emitState();
     await this.refreshLatestReadingStatus();
+  }
+  registerLocalizedLearningSuggestions({ publish = true } = {}) {
+    if (!this.recommender || !this.app.learningSuggestions?.register) return null;
+    this.learningSuggestionsHandle?.dispose?.();
+    this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: "reading-recommendations", heading: this.t.recommendations }));
+    if (publish) {
+      const epoch = this.workspaceEpoch();
+      const accepted = this.learningSuggestionsHandle.set(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
+      if (accepted === false) this.notice(this.t.recommendationFailed);
+    }
+    return this.learningSuggestionsHandle;
   }
   notice(message) {
     this.showNotice?.({ message, title: this.t.panelTitle, kind: "info", timeoutMs: 6e3 });
@@ -35357,7 +35485,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (duplicate) return { outcome: "exists", summary: this.t.exampleExists };
       const newContent = appendExample(document2.content, context.sentence, readingSource(context.source));
       if (newContent === document2.content) return { outcome: "exists", summary: this.t.exampleExists };
-      guard.assertCurrent();
+      await guard.assertCurrent();
       const receipt = await guard.wait(this.app.knowledge.propose({
         description: this.t.addExampleDescription(word),
         changes: [{ path: entry.path, newContent }]
@@ -35411,7 +35539,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         example: context.sentence,
         source: readingSource(context.source)
       });
-      guard.assertCurrent();
+      await guard.assertCurrent();
       const receipt = await guard.wait(this.app.knowledge.propose({
         description: this.t.proposalDescription(++this.submission, lemma),
         changes: [{ path, newContent }]

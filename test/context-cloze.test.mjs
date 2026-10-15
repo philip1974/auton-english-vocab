@@ -86,6 +86,11 @@ describe('context cloze', () => {
     expect(clozeSentence('He bought a new saw.', { word: 'see', pos: 'verb' }).hits).toEqual([]);
     expect(clozeSentence('Turn left here.', { word: 'leave', pos: 'verb' }).hits).toEqual([]);
     expect(clozeSentence('The does crossed the road.', { word: 'do', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('A rose bloomed.', { word: 'rise', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('They found a company.', { word: 'find', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('Lay the book down.', { word: 'lie', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('The wound healed.', { word: 'wind', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('They fell the tree.', { word: 'fall', pos: 'verb' }).hits).toEqual([]);
   });
 
   it('should cloze straight and curly possessive stems without splitting contractions', () => {

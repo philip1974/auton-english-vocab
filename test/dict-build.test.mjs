@@ -1,8 +1,17 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 describe('offline dictionary data', () => {
+  it('should reproduce the frequency-filtered ambiguous inflection table from bundled dictionary data', async () => {
+    await promisify(execFile)('python3', ['scripts/build-ambiguous-inflections.py', '--check']);
+    const generated = await import('../src/ambiguous-inflections.generated.mjs');
+    expect(generated.AMBIGUOUS_INFLECTION_METADATA).toMatchObject({ frequencyLimit: 5000, source: 'dict/*.mjs + data/en-wordfreq-30k.json' });
+    expect(generated.AMBIGUOUS_INFLECTION_SURFACES).toEqual(expect.arrayContaining(['rose', 'found', 'lay', 'wound', 'fell']));
+  });
+
   it('should commit deterministic letter chunks with a matching manifest and license', async () => {
     const files = await readdir('dict');
     const chunks = files.filter((name) => /^[a-z]\.mjs$/u.test(name)).sort();

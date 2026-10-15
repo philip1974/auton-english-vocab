@@ -68,9 +68,13 @@ describe('inflections', () => {
   });
 
   it('should not map ambiguous independent words to an inflection lemma', () => {
-    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['does', 'left', 'saw']);
-    const map = buildSurfaceMap([{ word: 'do', pos: 'verb' }, { word: 'leave', pos: 'verb' }, { word: 'see', pos: 'verb' }]);
-    for (const surface of AMBIGUOUS_INFLECTION_SURFACES) expect(map.has(surface)).toBe(false);
+    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(expect.arrayContaining(['does', 'left', 'saw', 'rose', 'found', 'lay', 'wound', 'fell']));
+    const cases = [
+      ['do', 'does'], ['leave', 'left'], ['see', 'saw'], ['rise', 'rose'],
+      ['find', 'found'], ['lie', 'lay'], ['wind', 'wound'], ['fall', 'fell'],
+    ];
+    const map = buildSurfaceMap(cases.map(([word]) => ({ word, pos: 'verb' })));
+    for (const [, surface] of cases) expect(map.has(surface)).toBe(false);
   });
 
   it('should generate unambiguous third person es forms for verbs ending in o', () => {

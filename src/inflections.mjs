@@ -1,3 +1,5 @@
+import { AMBIGUOUS_INFLECTION_SURFACES as GENERATED_AMBIGUOUS_INFLECTION_SURFACES } from './ambiguous-inflections.generated.mjs';
+
 const SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
 const DENYLIST = new Set([
@@ -8,7 +10,7 @@ const DENYLIST = new Set([
 // These high-frequency surfaces have common standalone meanings in the bundled
 // dictionary. Without a reliable local POS tag, treating them as inflections
 // creates more false positives than useful matches.
-export const AMBIGUOUS_INFLECTION_SURFACES = new Set(['does', 'left', 'saw']);
+export const AMBIGUOUS_INFLECTION_SURFACES = new Set(GENERATED_AMBIGUOUS_INFLECTION_SURFACES);
 
 const IRREGULAR_VERBS = new Map(Object.entries({
   abide: ['abode', 'abode'],

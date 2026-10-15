@@ -359,12 +359,21 @@ export class ReviewStore {
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     const pending = [...(this.review.pendingLogs ?? [])];
-    if (pending.length === 0) return this.log;
-    await this.appendLogs(pending);
-    if (this.#stale(generation, rootGeneration)) return this.log;
+    if (pending.length === 0) return { log: this.log, idMap: new Map(), rootChanged: false };
+    let persisted;
+    try {
+      persisted = await this.appendLogs(pending);
+    } catch (error) {
+      if (codeOf(error) !== 'ROOT_CHANGED') throw error;
+      await this.reloadForRootChange();
+      return { log: this.log, idMap: new Map(), rootChanged: true };
+    }
+    const idMap = persisted.idMap ?? new Map();
+    if (this.#stale(generation, rootGeneration)) return { log: this.log, idMap, rootChanged: true };
     const ids = pending.map((entry) => entry.id);
-    await this.mutateReview({ type: 'removePendingLogs', ids });
-    return this.log;
+    const cleanup = await this.mutateReview({ type: 'removePendingLogs', ids });
+    if (cleanup.rootChanged || this.#stale(generation, rootGeneration)) return { log: this.log, idMap, rootChanged: true };
+    return { log: this.log, idMap, rootChanged: false };
   }
 
   #assertReviewWritable() {
