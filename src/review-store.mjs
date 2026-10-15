@@ -1,4 +1,4 @@
-import { deserializeCard, newSerializedCard, rateCard, serializeCard } from './scheduler.mjs';
+import { activeReviewLog, deserializeCard, newSerializedCard, rateCard, serializeCard } from './scheduler.mjs';
 import { uiText } from './ui-text.mjs';
 
 const wordRecord = () => Object.create(null);
@@ -76,12 +76,19 @@ function localDay(value) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function retainLogHistory(entries, now) {
-  const today = localDay(now);
-  const current = new Set(entries.filter((entry) => localDay(entry?.reviewedAt) === today));
-  const older = entries.filter((entry) => !current.has(entry)).slice(-2000);
-  const retained = new Set([...older, ...current]);
-  return entries.filter((entry) => retained.has(entry));
+const MAX_LOG_ENTRIES = 2000;
+const MAX_LOG_BYTES = 1024 * 1024;
+
+function retainLogHistory(entries) {
+  const retained = [];
+  let bytes = 2;
+  for (let index = entries.length - 1; index >= 0 && retained.length < MAX_LOG_ENTRIES; index -= 1) {
+    const entryBytes = new TextEncoder().encode(JSON.stringify(entries[index])).byteLength + (retained.length ? 1 : 0);
+    if (bytes + entryBytes > MAX_LOG_BYTES) break;
+    retained.push(entries[index]);
+    bytes += entryBytes;
+  }
+  return retained.reverse();
 }
 
 function newestCard(a, b) {
@@ -104,6 +111,8 @@ export class ReviewStore {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
     this.logWritable = true;
+    this.introducedNeedsMigration = false;
+    this.legacyIntroducedWords = [];
     this.generation = 0;
   }
 
@@ -123,6 +132,11 @@ export class ReviewStore {
         await this.#loadLog(generation);
         /* v8 ignore next -- repeated await boundary for the same generation contract. */
         if (generation !== this.generation) return this.review;
+        if (this.introducedNeedsMigration) await this.#migrateIntroducedWords(generation);
+        else if (this.review.introduced && this.review.introduced.day !== localDay(this.now())) {
+          const rolled = await this.mutateReview({ type: 'migrateIntroduced', words: [], day: localDay(this.now()) });
+          if (rolled.rootChanged) throw Object.assign(new Error('root changed while rolling introduced words'), { code: 'ROOT_CHANGED' });
+        }
         if (this.review.pendingLogs?.length) {
           try {
             const flushed = await this.flushPendingLogs();
@@ -156,6 +170,8 @@ export class ReviewStore {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
     this.logWritable = true;
+    this.introducedNeedsMigration = false;
+    this.legacyIntroducedWords = [];
   }
 
   async #loadReview(generation = this.generation) {
@@ -166,6 +182,7 @@ export class ReviewStore {
     if (!result.found) {
       this.review = EMPTY();
       this.reviewRevision = null;
+      this.introducedNeedsMigration = true;
       return;
     }
     this.reviewRevision = result.revision;
@@ -173,7 +190,9 @@ export class ReviewStore {
       let invalidCards = 0;
       let invalidItems = 0;
       let logIdCollisions = 0;
-      this.review = normalizeReview(JSON.parse(result.text), {
+      const parsed = JSON.parse(result.text);
+      this.introducedNeedsMigration = !Object.hasOwn(parsed, 'introduced');
+      this.review = normalizeReview(parsed, {
         onInvalidCard: () => { invalidCards += 1; },
         onInvalidItem: () => { invalidItems += 1; },
         onLogIdCollision: () => { logIdCollisions += 1; },
@@ -223,7 +242,14 @@ export class ReviewStore {
         invalidItems += 1;
         return false;
       });
-      this.log = retainLogHistory(uniqueLogEntries(valid, () => { collisions += 1; }), this.now());
+      const unique = uniqueLogEntries(valid, () => { collisions += 1; });
+      if (this.introducedNeedsMigration) {
+        const today = localDay(this.now());
+        this.legacyIntroducedWords = [...new Set(activeReviewLog(unique)
+          .filter((entry) => entry?.word && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0))
+          .map((entry) => entry.word))];
+      }
+      this.log = retainLogHistory(unique);
       if (collisions > 0 || invalidItems > 0) {
         await this.#preserveCorrupt('log', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
@@ -291,6 +317,26 @@ export class ReviewStore {
       this.notify(this.t.corruptBackupFailed);
       return false;
     }
+  }
+
+  async #migrateIntroducedWords(generation) {
+    const today = localDay(this.now());
+    const words = [...new Set([...this.legacyIntroducedWords, ...activeReviewLog(this.review.pendingLogs ?? [])
+      .filter((entry) => entry?.word && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0))
+      .map((entry) => entry.word)])];
+    if (words.length === 0) {
+      this.introducedNeedsMigration = false;
+      return;
+    }
+    const operation = { type: 'migrateIntroduced', words, day: today };
+    try {
+      const result = await this.mutateReview(operation);
+      if (result.rootChanged) throw Object.assign(new Error('root changed while migrating introduced words'), { code: 'ROOT_CHANGED' });
+    } catch (error) {
+      if (codeOf(error) === 'ROOT_CHANGED') throw error;
+      if (generation === this.generation) this.review = applyReviewOperation(this.review, operation, this.now()).review;
+    }
+    this.introducedNeedsMigration = false;
   }
 
   async saveReview(next = this.review) {
@@ -371,7 +417,7 @@ export class ReviewStore {
       const next = uniqueLogEntries([...this.log, ...entries], () => undefined, (entry, id) => {
         if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
       });
-      const retained = retainLogHistory(next, this.now());
+      const retained = retainLogHistory(next);
       Object.defineProperty(retained, 'idMap', { value: idMap, enumerable: false });
       try {
         const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(retained), {
@@ -393,7 +439,7 @@ export class ReviewStore {
   }
 
   effectiveLog() {
-    return retainLogHistory(uniqueLogEntries([...this.log, ...(this.review.pendingLogs ?? [])]), this.now());
+    return retainLogHistory(uniqueLogEntries([...this.log, ...(this.review.pendingLogs ?? [])]));
   }
 
   async flushPendingLogs() {
@@ -440,11 +486,19 @@ export function applyReviewOperation(value, operation, now = new Date()) {
   }
   if (operation.type === 'rateCard') {
     review.cards[operation.word] = rateCard(previousCard ?? newSerializedCard(now), operation.rating, now);
+    if (!previousCard || previousCard.state === 'New') {
+      const day = localDay(now);
+      const words = review.introduced?.day === day ? review.introduced.words : [];
+      review.introduced = { day, words: [...new Set([...words, operation.word])] };
+    }
   } else if (operation.type === 'setCard') review.cards[operation.word] = operation.card;
   else if (operation.type === 'deleteCard') delete review.cards[operation.word];
   else if (operation.type === 'restoreCardIfFingerprint') {
     if (operation.card) review.cards[operation.word] = operation.card;
     else delete review.cards[operation.word];
+    if (operation.removeIntroduced && review.introduced?.day === localDay(now)) {
+      review.introduced = { ...review.introduced, words: review.introduced.words.filter((word) => word !== operation.word) };
+    }
   }
   else if (operation.type === 'setFlag') review.flags[operation.word] = operation.flag;
   else if (operation.type === 'removeFlag') delete review.flags[operation.word];
@@ -452,12 +506,15 @@ export function applyReviewOperation(value, operation, now = new Date()) {
     const ids = new Set(operation.ids);
     review.pendingLogs = (review.pendingLogs ?? []).filter((entry) => !ids.has(entry.id));
   }
+  else if (operation.type === 'migrateIntroduced') {
+    review.introduced = { day: operation.day ?? localDay(now), words: [...new Set(operation.words ?? [])] };
+  }
   else throw new Error(`unknown review operation: ${operation.type}`);
   if (operation.logEntry) {
     const entry = operation.type === 'rateCard'
       ? { ...operation.logEntry, previousState: previousCard?.state ?? 'New' }
       : operation.logEntry;
-    review.pendingLogs = uniqueLogEntries([...(review.pendingLogs ?? []), entry]);
+    review.pendingLogs = retainLogHistory(uniqueLogEntries([...(review.pendingLogs ?? []), entry]));
   }
   return { review, previousCard, applied: true };
 }
@@ -503,7 +560,12 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
       if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem('pendingLog');
     }
-    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision);
+    review.pendingLogs = retainLogHistory(uniqueLogEntries(pendingLogs, onLogIdCollision));
+  }
+  if (value.introduced !== undefined) {
+    if (!isObject(value.introduced) || typeof value.introduced.day !== 'string' || !Array.isArray(value.introduced.words)
+      || value.introduced.words.some((word) => typeof word !== 'string' || !word)) throw new Error('invalid review schema');
+    review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
   }
   return review;
 }
@@ -517,7 +579,11 @@ export function mergeReview(base, incoming) {
   }
   for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    merged.pendingLogs = uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]);
+    merged.pendingLogs = retainLogHistory(uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]));
+  }
+  if (other.introduced) {
+    const words = merged.introduced?.day === other.introduced.day ? merged.introduced.words : [];
+    merged.introduced = { day: other.introduced.day, words: [...new Set([...words, ...other.introduced.words])] };
   }
   return merged;
 }

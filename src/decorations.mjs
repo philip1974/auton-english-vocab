@@ -169,14 +169,19 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
           if (sourceRow) card.append(sourceRow);
         }
         const dictionaryArea = el('div', 'ev-dict');
-        lookupDictionary?.(context.word).then((result) => {
-          if (cleaned) return;
+        const drawDictionary = () => {
           dictionaryArea.textContent = '';
-          if (result) renderDictionaryBlock(dictionaryArea, result, t, locale, { compact: true });
-        }).catch(() => {
-          if (cleaned) return;
-          dictionaryArea.textContent = t.dictionaryLoadFailed;
-        });
+          Promise.resolve(lookupDictionary?.(context.word)).then((result) => {
+            if (cleaned) return;
+            dictionaryArea.textContent = '';
+            if (result) renderDictionaryBlock(dictionaryArea, result, t, locale, { compact: true });
+          }).catch(() => {
+            if (cleaned) return;
+            dictionaryArea.textContent = '';
+            dictionaryArea.append(el('p', 'ev-reading-note', t.dictionaryLoadFailed), button(t.retry, drawDictionary));
+          });
+        };
+        drawDictionary();
         card.append(dictionaryArea);
         const actions = el('div', 'ev-reading-actions');
         const speakButton = button('🔊', () => speak?.(context.key));

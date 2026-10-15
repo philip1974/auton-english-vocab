@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyCard, fsrs, generatorParameters, Rating } from 'ts-fsrs';
 import { familiarityFor } from '../src/familiarity.mjs';
-import { activeReviewLog, deserializeCard, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
+import { activeReviewLog, deserializeCard, dueQueue, inferLegacyLearningSteps, newSerializedCard, rateCard } from '../src/scheduler.mjs';
 
 function expectRoundTripSequence(sequence) {
   const engine = fsrs(generatorParameters());
@@ -28,9 +28,40 @@ describe('scheduler and familiarity', () => {
     ['Good then Hard', [['Good', 0], ['Hard', 10]]],
     ['Good then Good', [['Good', 0], ['Good', 10]]],
     ['Again then Good', [['Again', 0], ['Good', 1]]],
+    ['Learning Hard', [['Again', 0], ['Hard', 1]]],
     ['Relearning', [['Easy', 0], ['Again', 1440], ['Good', 1450]]],
   ])('should preserve the original FSRS card across serialized %s ratings', (_label, sequence) => {
     expectRoundTripSequence(sequence);
+  });
+
+  it.each([
+    ['Good then Hard', [['Good', 0], ['Hard', 10]]],
+    ['Good then Good', [['Good', 0], ['Good', 10]]],
+    ['Again then Good', [['Again', 0], ['Good', 1]]],
+    ['Learning Hard', [['Again', 0], ['Hard', 1]]],
+    ['Relearning', [['Easy', 0], ['Again', 1440], ['Good', 1450]]],
+  ])('should preserve FSRS scheduling when a legacy %s card lacks learning steps', (_label, sequence) => {
+    const engine = fsrs(generatorParameters());
+    const start = new Date('2026-10-14T00:00:00Z');
+    let original = createEmptyCard(start);
+    let migrated = newSerializedCard(start);
+    for (const [rating, minutes] of sequence) {
+      const now = new Date(start.getTime() + minutes * 60_000);
+      original = engine.repeat(original, now)[Rating[rating]].card;
+      const legacy = { ...migrated };
+      delete legacy.learning_steps;
+      migrated = rateCard(legacy, rating, now);
+      expect(deserializeCard(migrated)).toEqual(original);
+    }
+  });
+
+  it('should infer conservative legacy learning steps when default FSRS due intervals are available', () => {
+    const base = { state: 'Learning', last_review: '2026-10-14T00:00:00.000Z' };
+    expect(inferLegacyLearningSteps({ ...base, due: '2026-10-14T00:01:00.000Z' })).toBe(0);
+    expect(inferLegacyLearningSteps({ ...base, due: '2026-10-14T00:10:00.000Z' })).toBe(1);
+    expect(inferLegacyLearningSteps({ ...base, due: '2026-10-14T00:06:00.000Z' })).toBe(0);
+    expect(inferLegacyLearningSteps({ ...base, state: 'Relearning', due: '2026-10-14T00:10:00.000Z' })).toBe(0);
+    expect(inferLegacyLearningSteps({ ...base, state: 'Review', due: '2026-10-15T00:00:00.000Z' })).toBe(0);
   });
 
   it('should map cards to familiarity when states and flags differ', () => {
@@ -70,13 +101,10 @@ describe('scheduler and familiarity', () => {
     expect(queue[0].familiarity).toBe('mastered');
   });
 
-  it('should reduce the daily new word allowance by words first rated today', () => {
+  it('should reduce the daily new word allowance when the persisted introduced set has words', () => {
     const words = ['a', 'b', 'c'].map((word) => ({ word, definition: word }));
-    const log = [
-      { word: 'old', reviewedAt: '2026-10-14T01:00:00.000Z', previousState: 'New' },
-      { word: 'old', reviewedAt: '2026-10-14T02:00:00.000Z', previousState: 'Learning' },
-    ];
-    const queue = dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'));
+    const review = { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-14', words: ['old'] } };
+    const queue = dueQueue(words, review, { newLimit: 2, log: [] }, new Date('2026-10-14T12:00:00'));
     expect(queue.map((item) => item.word)).toEqual(['a']);
   });
 
@@ -108,7 +136,7 @@ describe('scheduler and familiarity', () => {
     ];
     expect(activeReviewLog(log)).toEqual([log[1]]);
     const words = ['a', 'b'].map((word) => ({ word, definition: word }));
-    expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-15T12:00:00Z'))).toHaveLength(1);
+    expect(dueQueue(words, { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-15', words: ['other'] } }, { newLimit: 2, log }, new Date('2026-10-15T12:00:00Z'))).toHaveLength(1);
   });
 
   it('should default to good when rating name is unknown', () => {

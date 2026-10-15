@@ -1,4 +1,4 @@
-import { parseNote } from './note-format.mjs';
+import { normalizeWord, parseNote } from './note-format.mjs';
 
 const VOCAB_PATH = /^wiki\/vocab\/[^/]+\.md$/;
 const sleep = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -26,6 +26,8 @@ export class VocabIndex {
     this.enrichmentRetryTimer = null;
     this.cache = new Map();
     this.entries = new Map();
+    this.surfaces = new Map();
+    this.ambiguousSurfaces = new Set();
     this.duplicateWords = new Set();
     this.invalid = [];
     this.refreshing = null;
@@ -37,6 +39,8 @@ export class VocabIndex {
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
+    this.surfaces.clear();
+    this.ambiguousSurfaces.clear();
     this.duplicateWords.clear();
     this.invalid = [];
     if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
@@ -106,8 +110,8 @@ export class VocabIndex {
         }
         done += 1;
         if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
-        this.onProgress(done, metas.length);
       }
+      this.onProgress(done, metas.length);
       const partial = this.rebuild(readFailures);
       this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
@@ -116,6 +120,7 @@ export class VocabIndex {
     result.entries = await this.enrichEntries(result.entries);
     if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.rebuildSurfaces();
     this.onUpdate(result);
     if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
     else this.enrichmentRetryAttempt = 0;
@@ -155,12 +160,35 @@ export class VocabIndex {
         for (const entry of matches) this.invalid.push({ path: entry.path, kind: 'duplicate', word });
       }
     }
+    this.rebuildSurfaces();
     this.invalid.push(...readFailures);
     return { entries: [...this.entries.values()], invalid: this.invalid };
   }
 
   get(word) {
-    return this.entries.get(String(word).toLowerCase());
+    return this.entries.get(normalizeWord(word));
+  }
+
+  rebuildSurfaces() {
+    this.surfaces = new Map();
+    this.ambiguousSurfaces = new Set();
+    for (const entry of this.entries.values()) {
+      for (const value of [entry.word, ...(Array.isArray(entry.forms) ? entry.forms : [])]) {
+        const surface = normalizeWord(value);
+        if (!surface || this.ambiguousSurfaces.has(surface)) continue;
+        const existing = this.surfaces.get(surface);
+        if (existing && existing.word !== entry.word) {
+          this.surfaces.delete(surface);
+          this.ambiguousSurfaces.add(surface);
+        } else this.surfaces.set(surface, entry);
+      }
+    }
+  }
+
+  resolveSurface(word) {
+    const surface = normalizeWord(word);
+    if (this.ambiguousSurfaces.has(surface)) return null;
+    return this.surfaces.get(surface) ?? null;
   }
 
   isAmbiguous(word) {

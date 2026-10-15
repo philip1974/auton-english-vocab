@@ -117,6 +117,7 @@ var TEXT = {
     proposalFailed: (number) => `Vocabulary proposal #${number} could not be submitted.`,
     toolNoChanges: "No vocabulary entries changed.",
     toolSubmitted: (number, count) => `Submitted for review #${number}: ${count} ${count === 1 ? "word" : "words"}.`,
+    toolCollectedAs: (surface, lemma) => `${surface} is already collected as ${lemma}.`,
     toolSourceOmitted: (path) => `Source ${path} was missing or timed out; the example was kept without a link.`,
     toolFailure: (code, word) => ({ INVALID_WORD: `invalid word: ${word}.`, INVALID_DEFINITION: `invalid definition for ${word}.`, EXAMPLE_TOO_LONG: `example too long for ${word}.`, INVALID_SOURCE: `invalid source for ${word}.`, INVALID_ENTRY_COUNT: "entries must contain 1-20 items.", NO_AVAILABLE_PATH: `no available note path for ${word}.`, DUPLICATE_NOTES: `duplicate vocabulary notes exist for ${word}.`, DUPLICATE_PATH: `duplicate vocabulary path for ${word}.`, INVALID_FRONTMATTER: `frontmatter invalid for ${word}.`, FRONTMATTER_WORD_MISMATCH: `frontmatter word mismatch for ${word}.`, READ_FAILED: `could not read the existing note for ${word}.` })[code] ?? "Vocabulary operation failed.",
     knowledgeWriteAborted: "The knowledge base changed, so the operation was aborted.",
@@ -244,6 +245,7 @@ var TEXT = {
     proposalFailed: (number) => `生词提案 #${number} 提交失败。`,
     toolNoChanges: "没有生词条目发生变化。",
     toolSubmitted: (number, count) => `已提交审核 #${number}：${count} 个词。`,
+    toolCollectedAs: (surface, lemma) => `${surface} 已作为 ${lemma} 收录。`,
     toolSourceOmitted: (path) => `来源 ${path} 不存在或读取超时；例句已保留但省略链接。`,
     toolFailure: (code, word) => ({ INVALID_WORD: `英文单词无效：${word}。`, INVALID_DEFINITION: `${word} 的释义无效。`, EXAMPLE_TOO_LONG: `${word} 的例句过长。`, INVALID_SOURCE: `${word} 的来源无效。`, INVALID_ENTRY_COUNT: "词条数量必须为 1–20 条。", NO_AVAILABLE_PATH: `无法为 ${word} 找到可用笔记路径。`, DUPLICATE_NOTES: `${word} 存在重复生词笔记。`, DUPLICATE_PATH: `${word} 的生词笔记路径重复。`, INVALID_FRONTMATTER: `${word} 的现有笔记格式无效。`, FRONTMATTER_WORD_MISMATCH: `现有笔记路径属于另一个词，而不是 ${word}。`, READ_FAILED: `无法读取 ${word} 的现有笔记。` })[code] ?? "生词操作失败。",
     knowledgeWriteAborted: "知识库已切换，操作已中止。",
@@ -371,6 +373,7 @@ var TEXT = {
     proposalFailed: (number) => `単語提案 #${number} を送信できませんでした。`,
     toolNoChanges: "変更された単語項目はありません。",
     toolSubmitted: (number, count) => `レビューに提出しました #${number}：${count}語。`,
+    toolCollectedAs: (surface, lemma) => `${surface} は ${lemma} として収録済みです。`,
     toolSourceOmitted: (path) => `出典 ${path} が見つからないかタイムアウトしたため、例文は残してリンクを省略しました。`,
     toolFailure: (code, word) => ({ INVALID_WORD: `英単語が無効です：${word}。`, INVALID_DEFINITION: `${word} の定義が無効です。`, EXAMPLE_TOO_LONG: `${word} の例文が長すぎます。`, INVALID_SOURCE: `${word} の出典が無効です。`, INVALID_ENTRY_COUNT: "項目数は1～20件にしてください。", NO_AVAILABLE_PATH: `${word} の利用可能なノートパスがありません。`, DUPLICATE_NOTES: `${word} の単語ノートが重複しています。`, DUPLICATE_PATH: `${word} の単語ノートパスが重複しています。`, INVALID_FRONTMATTER: `${word} の既存ノート形式が無効です。`, FRONTMATTER_WORD_MISMATCH: `既存ノートのパスは ${word} とは別の単語に属しています。`, READ_FAILED: `${word} の既存ノートを読み込めませんでした。` })[code] ?? "単語操作に失敗しました。",
     knowledgeWriteAborted: "ナレッジベースが切り替わったため、操作を中止しました。",
@@ -498,6 +501,7 @@ var TEXT = {
     proposalFailed: (number) => `단어 제안 #${number}을 제출할 수 없습니다.`,
     toolNoChanges: "변경된 단어 항목이 없습니다.",
     toolSubmitted: (number, count) => `검토를 위해 제출했습니다 #${number}: ${count}개 단어.`,
+    toolCollectedAs: (surface, lemma) => `${surface}은(는) ${lemma}(으)로 이미 수록되었습니다.`,
     toolSourceOmitted: (path) => `출처 ${path}을(를) 찾지 못했거나 시간이 초과되어 예문은 유지하고 링크는 생략했습니다.`,
     toolFailure: (code, word) => ({ INVALID_WORD: `영어 단어가 올바르지 않습니다: ${word}.`, INVALID_DEFINITION: `${word}의 뜻풀이가 올바르지 않습니다.`, EXAMPLE_TOO_LONG: `${word}의 예문이 너무 깁니다.`, INVALID_SOURCE: `${word}의 출처가 올바르지 않습니다.`, INVALID_ENTRY_COUNT: "항목 수는 1–20개여야 합니다.", NO_AVAILABLE_PATH: `${word}에 사용할 수 있는 노트 경로가 없습니다.`, DUPLICATE_NOTES: `${word}의 단어 노트가 중복되어 있습니다.`, DUPLICATE_PATH: `${word}의 단어 노트 경로가 중복되었습니다.`, INVALID_FRONTMATTER: `${word}의 기존 노트 형식이 올바르지 않습니다.`, FRONTMATTER_WORD_MISMATCH: `기존 노트 경로는 ${word}이(가) 아닌 다른 단어에 속합니다.`, READ_FAILED: `${word}의 기존 노트를 읽을 수 없습니다.` })[code] ?? "단어 작업에 실패했습니다.",
     knowledgeWriteAborted: "지식베이스가 전환되어 작업을 중단했습니다.",
@@ -1139,11 +1143,21 @@ function deserializeCard(value) {
   const states = { New: 0, Learning: 1, Review: 2, Relearning: 3 };
   return {
     ...value,
-    learning_steps: value.learning_steps ?? 0,
+    learning_steps: value.learning_steps ?? inferLegacyLearningSteps(value),
     due: new Date(value.due),
     state: states[value.state] ?? value.state,
     last_review: value.last_review ? new Date(value.last_review) : void 0
   };
+}
+function inferLegacyLearningSteps(value) {
+  if (!value || !["Learning", "Relearning", 1, 3].includes(value.state)) return 0;
+  const due = new Date(value.due).getTime();
+  const reviewed = new Date(value.last_review).getTime();
+  if (!Number.isFinite(due) || !Number.isFinite(reviewed)) return 0;
+  const interval = Math.round((due - reviewed) / 6e4);
+  const steps = ["Relearning", 3].includes(value.state) ? W : Y;
+  const index = steps.findIndex((step) => Q(step) === interval);
+  return index < 0 ? 0 : index;
 }
 function newSerializedCard(now = /* @__PURE__ */ new Date()) {
   return serializeCard(F(now));
@@ -1190,7 +1204,7 @@ function dueQueue(words, review, options = {}, now = /* @__PURE__ */ new Date())
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
   };
   const today2 = localDay2(now);
-  const introduced = new Set(activeReviewLog(options.log).filter((entry) => entry?.word && entry.reviewedAt && localDay2(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word)).size;
+  const introduced = review.introduced?.day === today2 && Array.isArray(review.introduced.words) ? new Set(review.introduced.words).size : 0;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];
 }
 
@@ -1264,12 +1278,18 @@ function localDay(value) {
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-function retainLogHistory(entries, now) {
-  const today2 = localDay(now);
-  const current = new Set(entries.filter((entry) => localDay(entry?.reviewedAt) === today2));
-  const older = entries.filter((entry) => !current.has(entry)).slice(-2e3);
-  const retained = /* @__PURE__ */ new Set([...older, ...current]);
-  return entries.filter((entry) => retained.has(entry));
+var MAX_LOG_ENTRIES = 2e3;
+var MAX_LOG_BYTES = 1024 * 1024;
+function retainLogHistory(entries) {
+  const retained = [];
+  let bytes = 2;
+  for (let index = entries.length - 1; index >= 0 && retained.length < MAX_LOG_ENTRIES; index -= 1) {
+    const entryBytes = new TextEncoder().encode(JSON.stringify(entries[index])).byteLength + (retained.length ? 1 : 0);
+    if (bytes + entryBytes > MAX_LOG_BYTES) break;
+    retained.push(entries[index]);
+    bytes += entryBytes;
+  }
+  return retained.reverse();
 }
 function newestCard(a, b2) {
   const at = a?.last_review ? Date.parse(a.last_review) : 0;
@@ -1290,6 +1310,8 @@ var ReviewStore = class {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
     this.logWritable = true;
+    this.introducedNeedsMigration = false;
+    this.legacyIntroducedWords = [];
     this.generation = 0;
   }
   async load() {
@@ -1305,6 +1327,11 @@ var ReviewStore = class {
         if (generation !== this.generation) return this.review;
         await this.#loadLog(generation);
         if (generation !== this.generation) return this.review;
+        if (this.introducedNeedsMigration) await this.#migrateIntroducedWords(generation);
+        else if (this.review.introduced && this.review.introduced.day !== localDay(this.now())) {
+          const rolled = await this.mutateReview({ type: "migrateIntroduced", words: [], day: localDay(this.now()) });
+          if (rolled.rootChanged) throw Object.assign(new Error("root changed while rolling introduced words"), { code: "ROOT_CHANGED" });
+        }
         if (this.review.pendingLogs?.length) {
           try {
             const flushed = await this.flushPendingLogs();
@@ -1336,6 +1363,8 @@ var ReviewStore = class {
     this.reviewWritable = true;
     this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
     this.logWritable = true;
+    this.introducedNeedsMigration = false;
+    this.legacyIntroducedWords = [];
   }
   async #loadReview(generation = this.generation) {
     const rootGeneration = this.rootGeneration;
@@ -1344,6 +1373,7 @@ var ReviewStore = class {
     if (!result.found) {
       this.review = EMPTY();
       this.reviewRevision = null;
+      this.introducedNeedsMigration = true;
       return;
     }
     this.reviewRevision = result.revision;
@@ -1351,7 +1381,9 @@ var ReviewStore = class {
       let invalidCards = 0;
       let invalidItems = 0;
       let logIdCollisions = 0;
-      this.review = normalizeReview(JSON.parse(result.text), {
+      const parsed = JSON.parse(result.text);
+      this.introducedNeedsMigration = !Object.hasOwn(parsed, "introduced");
+      this.review = normalizeReview(parsed, {
         onInvalidCard: () => {
           invalidCards += 1;
         },
@@ -1404,9 +1436,14 @@ var ReviewStore = class {
         invalidItems += 1;
         return false;
       });
-      this.log = retainLogHistory(uniqueLogEntries(valid, () => {
+      const unique = uniqueLogEntries(valid, () => {
         collisions += 1;
-      }), this.now());
+      });
+      if (this.introducedNeedsMigration) {
+        const today2 = localDay(this.now());
+        this.legacyIntroducedWords = [...new Set(activeReviewLog(unique).filter((entry) => entry?.word && localDay(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word))];
+      }
+      this.log = retainLogHistory(unique);
       if (collisions > 0 || invalidItems > 0) {
         await this.#preserveCorrupt("log", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
@@ -1465,6 +1502,23 @@ var ReviewStore = class {
       this.notify(this.t.corruptBackupFailed);
       return false;
     }
+  }
+  async #migrateIntroducedWords(generation) {
+    const today2 = localDay(this.now());
+    const words = [.../* @__PURE__ */ new Set([...this.legacyIntroducedWords, ...activeReviewLog(this.review.pendingLogs ?? []).filter((entry) => entry?.word && localDay(entry.reviewedAt) === today2 && (entry.previousState === "New" || entry.previousState === 0)).map((entry) => entry.word)])];
+    if (words.length === 0) {
+      this.introducedNeedsMigration = false;
+      return;
+    }
+    const operation = { type: "migrateIntroduced", words, day: today2 };
+    try {
+      const result = await this.mutateReview(operation);
+      if (result.rootChanged) throw Object.assign(new Error("root changed while migrating introduced words"), { code: "ROOT_CHANGED" });
+    } catch (error) {
+      if (codeOf(error) === "ROOT_CHANGED") throw error;
+      if (generation === this.generation) this.review = applyReviewOperation(this.review, operation, this.now()).review;
+    }
+    this.introducedNeedsMigration = false;
   }
   async saveReview(next = this.review) {
     this.#assertReviewWritable();
@@ -1537,7 +1591,7 @@ var ReviewStore = class {
       const next = uniqueLogEntries([...this.log, ...entries], () => void 0, (entry, id) => {
         if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
       });
-      const retained = retainLogHistory(next, this.now());
+      const retained = retainLogHistory(next);
       Object.defineProperty(retained, "idMap", { value: idMap, enumerable: false });
       try {
         const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(retained), {
@@ -1558,7 +1612,7 @@ var ReviewStore = class {
     return this.log;
   }
   effectiveLog() {
-    return retainLogHistory(uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]), this.now());
+    return retainLogHistory(uniqueLogEntries([...this.log, ...this.review.pendingLogs ?? []]));
   }
   async flushPendingLogs() {
     const generation = this.generation;
@@ -1600,20 +1654,30 @@ function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()
   }
   if (operation.type === "rateCard") {
     review.cards[operation.word] = rateCard(previousCard ?? newSerializedCard(now), operation.rating, now);
+    if (!previousCard || previousCard.state === "New") {
+      const day = localDay(now);
+      const words = review.introduced?.day === day ? review.introduced.words : [];
+      review.introduced = { day, words: [.../* @__PURE__ */ new Set([...words, operation.word])] };
+    }
   } else if (operation.type === "setCard") review.cards[operation.word] = operation.card;
   else if (operation.type === "deleteCard") delete review.cards[operation.word];
   else if (operation.type === "restoreCardIfFingerprint") {
     if (operation.card) review.cards[operation.word] = operation.card;
     else delete review.cards[operation.word];
+    if (operation.removeIntroduced && review.introduced?.day === localDay(now)) {
+      review.introduced = { ...review.introduced, words: review.introduced.words.filter((word) => word !== operation.word) };
+    }
   } else if (operation.type === "setFlag") review.flags[operation.word] = operation.flag;
   else if (operation.type === "removeFlag") delete review.flags[operation.word];
   else if (operation.type === "removePendingLogs") {
     const ids = new Set(operation.ids);
     review.pendingLogs = (review.pendingLogs ?? []).filter((entry) => !ids.has(entry.id));
+  } else if (operation.type === "migrateIntroduced") {
+    review.introduced = { day: operation.day ?? localDay(now), words: [...new Set(operation.words ?? [])] };
   } else throw new Error(`unknown review operation: ${operation.type}`);
   if (operation.logEntry) {
     const entry = operation.type === "rateCard" ? { ...operation.logEntry, previousState: previousCard?.state ?? "New" } : operation.logEntry;
-    review.pendingLogs = uniqueLogEntries([...review.pendingLogs ?? [], entry]);
+    review.pendingLogs = retainLogHistory(uniqueLogEntries([...review.pendingLogs ?? [], entry]));
   }
   return { review, previousCard, applied: true };
 }
@@ -1657,7 +1721,11 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
       if (isValidLogEntry(entry, true)) pendingLogs.push(entry);
       else onInvalidItem("pendingLog");
     }
-    review.pendingLogs = uniqueLogEntries(pendingLogs, onLogIdCollision);
+    review.pendingLogs = retainLogHistory(uniqueLogEntries(pendingLogs, onLogIdCollision));
+  }
+  if (value.introduced !== void 0) {
+    if (!isObject(value.introduced) || typeof value.introduced.day !== "string" || !Array.isArray(value.introduced.words) || value.introduced.words.some((word) => typeof word !== "string" || !word)) throw new Error("invalid review schema");
+    review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
   }
   return review;
 }
@@ -1670,7 +1738,11 @@ function mergeReview(base, incoming) {
   }
   for (const [word, flag] of Object.entries(other.flags)) merged.flags[word] = flag;
   if (other.pendingLogs?.length || merged.pendingLogs?.length) {
-    merged.pendingLogs = uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]);
+    merged.pendingLogs = retainLogHistory(uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]));
+  }
+  if (other.introduced) {
+    const words = merged.introduced?.day === other.introduced.day ? merged.introduced.words : [];
+    merged.introduced = { day: other.introduced.day, words: [.../* @__PURE__ */ new Set([...words, ...other.introduced.words])] };
   }
   return merged;
 }
@@ -2603,6 +2675,8 @@ var VocabIndex = class {
     this.enrichmentRetryTimer = null;
     this.cache = /* @__PURE__ */ new Map();
     this.entries = /* @__PURE__ */ new Map();
+    this.surfaces = /* @__PURE__ */ new Map();
+    this.ambiguousSurfaces = /* @__PURE__ */ new Set();
     this.duplicateWords = /* @__PURE__ */ new Set();
     this.invalid = [];
     this.refreshing = null;
@@ -2613,6 +2687,8 @@ var VocabIndex = class {
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
+    this.surfaces.clear();
+    this.ambiguousSurfaces.clear();
     this.duplicateWords.clear();
     this.invalid = [];
     if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
@@ -2680,8 +2756,8 @@ var VocabIndex = class {
         }
         done += 1;
         if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
-        this.onProgress(done, metas.length);
       }
+      this.onProgress(done, metas.length);
       const partial = this.rebuild(readFailures);
       this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
@@ -2690,6 +2766,7 @@ var VocabIndex = class {
     result.entries = await this.enrichEntries(result.entries);
     if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.rebuildSurfaces();
     this.onUpdate(result);
     if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
     else this.enrichmentRetryAttempt = 0;
@@ -2727,11 +2804,32 @@ var VocabIndex = class {
         for (const entry of matches) this.invalid.push({ path: entry.path, kind: "duplicate", word });
       }
     }
+    this.rebuildSurfaces();
     this.invalid.push(...readFailures);
     return { entries: [...this.entries.values()], invalid: this.invalid };
   }
   get(word) {
-    return this.entries.get(String(word).toLowerCase());
+    return this.entries.get(normalizeWord(word));
+  }
+  rebuildSurfaces() {
+    this.surfaces = /* @__PURE__ */ new Map();
+    this.ambiguousSurfaces = /* @__PURE__ */ new Set();
+    for (const entry of this.entries.values()) {
+      for (const value of [entry.word, ...Array.isArray(entry.forms) ? entry.forms : []]) {
+        const surface = normalizeWord(value);
+        if (!surface || this.ambiguousSurfaces.has(surface)) continue;
+        const existing = this.surfaces.get(surface);
+        if (existing && existing.word !== entry.word) {
+          this.surfaces.delete(surface);
+          this.ambiguousSurfaces.add(surface);
+        } else this.surfaces.set(surface, entry);
+      }
+    }
+  }
+  resolveSurface(word) {
+    const surface = normalizeWord(word);
+    if (this.ambiguousSurfaces.has(surface)) return null;
+    return this.surfaces.get(surface) ?? null;
   }
   isAmbiguous(word) {
     return this.duplicateWords.has(String(word).toLowerCase());
@@ -4066,14 +4164,16 @@ function makeVocabLookup({ index, review, getReview = () => review, bindRootRead
   return async function vocabLookup(input) {
     return bindRootRead(() => {
       const word = normalizeWord(input?.word);
-      const entry = index.get(word);
+      const entry = index.resolveSurface?.(word) ?? index.get(word);
+      const canonical = entry?.word ?? word;
       const current = getReview();
-      const card = Object.hasOwn(current.cards, word) ? current.cards[word] : void 0;
-      const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : void 0;
+      const card = Object.hasOwn(current.cards, canonical) ? current.cards[canonical] : void 0;
+      const flag = Object.hasOwn(current.flags, canonical) ? current.flags[canonical] : void 0;
       const familiarity = familiarityFor(card, flag);
       return JSON.stringify({
         collected: Boolean(entry),
-        word,
+        surface: word,
+        word: canonical,
         definition: entry?.definition ?? null,
         familiarity,
         due: card?.due ?? null
@@ -4111,6 +4211,11 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
         for (const entry of groups.values()) {
           if (index.isAmbiguous?.(entry.word)) toolFailure("DUPLICATE_NOTES", entry.word);
           const existing = index.get(entry.word);
+          const resolved = existing ? null : index.resolveSurface?.(entry.word);
+          if (resolved && resolved.word !== entry.word) {
+            notes.push(t.toolCollectedAs(entry.word, resolved.word));
+            continue;
+          }
           let path;
           let doc;
           if (existing) {
@@ -4351,14 +4456,19 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
           if (sourceRow) card.append(sourceRow);
         }
         const dictionaryArea = el2("div", "ev-dict");
-        lookupDictionary?.(context.word).then((result) => {
-          if (cleaned) return;
+        const drawDictionary = () => {
           dictionaryArea.textContent = "";
-          if (result) renderDictionaryBlock(dictionaryArea, result, t, locale, { compact: true });
-        }).catch(() => {
-          if (cleaned) return;
-          dictionaryArea.textContent = t.dictionaryLoadFailed;
-        });
+          Promise.resolve(lookupDictionary?.(context.word)).then((result) => {
+            if (cleaned) return;
+            dictionaryArea.textContent = "";
+            if (result) renderDictionaryBlock(dictionaryArea, result, t, locale, { compact: true });
+          }).catch(() => {
+            if (cleaned) return;
+            dictionaryArea.textContent = "";
+            dictionaryArea.append(el2("p", "ev-reading-note", t.dictionaryLoadFailed), button2(t.retry, drawDictionary));
+          });
+        };
+        drawDictionary();
         card.append(dictionaryArea);
         const actions = el2("div", "ev-reading-actions");
         const speakButton = button2("🔊", () => speak?.(context.key));
@@ -35035,6 +35145,7 @@ function readingSource(source) {
 }
 var EnglishVocabPlugin = class extends BasePlugin {
   async onload() {
+    this.unloaded = false;
     this.locale = currentLocale();
     this.t = uiText(this.locale);
     this.state = {
@@ -35123,13 +35234,14 @@ var EnglishVocabPlugin = class extends BasePlugin {
     });
   }
   emitState() {
+    if (this.unloaded) return;
     for (const listener of this.listeners ?? []) listener();
   }
   enqueueMutation(task, generation = this.rootGeneration) {
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
-    const execute = () => generation === this.rootGeneration ? task(() => generation === this.rootGeneration) : false;
+    const execute = () => !this.unloaded && generation === this.rootGeneration ? task(() => !this.unloaded && generation === this.rootGeneration) : false;
     const run = this.mutationTail.then(execute, execute);
     this.mutationTail = run.catch(() => void 0);
     return run.finally(() => {
@@ -35329,7 +35441,6 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.index = new VocabIndex(this.app.knowledge, {
       onProgress: (done, total) => {
         this.state.loading = { done, total };
-        this.emitState();
       },
       onUpdate: (result) => {
         this.state.entries = result.entries;
@@ -35453,6 +35564,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (mode === "reading-card") {
         this.readingUndoSnapshots.set(word, {
           card: previous,
+          introduced: !previous || previous.state === "New",
           logId: id,
           rootGeneration: this.reviewStore.rootGeneration,
           resultingCard: cardFingerprint(ownValue(result.review.cards, word))
@@ -35498,7 +35610,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
           type: "restoreCardIfFingerprint",
           word,
           card: snapshot.card,
-          expectedFingerprint: snapshot.resultingCard
+          expectedFingerprint: snapshot.resultingCard,
+          removeIntroduced: snapshot.introduced === true
         };
         const logEntry = { id: this.nextLogId(), word, undoOf: snapshot.logId, reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), mode: "reading-card" };
         const result = await this.reviewStore.mutateReview({ ...operation, logEntry });
@@ -35678,14 +35791,14 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
   }
   async setLevelSettings(settings) {
-    this.state.levelSettings = settings;
-    if (this.recommender) this.recommender.settings = settings;
     try {
       await this.savePreferences({ levelSettings: settings });
     } catch {
       this.notice(this.t.levelSettingsSaveFailed);
       return false;
     }
+    this.state.levelSettings = settings;
+    if (this.recommender) this.recommender.settings = settings;
     this.emitState();
     await this.refreshReadingLevelSurfaces();
     return true;
@@ -35796,7 +35909,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       description: "Look up whether an English word is already in the user vocabulary notebook and return review familiarity.",
       inputSchema: LOOKUP_SCHEMA,
       run: makeVocabLookup({
-        index: { get: (word) => this.index?.get(word) },
+        index: { get: (word) => this.index?.get(word), resolveSurface: (word) => this.index?.resolveSurface(word) },
         getReview: () => this.state.review,
         bindRootRead: (operation) => this.withRootBoundRead(operation, JSON.stringify({ error: this.t.knowledgeWriteAborted }))
       })
@@ -35807,7 +35920,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
       inputSchema: ADD_SCHEMA,
       run: makeVocabAdd({
         app: this.app,
-        index: { get: (word) => this.index?.get(word), isAmbiguous: (word) => this.index?.isAmbiguous(word) === true },
+        index: {
+          get: (word) => this.index?.get(word),
+          resolveSurface: (word) => this.index?.resolveSurface(word),
+          isAmbiguous: (word) => this.index?.isAmbiguous(word) === true
+        },
         nextNumber: () => ++this.submission,
         notify: (message) => this.notice(message),
         refresh: () => this.refreshIndex(),
@@ -35815,6 +35932,21 @@ var EnglishVocabPlugin = class extends BasePlugin {
         bindKnowledgeWrite: (operation, abortedValue) => this.withRootBoundKnowledgeWrite(operation, abortedValue)
       })
     });
+  }
+  onunload() {
+    this.unloaded = true;
+    this.initialized = false;
+    this.rootGeneration += 1;
+    this.recommendationRequest += 1;
+    this.readingStatusRequest += 1;
+    this.index?.reset?.();
+    this.cancelSpeech();
+    this.readingUndoSnapshots?.clear?.();
+    this.latestReadingEvent = null;
+    this.readingStatusDirty = false;
+    this.indexProjectionReady = false;
+    this.rootChangedPending = false;
+    this.indexChangedPending = false;
   }
   async handleLocaleChanged(event) {
     const locale = typeof event === "string" ? event : event?.locale;

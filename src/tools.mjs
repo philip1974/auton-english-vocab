@@ -118,14 +118,16 @@ export function makeVocabLookup({ index, review, getReview = () => review, bindR
   return async function vocabLookup(input) {
     return bindRootRead(() => {
       const word = normalizeWord(input?.word);
-      const entry = index.get(word);
+      const entry = index.resolveSurface?.(word) ?? index.get(word);
+      const canonical = entry?.word ?? word;
       const current = getReview();
-      const card = Object.hasOwn(current.cards, word) ? current.cards[word] : undefined;
-      const flag = Object.hasOwn(current.flags, word) ? current.flags[word] : undefined;
+      const card = Object.hasOwn(current.cards, canonical) ? current.cards[canonical] : undefined;
+      const flag = Object.hasOwn(current.flags, canonical) ? current.flags[canonical] : undefined;
       const familiarity = familiarityFor(card, flag);
       return JSON.stringify({
         collected: Boolean(entry),
-        word,
+        surface: word,
+        word: canonical,
         definition: entry?.definition ?? null,
         familiarity,
         due: card?.due ?? null,
@@ -164,6 +166,11 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     for (const entry of groups.values()) {
       if (index.isAmbiguous?.(entry.word)) toolFailure('DUPLICATE_NOTES', entry.word);
       const existing = index.get(entry.word);
+      const resolved = existing ? null : index.resolveSurface?.(entry.word);
+      if (resolved && resolved.word !== entry.word) {
+        notes.push(t.toolCollectedAs(entry.word, resolved.word));
+        continue;
+      }
       let path;
       let doc;
       if (existing) {

@@ -1,4 +1,4 @@
-import { createEmptyCard, fsrs, generatorParameters, Rating } from 'ts-fsrs';
+import { ConvertStepUnitToMinutes, createEmptyCard, default_learning_steps, default_relearning_steps, fsrs, generatorParameters, Rating } from 'ts-fsrs';
 import { familiarityFor, isReviewable } from './familiarity.mjs';
 
 const params = generatorParameters();
@@ -28,11 +28,22 @@ export function deserializeCard(value) {
   const states = { New: 0, Learning: 1, Review: 2, Relearning: 3 };
   return {
     ...value,
-    learning_steps: value.learning_steps ?? 0,
+    learning_steps: value.learning_steps ?? inferLegacyLearningSteps(value),
     due: new Date(value.due),
     state: states[value.state] ?? value.state,
     last_review: value.last_review ? new Date(value.last_review) : undefined,
   };
+}
+
+export function inferLegacyLearningSteps(value) {
+  if (!value || !['Learning', 'Relearning', 1, 3].includes(value.state)) return 0;
+  const due = new Date(value.due).getTime();
+  const reviewed = new Date(value.last_review).getTime();
+  if (!Number.isFinite(due) || !Number.isFinite(reviewed)) return 0;
+  const interval = Math.round((due - reviewed) / 60_000);
+  const steps = ['Relearning', 3].includes(value.state) ? default_relearning_steps : default_learning_steps;
+  const index = steps.findIndex((step) => ConvertStepUnitToMinutes(step) === interval);
+  return index < 0 ? 0 : index;
 }
 
 export function newSerializedCard(now = new Date()) {
@@ -83,8 +94,7 @@ export function dueQueue(words, review, options = {}, now = new Date()) {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   };
   const today = localDay(now);
-  const introduced = new Set(activeReviewLog(options.log)
-    .filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0))
-    .map((entry) => entry.word)).size;
+  const introduced = review.introduced?.day === today && Array.isArray(review.introduced.words)
+    ? new Set(review.introduced.words).size : 0;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];
 }

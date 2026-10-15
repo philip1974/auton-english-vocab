@@ -939,9 +939,8 @@ describe('panel', () => {
     try {
       vi.setSystemTime(new Date('2026-10-15T23:59:59'));
       const container = document.createElement('div');
-      const log = Array.from({ length: 50 }, (_, index) => ({ word: `old-${index}`, previousState: 'New', reviewedAt: '2026-10-15T12:00:00' }));
       const cleanup = renderPanel(container, {
-        app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, log, hasEnglishVoice: () => true,
+        app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-15', words: Array.from({ length: 50 }, (_, index) => `old-${index}`) } }, log: [], hasEnglishVoice: () => true,
       });
       expect(container.querySelector('.ev-card')).toBeNull();
       await vi.advanceTimersByTimeAsync(1100);
@@ -1862,11 +1861,13 @@ describe('main plugin', () => {
     expect(await plugin.undoReadingRating('alpha')).toBe(false);
     await plugin.rateWord('alpha', 'Good', 'reading-card');
     expect(plugin.state.review.cards.alpha).toBeTruthy();
+    expect(plugin.state.review.introduced.words).toContain('alpha');
     const mutate = plugin.reviewStore.mutateReview.bind(plugin.reviewStore);
     plugin.reviewStore.mutateReview = vi.fn(mutate);
     expect(await plugin.undoReadingRating('alpha')).toBe(true);
     expect(plugin.reviewStore.mutateReview).toHaveBeenCalledWith(expect.objectContaining({ type: 'restoreCardIfFingerprint', expectedFingerprint: expect.any(String) }));
     expect(plugin.state.review.cards.alpha).toBeUndefined();
+    expect(plugin.state.review.introduced.words).not.toContain('alpha');
     const log = JSON.parse(app.storage.writes.filter((item) => item.name === 'log.json').at(-1).text);
     expect(log.at(-1)).toMatchObject({ word: 'alpha', undoOf: log[0].id, mode: 'reading-card' });
   });
@@ -2132,6 +2133,22 @@ describe('main plugin', () => {
     await plugin.onload();
     await expect(app.tools.get('vocab_lookup').run({ word: 'alpha' })).resolves.toContain('"collected":true');
     await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: '测试' }] })).resolves.toContain('已提交审核');
+  });
+
+  it('should resolve collected forms consistently when plugin tools receive a surface', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const run = { ...plugin.index.get('alpha'), word: 'run', path: 'wiki/vocab/run.md', forms: ['run', 'ran', 'running'] };
+    plugin.index.entries = new Map([['run', run]]);
+    plugin.index.rebuildSurfaces();
+    plugin.state.entries = [run];
+    expect(JSON.parse(await app.tools.get('vocab_lookup').run({ word: 'ran' }))).toMatchObject({ collected: true, surface: 'ran', word: 'run' });
+    const propose = vi.spyOn(app.knowledge, 'propose');
+    await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'running', definition: '跑步中' }] })).resolves.toContain('已作为 run 收录');
+    expect(propose).not.toHaveBeenCalled();
   });
 
   it('should recover a silent root change before vocab lookup reads index and review projections', async () => {
@@ -2998,7 +3015,7 @@ describe('main plugin', () => {
     await expect(plugin.setFlag('alpha', 'ignored')).resolves.toBe(true);
   });
 
-  it('should save level settings and report save failures from plugin data storage', async () => {
+  it('should preserve prior level settings when plugin data storage save fails', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
     const app = fullApp();
@@ -3010,9 +3027,36 @@ describe('main plugin', () => {
     plugin.recommender.recommend = async () => ({ stale: false, items: [], skipped: {} });
     await expect(plugin.setLevelSettings({ vocabularySize: 5000, easyMax: 1, goodMax: 6 })).resolves.toBe(true);
     expect(saved.at(-1).levelSettings).toMatchObject({ vocabularySize: 5000 });
+    const persisted = plugin.state.levelSettings;
+    const recommenderSettings = plugin.recommender.settings;
+    plugin.refreshReadingLevelSurfaces = vi.fn();
     plugin.saveData = async () => { throw new Error('nope'); };
     await expect(plugin.setLevelSettings({ vocabularySize: 3000, easyMax: 2, goodMax: 5 })).resolves.toBe(false);
+    expect(plugin.state.levelSettings).toBe(persisted);
+    expect(plugin.recommender.settings).toBe(recommenderSettings);
+    expect(plugin.refreshReadingLevelSurfaces).not.toHaveBeenCalled();
     expect(app.notices.some((item) => item.message.includes('生词率设置保存失败'))).toBe(true);
+  });
+
+  it('should cancel speech reset index work and invalidate requests when unloaded', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const cancel = vi.fn();
+    const previousSpeech = globalThis.speechSynthesis;
+    Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: { cancel } });
+    const reset = vi.spyOn(plugin.index, 'reset');
+    plugin.readingUndoSnapshots.set('run', {});
+    const before = [plugin.rootGeneration, plugin.recommendationRequest, plugin.readingStatusRequest];
+    plugin.onunload();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(reset).toHaveBeenCalledOnce();
+    expect(plugin.readingUndoSnapshots.size).toBe(0);
+    expect(plugin.rootGeneration).toBeGreaterThan(before[0]);
+    expect(plugin.recommendationRequest).toBeGreaterThan(before[1]);
+    expect(plugin.readingStatusRequest).toBeGreaterThan(before[2]);
+    Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: previousSpeech });
   });
 
   it('should expose panel controls for flags notices highlights and reading document opening', async () => {

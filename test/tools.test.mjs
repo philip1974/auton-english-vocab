@@ -47,6 +47,49 @@ describe('tools', () => {
     await expect(lookup({ word: 'Alpha' })).resolves.toContain('"collected":true');
   });
 
+  it('should resolve a collected inflection to its canonical lemma when looking up a surface', async () => {
+    const lookup = makeVocabLookup({
+      index: {
+        get: () => null,
+        resolveSurface: (word) => word === 'ran' ? { word: 'run', definition: 'move' } : null,
+      },
+      review: { cards: { run: { state: 'Review', stability: 2, due: 'tomorrow' } }, flags: {} },
+    });
+    await expect(lookup({ word: 'ran' })).resolves.toContain('"word":"run"');
+    await expect(lookup({ word: 'ran' })).resolves.toContain('"surface":"ran"');
+    await expect(lookup({ word: 'ran' })).resolves.toContain('"collected":true');
+  });
+
+  it.each([
+    ['en', 'ran is already collected as run.'],
+    ['zh', 'ran 已作为 run 收录。'],
+    ['ja', 'ran は run として収録済みです。'],
+    ['ko', 'ran은(는) run(으)로 이미 수록되었습니다.'],
+  ])('should skip a surface when it is already collected as a lemma in %s vocab add', async (locale, expected) => {
+    const fake = app();
+    const add = makeVocabAdd({
+      app: fake,
+      index: { get: () => null, isAmbiguous: () => false, resolveSurface: () => ({ word: 'run' }) },
+      nextNumber: () => 1,
+      notify: () => undefined,
+      locale,
+    });
+    await expect(add({ entries: [{ word: 'ran', definition: '过去式' }] })).resolves.toContain(expected);
+    expect(fake.proposals).toEqual([]);
+  });
+
+  it('should keep an ambiguous surface separate when vocab add cannot resolve it', async () => {
+    const fake = app();
+    const add = makeVocabAdd({
+      app: fake,
+      index: { get: () => null, isAmbiguous: () => false, resolveSurface: () => null },
+      nextNumber: () => 1,
+      notify: () => undefined,
+    });
+    await add({ entries: [{ word: 'saw', definition: '锯子' }] });
+    expect(fake.proposals[0].changes[0].path).toBe('wiki/vocab/saw.md');
+  });
+
   it('should return uncollected lookup details when a word is missing', async () => {
     const lookup = makeVocabLookup({ index: { get: () => null }, review: { cards: {}, flags: {} } });
     await expect(lookup({ word: 'none' })).resolves.toContain('"collected":false');

@@ -42,6 +42,7 @@ function readingSource(source) {
 
 export default class EnglishVocabPlugin extends BasePlugin {
   async onload() {
+    this.unloaded = false;
     this.locale = currentLocale();
     this.t = uiText(this.locale);
     this.state = {
@@ -132,6 +133,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   emitState() {
+    if (this.unloaded) return;
     for (const listener of this.listeners ?? []) listener();
   }
 
@@ -139,8 +141,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
-    const execute = () => generation === this.rootGeneration
-      ? task(() => generation === this.rootGeneration)
+    const execute = () => !this.unloaded && generation === this.rootGeneration
+      ? task(() => !this.unloaded && generation === this.rootGeneration)
       : false;
     const run = this.mutationTail.then(execute, execute);
     this.mutationTail = run.catch(() => undefined);
@@ -346,7 +348,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.state.review = await this.reviewStore.load();
     this.state.log = this.reviewStore.effectiveLog();
     this.index = new VocabIndex(this.app.knowledge, {
-      onProgress: (done, total) => { this.state.loading = { done, total }; this.emitState(); },
+      onProgress: (done, total) => { this.state.loading = { done, total }; },
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
       enrichEntries: (entries) => enrichVocabularyEntries(entries),
       onEnrichmentRetry: (indexGeneration) => {
@@ -473,6 +475,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       if (mode === 'reading-card') {
         this.readingUndoSnapshots.set(word, {
           card: previous,
+          introduced: !previous || previous.state === 'New',
           logId: id,
           rootGeneration: this.reviewStore.rootGeneration,
           resultingCard: cardFingerprint(ownValue(result.review.cards, word)),
@@ -520,6 +523,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
           word,
           card: snapshot.card,
           expectedFingerprint: snapshot.resultingCard,
+          removeIntroduced: snapshot.introduced === true,
         };
         const logEntry = { id: this.nextLogId(), word, undoOf: snapshot.logId, reviewedAt: new Date().toISOString(), mode: 'reading-card' };
         const result = await this.reviewStore.mutateReview({ ...operation, logEntry });
@@ -716,14 +720,14 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async setLevelSettings(settings) {
-    this.state.levelSettings = settings;
-    if (this.recommender) this.recommender.settings = settings;
     try {
       await this.savePreferences({ levelSettings: settings });
     } catch {
       this.notice(this.t.levelSettingsSaveFailed);
       return false;
     }
+    this.state.levelSettings = settings;
+    if (this.recommender) this.recommender.settings = settings;
     this.emitState();
     await this.refreshReadingLevelSurfaces();
     return true;
@@ -843,7 +847,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       description: 'Look up whether an English word is already in the user vocabulary notebook and return review familiarity.',
       inputSchema: LOOKUP_SCHEMA,
       run: makeVocabLookup({
-        index: { get: (word) => this.index?.get(word) },
+        index: { get: (word) => this.index?.get(word), resolveSurface: (word) => this.index?.resolveSurface(word) },
         getReview: () => this.state.review,
         bindRootRead: (operation) => this.withRootBoundRead(operation, JSON.stringify({ error: this.t.knowledgeWriteAborted })),
       }),
@@ -854,7 +858,11 @@ export default class EnglishVocabPlugin extends BasePlugin {
       inputSchema: ADD_SCHEMA,
       run: makeVocabAdd({
         app: this.app,
-        index: { get: (word) => this.index?.get(word), isAmbiguous: (word) => this.index?.isAmbiguous(word) === true },
+        index: {
+          get: (word) => this.index?.get(word),
+          resolveSurface: (word) => this.index?.resolveSurface(word),
+          isAmbiguous: (word) => this.index?.isAmbiguous(word) === true,
+        },
         nextNumber: () => ++this.submission,
         notify: (message) => this.notice(message),
         refresh: () => this.refreshIndex(),
@@ -862,6 +870,22 @@ export default class EnglishVocabPlugin extends BasePlugin {
         bindKnowledgeWrite: (operation, abortedValue) => this.withRootBoundKnowledgeWrite(operation, abortedValue),
       }),
     });
+  }
+
+  onunload() {
+    this.unloaded = true;
+    this.initialized = false;
+    this.rootGeneration += 1;
+    this.recommendationRequest += 1;
+    this.readingStatusRequest += 1;
+    this.index?.reset?.();
+    this.cancelSpeech();
+    this.readingUndoSnapshots?.clear?.();
+    this.latestReadingEvent = null;
+    this.readingStatusDirty = false;
+    this.indexProjectionReady = false;
+    this.rootChangedPending = false;
+    this.indexChangedPending = false;
   }
 
   async handleLocaleChanged(event) {

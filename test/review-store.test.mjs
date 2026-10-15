@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStore, mergeReview, normalizeReview } from '../src/review-store.mjs';
-import { activeReviewLog, dueQueue, newSerializedCard } from '../src/scheduler.mjs';
+import { activeReviewLog, dueQueue, newSerializedCard, rateCard } from '../src/scheduler.mjs';
 
 function appWithStorage(files = {}, failures = {}) {
   const revisions = {};
@@ -221,15 +221,15 @@ describe('review store', () => {
     expect(store.log[0].id).toBe('old-1');
   });
 
-  it('should retain every current local-day log when trimming older history', async () => {
+  it('should migrate current-day introductions when bounding detailed log history', async () => {
     const old = Array.from({ length: 2001 }, (_, i) => ({ id: `old-${i}`, word: `old-${i}`, rating: 'Good', reviewedAt: '2026-10-14T12:00:00.000Z' }));
     const introduced = Array.from({ length: 50 }, (_, i) => ({ id: `introduced-${i}`, word: `new-${i}`, rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T00:01:00.000Z' }));
     const reviews = Array.from({ length: 2000 }, (_, i) => ({ id: `review-${i}`, word: `review-${i}`, rating: 'Good', previousState: 'Review', reviewedAt: '2026-10-15T01:00:00.000Z' }));
     const app = appWithStorage({ 'log.json': JSON.stringify([...old, ...introduced, ...reviews]) });
     const store = new ReviewStore(app, { now: () => new Date('2026-10-15T12:00:00.000Z') });
     await store.load();
-    expect(store.log.filter((entry) => entry.reviewedAt?.startsWith('2026-10-15'))).toHaveLength(2050);
-    expect(store.log.filter((entry) => entry.id.startsWith('old-'))).toHaveLength(2000);
+    expect(store.log).toHaveLength(2000);
+    expect(store.review.introduced.words).toHaveLength(50);
     const words = Array.from({ length: 50 }, (_, i) => ({ word: `candidate-${i}`, definition: 'x' }));
     expect(dueQueue(words, store.review, { newLimit: 50, log: store.effectiveLog() }, new Date('2026-10-15T12:00:00.000Z'))).toEqual([]);
   });
@@ -321,12 +321,15 @@ describe('review store', () => {
     expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
   });
 
-  it('should migrate a missing learning step to zero and isolate invalid learning steps', () => {
+  it('should infer a missing legacy learning step when normalizing stored cards', () => {
     const legacy = newSerializedCard(new Date('2026-10-14T00:00:00Z'));
     delete legacy.learning_steps;
+    const learning = rateCard(newSerializedCard(new Date('2026-10-14T00:00:00Z')), 'Good', new Date('2026-10-14T00:00:00Z'));
+    delete learning.learning_steps;
     const invalid = { ...legacy, learning_steps: 0.5 };
-    const review = normalizeReview({ version: 1, cards: { legacy, invalid }, flags: {} });
+    const review = normalizeReview({ version: 1, cards: { legacy, learning, invalid }, flags: {} });
     expect(review.cards.legacy.learning_steps).toBe(0);
+    expect(review.cards.learning.learning_steps).toBe(1);
     expect(review.cards.invalid).toBeUndefined();
   });
 
@@ -626,5 +629,53 @@ describe('review store', () => {
     const store = new ReviewStore(appWithStorage({ 'review.json': '{bad' }), { locale: 'en', notify: (message) => notices.push(message) });
     await store.load();
     expect(notices[0]).toBe('review.json is damaged. It was backed up and review progress was reset.');
+  });
+
+  it('should migrate todays active new ratings when first loading legacy data', async () => {
+    const now = new Date('2026-10-15T12:00:00');
+    const app = appWithStorage({
+      'review.json': JSON.stringify({ version: 1, cards: {}, flags: {} }),
+      'log.json': JSON.stringify([
+        { id: 'a', word: 'alpha', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T01:00:00' },
+        { id: 'b', word: 'beta', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-15T02:00:00' },
+        { id: 'u', word: 'beta', undoOf: 'b', reviewedAt: '2026-10-15T03:00:00' },
+      ]),
+    });
+    const store = new ReviewStore(app, { now: () => now });
+    await store.load();
+    expect(store.review.introduced).toEqual({ day: '2026-10-15', words: ['alpha'] });
+    expect(JSON.parse(app.files['review.json']).introduced).toEqual({ day: '2026-10-15', words: ['alpha'] });
+  });
+
+  it('should add and reversibly remove a word when rating and undoing it today', async () => {
+    const now = new Date('2026-10-15T12:00:00');
+    const store = new ReviewStore(appWithStorage(), { now: () => now });
+    await store.load();
+    const rated = await store.mutateReview({ type: 'rateCard', word: 'run', rating: 'Good' });
+    expect(rated.review.introduced).toEqual({ day: '2026-10-15', words: ['run'] });
+    const fingerprint = JSON.stringify(rated.review.cards.run);
+    const undone = await store.mutateReview({ type: 'restoreCardIfFingerprint', word: 'run', card: null, expectedFingerprint: fingerprint, removeIntroduced: true });
+    expect(undone.review.introduced).toEqual({ day: '2026-10-15', words: [] });
+  });
+
+  it('should discard the previous introduced set when loading on a new local day', async () => {
+    const app = appWithStorage({
+      'review.json': JSON.stringify({ version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-14', words: ['old'] } }),
+    });
+    const store = new ReviewStore(app, { now: () => new Date('2026-10-15T00:01:00') });
+    await store.load();
+    expect(store.review.introduced).toEqual({ day: '2026-10-15', words: [] });
+  });
+
+  it('should keep persisted log history bounded when count and utf8 bytes are large', async () => {
+    const store = new ReviewStore(appWithStorage());
+    await store.load();
+    const entries = Array.from({ length: 5000 }, (_, index) => ({
+      id: `log-${index}`, word: `词${index}${'界'.repeat(80)}`, rating: 'Good', reviewedAt: '2026-10-15T01:00:00', previousState: 'Review',
+    }));
+    await store.appendLogs(entries);
+    const text = JSON.stringify(store.log);
+    expect(store.log.length).toBeLessThanOrEqual(2000);
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(1024 * 1024);
   });
 });

@@ -12,6 +12,33 @@ describe('vocab index', () => {
     const result = await index.refresh();
     expect(result.entries[0].forms).toEqual(['run', 'ran']);
     expect(index.get('run').forms).toEqual(['run', 'ran']);
+    expect(index.resolveSurface('ran')).toMatchObject({ word: 'run' });
+  });
+
+  it('should leave a surface unresolved when multiple collected lemmas claim it', async () => {
+    const index = new VocabIndex({ async listDocuments() { return []; } });
+    index.entries = new Map([
+      ['one', { word: 'one', forms: ['one', 'shared'] }],
+      ['two', { word: 'two', forms: ['two', 'shared'] }],
+    ]);
+    index.rebuildSurfaces();
+    expect(index.resolveSurface('shared')).toBeNull();
+  });
+
+  it('should report progress once per batch when refreshing a large vocabulary', async () => {
+    const metas = Array.from({ length: 125 }, (_, index) => ({
+      path: `wiki/vocab/word-${index}.md`, revision: { contentHash: String(index) },
+    }));
+    const progress = [];
+    const index = new VocabIndex({
+      async listDocuments() { return metas; },
+      async readDocument({ path }) {
+        const word = path.match(/word-(\d+)/u)[1];
+        return { content: buildNote({ word: `word-${word}`, definition: word }) };
+      },
+    }, { batchSize: 50, onProgress: (done, total) => progress.push([done, total]) });
+    await index.refresh();
+    expect(progress).toEqual([[50, 125], [100, 125], [125, 125]]);
   });
 
   it('should retry transient enrichment failures with bounded backoff and publish the recovered forms', async () => {

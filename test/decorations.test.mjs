@@ -785,15 +785,24 @@ describe('reading decorations', () => {
     expect(cancelled.textContent).toContain('已取消');
   });
 
-  it('should show dictionary failures on collected cards and missing collection callbacks', async () => {
+  it('should show a retry when dictionary loading fails on a collected card', async () => {
     const collected = document.createElement('div');
+    let attempts = 0;
     createReadingDecorationSpec({
       locale: 'zh',
       getState: () => ({ entries: [entry('run')], review: review() }),
-      lookupDictionary: async () => { throw new Error('missing'); },
+      lookupDictionary: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('missing');
+        return { surface: 'run', lemma: 'run', entry: { t: 'v. 跑', d: 'move fast' } };
+      },
     }).renderCard(collected, { word: 'run', key: 'run', tone: 'learning' });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(collected.textContent).toContain('词典加载失败');
+    [...collected.querySelectorAll('button')].find((node) => node.textContent === '重试').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(attempts).toBe(2);
+    expect(collected.textContent).toContain('move fast');
 
     const unhandled = document.createElement('div');
     createReadingDecorationSpec({
