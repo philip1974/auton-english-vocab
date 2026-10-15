@@ -25,6 +25,20 @@ function isRootChanged(error) {
   return error?.code === 'ROOT_CHANGED';
 }
 
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function isValidCacheEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.hash !== 'string') return false;
+  if (entry.title !== undefined && typeof entry.title !== 'string') return false;
+  if (entry.usedAt !== undefined && (!Number.isFinite(entry.usedAt) || entry.usedAt < 0)) return false;
+  if (entry.english === false) return typeof entry.reason === 'string';
+  if (entry.english !== true || !isNonNegativeInteger(entry.counted) || !isNonNegativeInteger(entry.base)) return false;
+  if (!entry.words || typeof entry.words !== 'object' || Array.isArray(entry.words)) return false;
+  return Object.values(entry.words).every(isNonNegativeInteger);
+}
+
 function familiarityForCollected(review, word, surfaceMap) {
   if (!surfaceMap.has(word)) return null;
   const lemma = surfaceMap.get(word);
@@ -116,7 +130,10 @@ export class LevelCache {
       try {
         const parsed = JSON.parse(result.text);
         if (parsed.version !== 1 || parsed.analysisVersion !== ANALYSIS_VERSION || !parsed.items || typeof parsed.items !== 'object' || Array.isArray(parsed.items)) continue;
-        for (const [path, entry] of Object.entries(parsed.items ?? {})) this.items.set(path, entry);
+        for (const [path, entry] of Object.entries(parsed.items ?? {})) {
+          if (isValidCacheEntry(entry)) this.items.set(path, entry);
+          else this.dirty.add(name);
+        }
       } catch {
         // A corrupt cache shard is disposable; rebuilding from source documents is safe.
       }
@@ -136,6 +153,16 @@ export class LevelCache {
     if (epoch !== this.epoch) return false;
     this.items.set(path, { ...value, hash, usedAt: Date.now() });
     this.dirty.add(entryShard(path));
+    return true;
+  }
+
+  prune(epoch, livePaths) {
+    if (epoch !== this.epoch) return false;
+    for (const path of this.items.keys()) {
+      if (livePaths.has(path)) continue;
+      this.items.delete(path);
+      this.dirty.add(entryShard(path));
+    }
     return true;
   }
 

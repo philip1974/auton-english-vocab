@@ -326,7 +326,17 @@ export default class EnglishVocabPlugin extends BasePlugin {
       }
       await this.refreshRecommendations({ silent: true });
       if (generation !== this.rootGeneration) return;
+      const afterRecommendations = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!afterRecommendations.stable || afterRecommendations.workspaceEpoch !== binding.workspaceEpoch || afterRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       await this.refreshLatestReadingStatus();
+      const finalBinding = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!finalBinding.stable || finalBinding.workspaceEpoch !== binding.workspaceEpoch || finalBinding.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
     } finally {
       if (generation === this.rootGeneration) {
         this.state.loading = null;

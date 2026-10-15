@@ -102,13 +102,25 @@ function parseYamlScalar(value) {
 }
 
 function examplesSection(body) {
-  const heading = /^## Examples\s*$/mu.exec(body);
-  if (!heading) return null;
-  const start = heading.index + heading[0].length;
-  const rest = body.slice(start);
-  const next = /^#{1,2}\s+.+$/mu.exec(rest);
-  const end = next ? start + next.index : body.length;
-  return { start, end, content: body.slice(start, end) };
+  let offset = 0;
+  let start = null;
+  let fence = null;
+  for (const line of body.split('\n')) {
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+    } else if (marker) {
+      fence = { character: marker[0], length: marker.length };
+    } else if (start === null && /^## Examples\s*$/u.test(line)) {
+      start = lineEnd;
+    } else if (start !== null && /^#{1,2}\s+.+$/u.test(line)) {
+      return { start, end: lineStart, content: body.slice(start, lineStart) };
+    }
+    offset = lineEnd + 1;
+  }
+  return start === null ? null : { start, end: body.length, content: body.slice(start) };
 }
 
 export function parseNote(text) {

@@ -124,6 +124,18 @@ describe('note format', () => {
     expect(parseNote(appended).entry.examples).toEqual(['Same line.']);
   });
 
+  it('should ignore examples headings inside backtick and tilde fenced code blocks', () => {
+    for (const fence of ['```md', '~~~md']) {
+      const close = fence.slice(0, 3);
+      const note = `---\ntype: vocab\nword: "run"\ndefinition: "跑"\n---\n# run\n\n${fence}\n## Examples\n${close}\n\n## Notes\nkeep\n`;
+      expect(parseNote(note)).toMatchObject({ ok: true, entry: { examples: [] } });
+      const appended = appendExample(note, 'I run.');
+      expect(appended.match(/^## Examples$/gmu)).toHaveLength(2);
+      expect(parseNote(appended)).toMatchObject({ ok: true, entry: { examples: ['I run.'] } });
+      expect(appended.indexOf('- I run.')).toBeGreaterThan(appended.indexOf('## Notes'));
+    }
+  });
+
   it('should encode markdown source paths containing spaces unicode and parentheses', () => {
     const note = buildNote({ word: 'source', definition: '来源', example: 'Source line.', source: { path: '../sources/资料 a)b.md', title: 'A source' } });
     expect(parseNote(note).entry.examples[0]).toContain('../sources/资料%20a%29b.md');

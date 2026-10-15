@@ -144,7 +144,7 @@ describe('level cache and novel word scoring', () => {
     const io = storage();
     io.files.set('level-cache-0.json', JSON.stringify({ version: 1, items: { 'wiki/old.md': { hash: 'same', counted: 1, base: 1, words: {} } } }));
     io.files.set('level-cache-1.json', JSON.stringify({ version: 1, analysisVersion: 999, items: { 'wiki/future.md': { hash: 'same', counted: 1, base: 1, words: {} } } }));
-    io.files.set('level-cache-2.json', JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items: { 'wiki/current.md': { hash: 'same', counted: 1, base: 0, words: { letter: 1 } } } }));
+    io.files.set('level-cache-2.json', JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items: { 'wiki/current.md': { hash: 'same', english: true, counted: 1, base: 0, words: { letter: 1 } } } }));
     const cache = new LevelCache(io);
     await cache.load();
     expect(cache.get('wiki/old.md', 'same')).toBeNull();
@@ -156,6 +156,36 @@ describe('level cache and novel word scoring', () => {
     await cache.load();
     expect(cache.items.size).toBe(0);
     await cache.flush();
+  });
+
+  it('should discard and rewrite semantically invalid cache entries when shard json is valid', async () => {
+    const io = storage();
+    const name = cacheShardNames()[0];
+    io.files.set(name, JSON.stringify({ version: 1, analysisVersion: ANALYSIS_VERSION, items: {
+      'wiki/bad.md': { hash: 'same', english: true, counted: 1, base: 0, words: { rare: 'oops' } },
+      'wiki/bad-title.md': { hash: 'title', title: 42, english: true, counted: 1, base: 0, words: {} },
+      'wiki/bad-time.md': { hash: 'time', usedAt: -1, english: true, counted: 1, base: 0, words: {} },
+      'wiki/bad-count.md': { hash: 'count', english: true, counted: 0.5, base: 0, words: {} },
+      'wiki/bad-reason.md': { hash: 'reason', english: false, reason: null },
+      'wiki/bad-words.md': { hash: 'words', english: true, counted: 1, base: 0, words: [] },
+    } }));
+    const cache = new LevelCache(io);
+    await cache.load();
+    expect(cache.get('wiki/bad.md', 'same')).toBeNull();
+    expect(cache.items.size).toBe(0);
+    expect(cache.dirty.has(name)).toBe(true);
+    await cache.flush();
+    expect(JSON.parse(io.files.get(name)).items).toEqual({});
+  });
+
+  it('should prune orphaned paths only for the captured current cache epoch', async () => {
+    const cache = new LevelCache(storage());
+    await cache.load();
+    await cache.set(cache.epoch, 'wiki/live.md', 'live', { english: true, counted: 1, base: 1, words: {} });
+    await cache.set(cache.epoch, 'wiki/deleted.md', 'old', { english: true, counted: 1, base: 1, words: {} });
+    expect(cache.prune('stale', new Set(['wiki/live.md']))).toBe(false);
+    expect(cache.prune(cache.epoch, new Set(['wiki/live.md']))).toBe(true);
+    expect(cache.get('wiki/deleted.md', 'old')).toBeNull();
   });
 
   it('should keep an in-memory cache when plugin storage is missing', async () => {

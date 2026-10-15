@@ -111,6 +111,9 @@ export class ReadingRecommender {
     const metas = unwrap(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
     /* v8 ignore next -- the same captured-epoch contract is exercised at the async document and cache boundaries below. */
     if (!current()) return { stale: true, items: [], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } };
+    if (!this.cache.prune(cacheEpoch, new Set(metas.map((meta) => meta.path))) || !current()) {
+      return { stale: true, items: [], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } };
+    }
     const skipped = { 'not-english': 0, 'too-short': 0, unreadable: 0 };
     const items = [];
     let done = 0;

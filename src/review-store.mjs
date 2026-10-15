@@ -11,28 +11,43 @@ function sameLogEntry(left, right) {
 function uniqueLogEntries(values, onCollision = () => undefined) {
   const entries = [];
   const byId = new Map();
+  const ratingIds = new Map();
   for (const value of values) {
     if (!value?.id) {
       entries.push(value);
       continue;
     }
-    const existing = byId.get(value.id);
+    let next = value;
+    if (value.undoOf) {
+      const candidates = (ratingIds.get(value.undoOf) ?? []).filter((candidate) => candidate.word === value.word);
+      if (candidates.length === 1) next = { ...value, undoOf: candidates[0].id };
+      else if (candidates.length > 1) {
+        onCollision(value.undoOf);
+        continue;
+      }
+    }
+    const originalId = next.id;
+    const existing = byId.get(originalId);
     if (!existing) {
-      byId.set(value.id, value);
-      entries.push(value);
-      continue;
+      byId.set(originalId, next);
+    } else {
+      if (sameLogEntry(existing, next)) continue;
+      onCollision(originalId);
+      let suffix = 1;
+      let id = `${originalId}~recovered-${suffix}`;
+      while (byId.has(id)) {
+        suffix += 1;
+        id = `${originalId}~recovered-${suffix}`;
+      }
+      next = { ...next, id };
+      byId.set(id, next);
     }
-    if (sameLogEntry(existing, value)) continue;
-    onCollision(value.id);
-    let suffix = 1;
-    let id = `${value.id}~recovered-${suffix}`;
-    while (byId.has(id)) {
-      suffix += 1;
-      id = `${value.id}~recovered-${suffix}`;
+    entries.push(next);
+    if (!next.undoOf && !next.undo && next.rating) {
+      const candidates = ratingIds.get(originalId) ?? [];
+      candidates.push({ id: next.id, word: next.word });
+      ratingIds.set(originalId, candidates);
     }
-    const recovered = { ...value, id };
-    byId.set(id, recovered);
-    entries.push(recovered);
   }
   return entries;
 }

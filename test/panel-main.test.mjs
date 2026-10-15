@@ -78,6 +78,8 @@ function fullApp() {
         };
       },
       async propose(request) {
+        const paths = request.changes.map((change) => change.path);
+        if (new Set(paths).size !== paths.length) return { _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'duplicate path' } };
         for (const change of request.changes) {
           const current = await this.readDocument({ path: change.path });
           if (current?._tag !== 'Err' && current.content === change.newContent) {
@@ -92,6 +94,8 @@ function fullApp() {
 }
 
 async function appliedProposal(app, proposal, summary = 'applied') {
+  const paths = proposal.changes.map((change) => change.path);
+  if (new Set(paths).size !== paths.length) return { _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'duplicate path' } };
   for (const change of proposal.changes) {
     const current = await app.knowledge.readDocument({ path: change.path });
     if (current?._tag !== 'Err' && current.content === change.newContent) {
@@ -588,13 +592,14 @@ describe('panel', () => {
       review: { version: 1, cards: {}, flags: {} },
       levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
       recommendationLoading: { done: 1, total: 4 },
-      recommendations: { items: [], skipped: {} },
+      recommendations: { items: [], skipped: { 'not-english': 2, 'too-short': 5, unreadable: 1 } },
       notify: (message) => notices.push(message),
       hasEnglishVoice: () => true,
     });
     [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
     expect(container.textContent).toContain('统计中 1 / 4');
     expect(container.textContent).toContain('没有可推荐的英文文章');
+    expect(container.textContent).toContain('中文为主 2 / 太短 5 / 不可读 1');
     const inputs = container.querySelectorAll('input');
     inputs[0].value = '6';
     inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
@@ -2131,6 +2136,44 @@ describe('main plugin', () => {
         return stale;
       }
       return originalScope();
+    };
+    await plugin.refreshIndex();
+    expect(Object.keys(plugin.state.review.cards)).toEqual(['beta']);
+    expect(plugin.state.entries.map((entry) => entry.word)).toEqual(['beta']);
+    expect(plugin.indexBinding).toMatchObject({ epoch: 'epoch-b', storageRootGeneration: 'root-b' });
+  });
+
+  it('should reload all root projections when a silent root switch happens during recommendations', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let root = 'root-a';
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const cards = {
+      'root-a': { alpha: newSerializedCard(new Date('2026-10-01T00:00:00Z')) },
+      'root-b': { beta: newSerializedCard(new Date('2026-10-02T00:00:00Z')) },
+    };
+    app.storage.scope = async () => ({ rootGeneration: root });
+    app.storage.read = async (requestedRoot, name) => {
+      if (requestedRoot !== root) throw Object.assign(new Error('changed'), { code: 'ROOT_CHANGED' });
+      if (name === 'review.json') return { found: true, text: JSON.stringify({ version: 1, cards: cards[root], flags: {} }), revision: `${root}-review` };
+      return { found: false };
+    };
+    app.knowledge.listDocuments = async () => [{ path: `wiki/vocab/${root === 'root-a' ? 'alpha' : 'beta'}.md`, title: root, revision: { contentHash: root } }];
+    app.knowledge.readDocument = async ({ path }) => ({ content: buildNote({ word: path.includes('alpha') ? 'alpha' : 'beta', definition: root }), meta: { title: root } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    let switched = false;
+    const originalRefresh = plugin.refreshRecommendations.bind(plugin);
+    plugin.refreshRecommendations = async (...args) => {
+      if (!switched) {
+        switched = true;
+        root = 'root-b';
+        epoch = 'epoch-b';
+        return null;
+      }
+      return originalRefresh(...args);
     };
     await plugin.refreshIndex();
     expect(Object.keys(plugin.state.review.cards)).toEqual(['beta']);

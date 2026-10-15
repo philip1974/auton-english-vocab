@@ -1176,28 +1176,43 @@ function sameLogEntry(left, right) {
 function uniqueLogEntries(values, onCollision = () => void 0) {
   const entries = [];
   const byId = /* @__PURE__ */ new Map();
+  const ratingIds = /* @__PURE__ */ new Map();
   for (const value of values) {
     if (!value?.id) {
       entries.push(value);
       continue;
     }
-    const existing = byId.get(value.id);
+    let next = value;
+    if (value.undoOf) {
+      const candidates = (ratingIds.get(value.undoOf) ?? []).filter((candidate) => candidate.word === value.word);
+      if (candidates.length === 1) next = { ...value, undoOf: candidates[0].id };
+      else if (candidates.length > 1) {
+        onCollision(value.undoOf);
+        continue;
+      }
+    }
+    const originalId = next.id;
+    const existing = byId.get(originalId);
     if (!existing) {
-      byId.set(value.id, value);
-      entries.push(value);
-      continue;
+      byId.set(originalId, next);
+    } else {
+      if (sameLogEntry(existing, next)) continue;
+      onCollision(originalId);
+      let suffix = 1;
+      let id = `${originalId}~recovered-${suffix}`;
+      while (byId.has(id)) {
+        suffix += 1;
+        id = `${originalId}~recovered-${suffix}`;
+      }
+      next = { ...next, id };
+      byId.set(id, next);
     }
-    if (sameLogEntry(existing, value)) continue;
-    onCollision(value.id);
-    let suffix = 1;
-    let id = `${value.id}~recovered-${suffix}`;
-    while (byId.has(id)) {
-      suffix += 1;
-      id = `${value.id}~recovered-${suffix}`;
+    entries.push(next);
+    if (!next.undoOf && !next.undo && next.rating) {
+      const candidates = ratingIds.get(originalId) ?? [];
+      candidates.push({ id: next.id, word: next.word });
+      ratingIds.set(originalId, candidates);
     }
-    const recovered = { ...value, id };
-    byId.set(id, recovered);
-    entries.push(recovered);
   }
   return entries;
 }
@@ -1634,13 +1649,25 @@ function parseYamlScalar(value) {
   return trimmed;
 }
 function examplesSection(body) {
-  const heading = /^## Examples\s*$/mu.exec(body);
-  if (!heading) return null;
-  const start = heading.index + heading[0].length;
-  const rest = body.slice(start);
-  const next = /^#{1,2}\s+.+$/mu.exec(rest);
-  const end = next ? start + next.index : body.length;
-  return { start, end, content: body.slice(start, end) };
+  let offset = 0;
+  let start = null;
+  let fence = null;
+  for (const line of body.split("\n")) {
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+    } else if (marker) {
+      fence = { character: marker[0], length: marker.length };
+    } else if (start === null && /^## Examples\s*$/u.test(line)) {
+      start = lineEnd;
+    } else if (start !== null && /^#{1,2}\s+.+$/u.test(line)) {
+      return { start, end: lineStart, content: body.slice(start, lineStart) };
+    }
+    offset = lineEnd + 1;
+  }
+  return start === null ? null : { start, end: body.length, content: body.slice(start) };
 }
 function parseNote(text) {
   const normalized = String(text).replace(/\r\n/g, "\n");
@@ -3249,8 +3276,15 @@ function renderPanel(container, controls) {
     body.append(button(t.refresh, () => controls.refreshRecommendations?.()));
     if (state.recommendationLoading) body.append(el("p", "ev-note", t.recommendationProgress(state.recommendationLoading.done, state.recommendationLoading.total)));
     const result = state.recommendations;
+    const skipped = result?.skipped ?? {};
+    const appendSkipped = () => {
+      const details = el("details", "ev-skipped");
+      details.append(el("summary", "", t.skippedSummary(skipped["not-english"] ?? 0, skipped["too-short"] ?? 0, skipped.unreadable ?? 0)));
+      body.append(details);
+    };
     if (!result?.items?.length) {
       body.append(el("p", "ev-empty", t.noRecommendations));
+      if (result) appendSkipped();
       return;
     }
     const list = el("div", "ev-list");
@@ -3265,9 +3299,7 @@ function renderPanel(container, controls) {
       list.append(row);
     }
     body.append(list);
-    const skipped = result.skipped ?? {};
-    body.append(el("details", "ev-skipped"));
-    body.lastElementChild.append(el("summary", "", t.skippedSummary(skipped["not-english"] ?? 0, skipped["too-short"] ?? 0, skipped.unreadable ?? 0)));
+    appendSkipped();
   };
   const rerender = () => {
     locale = read().locale ?? controls.locale ?? currentLocale();
@@ -3451,10 +3483,11 @@ async function readOptional(app, path, guard) {
     throw error;
   }
 }
-async function availablePath(app, word, guard) {
+async function availablePath(app, word, guard, reservedPaths) {
   const slug = slugFor(word);
   for (let number = 1; number < 1e3; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? "" : `-${number}`}.md`;
+    if (reservedPaths.has(path)) continue;
     const doc = await readOptional(app, path, guard);
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
@@ -3501,6 +3534,7 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
       }
       const changes = [];
       const accepted = [];
+      const reservedPaths = /* @__PURE__ */ new Set();
       for (const entry of groups.values()) {
         if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
         const existing = index.get(entry.word);
@@ -3508,10 +3542,12 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
         let doc;
         if (existing) {
           path = existing.path;
+          if (reservedPaths.has(path)) throw new Error(`duplicate vocabulary path for ${entry.word}`);
           doc = unwrap2(await guard.wait(app.knowledge.readDocument({ path })));
         } else {
-          ({ path, doc } = await availablePath(app, entry.word, guard));
+          ({ path, doc } = await availablePath(app, entry.word, guard, reservedPaths));
         }
+        reservedPaths.add(path);
         let content;
         if (doc) {
           const parsed = parseNote(doc.content);
@@ -3527,6 +3563,7 @@ function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale = "en", 
         accepted.push(entry.word);
       }
       if (!changes.length) return ["No vocabulary entries changed.", ...notes].join("\n");
+      if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error("duplicate vocabulary proposal path");
       const number = nextNumber();
       const words = accepted;
       guard.assertCurrent();
@@ -34042,6 +34079,18 @@ function entryShard(path) {
 function isRootChanged(error) {
   return error?.code === "ROOT_CHANGED";
 }
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+function isValidCacheEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.hash !== "string") return false;
+  if (entry.title !== void 0 && typeof entry.title !== "string") return false;
+  if (entry.usedAt !== void 0 && (!Number.isFinite(entry.usedAt) || entry.usedAt < 0)) return false;
+  if (entry.english === false) return typeof entry.reason === "string";
+  if (entry.english !== true || !isNonNegativeInteger(entry.counted) || !isNonNegativeInteger(entry.base)) return false;
+  if (!entry.words || typeof entry.words !== "object" || Array.isArray(entry.words)) return false;
+  return Object.values(entry.words).every(isNonNegativeInteger);
+}
 function familiarityForCollected(review, word, surfaceMap) {
   if (!surfaceMap.has(word)) return null;
   const lemma = surfaceMap.get(word);
@@ -34121,7 +34170,10 @@ var LevelCache = class {
       try {
         const parsed = JSON.parse(result.text);
         if (parsed.version !== 1 || parsed.analysisVersion !== ANALYSIS_VERSION || !parsed.items || typeof parsed.items !== "object" || Array.isArray(parsed.items)) continue;
-        for (const [path, entry] of Object.entries(parsed.items ?? {})) this.items.set(path, entry);
+        for (const [path, entry] of Object.entries(parsed.items ?? {})) {
+          if (isValidCacheEntry(entry)) this.items.set(path, entry);
+          else this.dirty.add(name);
+        }
       } catch {
       }
     }
@@ -34137,6 +34189,15 @@ var LevelCache = class {
     if (epoch !== this.epoch) return false;
     this.items.set(path, { ...value, hash, usedAt: Date.now() });
     this.dirty.add(entryShard(path));
+    return true;
+  }
+  prune(epoch, livePaths) {
+    if (epoch !== this.epoch) return false;
+    for (const path of this.items.keys()) {
+      if (livePaths.has(path)) continue;
+      this.items.delete(path);
+      this.dirty.add(entryShard(path));
+    }
     return true;
   }
   async flush(name) {
@@ -34263,6 +34324,9 @@ var ReadingRecommender = class {
     this.epoch = started;
     const metas = unwrap3(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
     if (!current()) return { stale: true, items: [], skipped: { "not-english": 0, "too-short": 0, unreadable: 0 } };
+    if (!this.cache.prune(cacheEpoch, new Set(metas.map((meta) => meta.path))) || !current()) {
+      return { stale: true, items: [], skipped: { "not-english": 0, "too-short": 0, unreadable: 0 } };
+    }
     const skipped = { "not-english": 0, "too-short": 0, unreadable: 0 };
     const items = [];
     let done = 0;
@@ -34628,7 +34692,17 @@ var EnglishVocabPlugin = class extends BasePlugin {
       }
       await this.refreshRecommendations({ silent: true });
       if (generation !== this.rootGeneration) return;
+      const afterRecommendations = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!afterRecommendations.stable || afterRecommendations.workspaceEpoch !== binding.workspaceEpoch || afterRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
       await this.refreshLatestReadingStatus();
+      const finalBinding = await this.captureRootBinding();
+      if (generation !== this.rootGeneration) return;
+      if (!finalBinding.stable || finalBinding.workspaceEpoch !== binding.workspaceEpoch || finalBinding.storageRootGeneration !== binding.storageRootGeneration) {
+        return this.handleRootChanged(this.invalidateRoot());
+      }
     } finally {
       if (generation === this.rootGeneration) {
         this.state.loading = null;

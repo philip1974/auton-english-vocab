@@ -93,10 +93,11 @@ async function readOptional(app, path, guard) {
   }
 }
 
-async function availablePath(app, word, guard) {
+async function availablePath(app, word, guard, reservedPaths) {
   const slug = slugFor(word);
   for (let number = 1; number < 1000; number += 1) {
     const path = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
+    if (reservedPaths.has(path)) continue;
     const doc = await readOptional(app, path, guard);
     if (!doc) return { path, doc: null };
     const parsed = parseNote(doc.content);
@@ -145,6 +146,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     }
     const changes = [];
     const accepted = [];
+    const reservedPaths = new Set();
     for (const entry of groups.values()) {
       if (index.isAmbiguous?.(entry.word)) throw new Error(`duplicate vocabulary notes for ${entry.word}`);
       const existing = index.get(entry.word);
@@ -152,10 +154,12 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       let doc;
       if (existing) {
         path = existing.path;
+        if (reservedPaths.has(path)) throw new Error(`duplicate vocabulary path for ${entry.word}`);
         doc = unwrap(await guard.wait(app.knowledge.readDocument({ path })));
       } else {
-        ({ path, doc } = await availablePath(app, entry.word, guard));
+        ({ path, doc } = await availablePath(app, entry.word, guard, reservedPaths));
       }
+      reservedPaths.add(path);
       let content;
       if (doc) {
         const parsed = parseNote(doc.content);
@@ -171,6 +175,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
       accepted.push(entry.word);
     }
     if (!changes.length) return ['No vocabulary entries changed.', ...notes].join('\n');
+    if (new Set(changes.map((change) => change.path)).size !== changes.length) throw new Error('duplicate vocabulary proposal path');
     const number = nextNumber();
     const words = accepted;
     guard.assertCurrent();

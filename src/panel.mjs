@@ -502,8 +502,15 @@ export function renderPanel(container, controls) {
     body.append(button(t.refresh, () => controls.refreshRecommendations?.()));
     if (state.recommendationLoading) body.append(el('p', 'ev-note', t.recommendationProgress(state.recommendationLoading.done, state.recommendationLoading.total)));
     const result = state.recommendations;
+    const skipped = result?.skipped ?? {};
+    const appendSkipped = () => {
+      const details = el('details', 'ev-skipped');
+      details.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0, skipped.unreadable ?? 0)));
+      body.append(details);
+    };
     if (!result?.items?.length) {
       body.append(el('p', 'ev-empty', t.noRecommendations));
+      if (result) appendSkipped();
       return;
     }
     const list = el('div', 'ev-list');
@@ -518,9 +525,7 @@ export function renderPanel(container, controls) {
       list.append(row);
     }
     body.append(list);
-    const skipped = result.skipped ?? {};
-    body.append(el('details', 'ev-skipped'));
-    body.lastElementChild.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0, skipped.unreadable ?? 0)));
+    appendSkipped();
   };
 
   const rerender = () => {

@@ -15,6 +15,10 @@ function app(proposalReceipt = { outcome: 'applied' }) {
         return { content: 'source', meta: { title: 'Source title' } };
       },
       propose(request) {
+        const paths = request.changes.map((change) => change.path);
+        if (new Set(paths).size !== paths.length) {
+          return Promise.resolve({ _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'duplicate path' } });
+        }
         if (request.changes.some((change) => change.path === 'wiki/vocab/old.md' && change.newContent === oldContent)) {
           return Promise.resolve({ _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'change is identical to source' } });
         }
@@ -66,6 +70,24 @@ describe('tools', () => {
     await add({ entries: [{ word: 'don’t', definition: '不要' }] });
     expect(fake.proposals[0].changes[0]).toMatchObject({ path: 'wiki/vocab/don-t.md' });
     expect(fake.proposals[0].changes[0].newContent).toContain('word: "don\'t"');
+  });
+
+  it('should reserve colliding slugs within one vocab add proposal', async () => {
+    const fake = app();
+    const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 10, notify: () => undefined });
+    await add({ entries: [
+      { word: 'don-t', definition: 'dash' },
+      { word: "don't", definition: 'do not' },
+    ] });
+    expect(fake.proposals[0].changes.map((change) => change.path)).toEqual(['wiki/vocab/don-t.md', 'wiki/vocab/don-t-2.md']);
+  });
+
+  it('should make the knowledge fake reject duplicate proposal paths like the host', async () => {
+    const result = await app().knowledge.propose({ changes: [
+      { path: 'wiki/vocab/run.md', newContent: 'one' },
+      { path: 'wiki/vocab/run.md', newContent: 'two' },
+    ] });
+    expect(result).toEqual({ _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'duplicate path' } });
   });
 
   it('should append to an existing note when word is already indexed', async () => {

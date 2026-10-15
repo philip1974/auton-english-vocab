@@ -100,6 +100,19 @@ describe('reading recommendations', () => {
     expect(app.knowledge.readDocument).toHaveBeenCalledTimes(2);
   });
 
+  it('should prune deleted reading paths after a current document listing', async () => {
+    const app = appFor([{ path: 'wiki/live.md', title: 'Live', hash: 'live', content: english('the') }]);
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    await recommender.cache.set(recommender.cache.epoch, 'wiki/deleted.md', 'deleted', { english: true, counted: 1, base: 1, words: {} });
+    await recommender.cache.flush();
+    app.storage.writes.length = 0;
+    await recommender.recommend();
+    expect(recommender.cache.get('wiki/deleted.md', 'deleted')).toBeNull();
+    const persisted = app.storage.writes.map((write) => JSON.parse(write.text).items);
+    expect(persisted.some((items) => Object.hasOwn(items, 'wiki/deleted.md'))).toBe(false);
+  });
+
   it('should discard a cached recommendation when progress re-entry changes the workspace epoch', async () => {
     const app = appFor([{ path: 'wiki/cached.md', title: 'Cached', hash: 'same', content: english('the') }]);
     const recommender = new ReadingRecommender(app, { table: ['the'] });

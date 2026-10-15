@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStore, mergeReview, normalizeReview } from '../src/review-store.mjs';
-import { newSerializedCard } from '../src/scheduler.mjs';
+import { activeReviewLog, newSerializedCard } from '../src/scheduler.mjs';
 
 function appWithStorage(files = {}, failures = {}) {
   const revisions = {};
@@ -220,6 +220,18 @@ describe('review store', () => {
     expect(new Set(store.effectiveLog().map((entry) => entry.id)).size).toBe(2);
     expect(Object.keys(app.files).some((name) => name.startsWith('log.corrupt-'))).toBe(true);
     expect(notices.join('\n')).toMatch(/日志/u);
+  });
+
+  it('should rewrite a colliding rating id in a later same-word undo reference', async () => {
+    const app = appWithStorage({ 'log.json': JSON.stringify([
+      { id: 'same', word: 'alpha', rating: 'Good' },
+      { id: 'same', word: 'beta', rating: 'Good' },
+      { id: 'undo', word: 'beta', undoOf: 'same' },
+    ]) });
+    const store = new ReviewStore(app);
+    await store.load();
+    expect(store.effectiveLog()[2].undoOf).toBe('same~recovered-1');
+    expect(activeReviewLog(store.effectiveLog()).map((entry) => entry.word)).toEqual(['alpha']);
   });
 
   it('should preserve colliding pending log ids when reviews are merged', () => {
