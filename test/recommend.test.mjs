@@ -73,6 +73,7 @@ describe('reading recommendations', () => {
       onProgress: (done, total) => progress.push([done, total]),
     });
     await recommender.reload();
+    expect(['good', 'easy', 'hard'].map((band) => recommender.bandLabel(band))).toEqual(['适合', '偏易', '偏难']);
     const result = await recommender.recommend();
     expect(result.skipped['not-english']).toBe(1);
     expect(progress.at(-1)).toEqual([4, 4]);
@@ -80,7 +81,7 @@ describe('reading recommendations', () => {
     expect(result.items[0].topWords).toEqual(['rarefive', 'rarefour', 'rareone', 'raresix', 'rarethree']);
     const suggestions = learningSuggestionsFromRecommendations(result.items, 'zh');
     expect(suggestions).toHaveLength(3);
-    expect(suggestions[0]).toMatchObject({ id: 'reading:wiki/good.md', documentPath: 'wiki/good.md' });
+    expect(suggestions[0]).toMatchObject({ id: expect.stringMatching(/^reading:[a-f0-9]+$/u), documentPath: 'wiki/good.md' });
     expect(suggestions[1].detail).toContain('偏易');
   });
 
@@ -201,6 +202,20 @@ describe('reading recommendations', () => {
     const result = await recommender.recommend();
     expect(result.items[0].bandLabel).toBeUndefined();
     expect(learningSuggestionsFromRecommendations(result.items, 'en')[0].detail).toMatch(/Good|%/u);
+  });
+
+  it('should generate stable unique suggestion ids within the host length limit for long paths', () => {
+    const prefix = `wiki/${'long/'.repeat(45)}`;
+    const items = [
+      { path: `${prefix}alpha.md`, title: 'Alpha', band: 'hard', rate: 9 },
+      { path: `${prefix}beta.md`, title: 'Beta', band: 'easy', rate: 1 },
+    ];
+    const first = learningSuggestionsFromRecommendations(items, 'en');
+    const second = learningSuggestionsFromRecommendations(items, 'en');
+    expect(first.map((item) => item.id)).toEqual(second.map((item) => item.id));
+    expect(new Set(first.map((item) => item.id)).size).toBe(2);
+    expect(first.every((item) => item.id.length <= 200)).toBe(true);
+    expect(first.map((item) => item.documentPath)).toEqual(items.map((item) => item.path));
   });
 
   it('should discard recommendation results when the workspace epoch changes during async work', async () => {

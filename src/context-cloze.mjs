@@ -4,6 +4,32 @@ const TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*
 const SOURCE_MARKDOWN_RE = /^(?<sentence>.+?)\s+—\s+\[(?<title>(?:\\.|[^\]])+)\]\((?<path>[^)]+)\)\s*$/u;
 const SOURCE_URL_RE = /^(?<sentence>.+?)\s+—\s+<(?<url>https?:\/\/[^>]+)>\s*$/u;
 const DEFAULT_MAX_LENGTH = 300;
+const NO_SOURCE_MARKER = '<!-- ev:no-source -->';
+const ESCAPED_NO_SOURCE_MARKER = '&lt;!-- ev:no-source --&gt;';
+
+export function escapeExampleText(value) {
+  return String(value ?? '')
+    .replaceAll(ESCAPED_NO_SOURCE_MARKER, `${ESCAPED_NO_SOURCE_MARKER}${ESCAPED_NO_SOURCE_MARKER}`)
+    .replaceAll(NO_SOURCE_MARKER, ESCAPED_NO_SOURCE_MARKER);
+}
+
+function unescapeExampleText(value) {
+  const input = String(value ?? '');
+  let output = '';
+  for (let index = 0; index < input.length;) {
+    if (input.startsWith(`${ESCAPED_NO_SOURCE_MARKER}${ESCAPED_NO_SOURCE_MARKER}`, index)) {
+      output += ESCAPED_NO_SOURCE_MARKER;
+      index += ESCAPED_NO_SOURCE_MARKER.length * 2;
+    } else if (input.startsWith(ESCAPED_NO_SOURCE_MARKER, index)) {
+      output += NO_SOURCE_MARKER;
+      index += ESCAPED_NO_SOURCE_MARKER.length;
+    } else {
+      output += input[index];
+      index += 1;
+    }
+  }
+  return output;
+}
 
 function stripBullet(text) {
   return String(text ?? '').trim().replace(/^-\s+/, '');
@@ -20,14 +46,14 @@ function decodeSourcePath(path) {
 export function parseExampleLine(text) {
   const line = stripBullet(text);
   const noSource = line.match(/^(?<sentence>[\s\S]*?)\s+<!-- ev:no-source -->\s*$/u);
-  if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
+  if (noSource?.groups) return { sentence: unescapeExampleText(noSource.groups.sentence), source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
     const rawTarget = markdown.groups.path.trim();
     const web = /^https?:\/\//u.test(rawTarget);
     const target = web ? rawTarget : decodeSourcePath(rawTarget);
     return {
-      sentence: markdown.groups.sentence.trim(),
+      sentence: unescapeExampleText(markdown.groups.sentence.trim()),
       source: web
         ? { title: unescapeTitle(markdown.groups.title), url: target }
         : { title: unescapeTitle(markdown.groups.title), path: target },
@@ -36,11 +62,11 @@ export function parseExampleLine(text) {
   const url = line.match(SOURCE_URL_RE);
   if (url?.groups) {
     return {
-      sentence: url.groups.sentence.trim(),
+      sentence: unescapeExampleText(url.groups.sentence.trim()),
       source: { url: url.groups.url.trim() },
     };
   }
-  return { sentence: line, source: null };
+  return { sentence: unescapeExampleText(line), source: null };
 }
 
 function normalizePath(parts) {
@@ -83,8 +109,16 @@ function tokenMatches(sentence, surfaces) {
   const hits = [];
   for (const match of sentence.matchAll(TOKEN_RE)) {
     const surface = match[0];
-    if (!surfaces.has(surface.toLowerCase().replaceAll('’', "'")) && !surfaces.has(surface.toLowerCase())) continue;
-    hits.push({ start: match.index, end: match.index + surface.length, surface });
+    const normalized = surface.toLowerCase().replaceAll('’', "'");
+    if (surfaces.has(normalized) || surfaces.has(surface.toLowerCase())) {
+      hits.push({ start: match.index, end: match.index + surface.length, surface });
+      continue;
+    }
+    const possessive = /^(?<stem>.+)['’]s$/u.exec(surface);
+    if (!possessive?.groups) continue;
+    const stem = possessive.groups.stem;
+    if (!surfaces.has(stem.toLowerCase().replaceAll('’', "'"))) continue;
+    hits.push({ start: match.index, end: match.index + stem.length, surface: stem });
   }
   return hits;
 }

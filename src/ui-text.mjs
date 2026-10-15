@@ -88,6 +88,7 @@ const TEXT = {
     retry: 'Retry',
     collectWord: 'Add word',
     collectedWord: 'Already in vocabulary',
+    duplicateWord: 'Duplicate vocabulary notes exist. Resolve them before adding this word.',
     dictionaryAdded: 'Added to vocabulary.',
     dictionaryCancelled: 'Cancelled.',
     dictionaryNotReviewed: (reason) => `Not reviewed${reason ? `: ${reason}` : ''}`,
@@ -110,6 +111,7 @@ const TEXT = {
     proposalAborted: (number, words) => `Vocabulary proposal #${number} was aborted: ${words}`,
     proposalFailed: (number) => `Vocabulary proposal #${number} could not be submitted.`,
     knowledgeWriteAborted: 'The knowledge base changed, so the operation was aborted.',
+    corruptBackupFailed: 'Damaged data could not be backed up. Saving is disabled to protect the original file; browsing remains available.',
     proposalDescription: (number, words) => `English Vocab #${number}: ${words}`,
     request: {
       short: (value) => `Add "${value}" to my English vocabulary.`, long: 'Choose useful English vocabulary from the selection below.',
@@ -206,6 +208,7 @@ const TEXT = {
     retry: '重试',
     collectWord: '收词',
     collectedWord: '已在生词本',
+    duplicateWord: '存在重复笔记，请先处理冲突再收录这个词。',
     dictionaryAdded: '已收进生词本',
     dictionaryCancelled: '已取消',
     dictionaryNotReviewed: (reason) => `未审阅${reason ? `：${reason}` : ''}`,
@@ -228,6 +231,7 @@ const TEXT = {
     proposalAborted: (number, words) => `生词提案 #${number} 已中止：${words}`,
     proposalFailed: (number) => `生词提案 #${number} 提交失败。`,
     knowledgeWriteAborted: '知识库已切换，操作已中止。',
+    corruptBackupFailed: '损坏数据无法备份。为保护原文件，保存已进入只读模式；仍可继续浏览。',
     proposalDescription: (number, words) => `英语生词本 #${number}：${words}`,
     request: {
       short: (value) => `请把 "${value}" 收为英语生词。`, long: '请从下面选区里挑出值得收录的英语生词。',
@@ -324,6 +328,7 @@ const TEXT = {
     retry: '再試行',
     collectWord: '単語に追加',
     collectedWord: '単語帳に登録済み',
+    duplicateWord: '重複する単語ノートがあります。競合を解消してから追加してください。',
     dictionaryAdded: '単語帳に追加しました。',
     dictionaryCancelled: 'キャンセルしました。',
     dictionaryNotReviewed: (reason) => `未レビュー${reason ? `：${reason}` : ''}`,
@@ -346,6 +351,7 @@ const TEXT = {
     proposalAborted: (number, words) => `単語提案 #${number} は中止されました：${words}`,
     proposalFailed: (number) => `単語提案 #${number} を送信できませんでした。`,
     knowledgeWriteAborted: 'ナレッジベースが切り替わったため、操作を中止しました。',
+    corruptBackupFailed: '破損データをバックアップできませんでした。元ファイルを保護するため保存は読み取り専用です。閲覧は続けられます。',
     proposalDescription: (number, words) => `英単語帳 #${number}：${words}`,
     request: {
       short: (value) => `「${value}」を英単語帳に追加してください。`, long: '次の選択範囲から学ぶ価値のある英単語を選んでください。',
@@ -442,6 +448,7 @@ const TEXT = {
     retry: '다시 시도',
     collectWord: '단어 추가',
     collectedWord: '이미 단어장에 있음',
+    duplicateWord: '중복 단어 노트가 있습니다. 충돌을 해결한 뒤 이 단어를 추가하세요.',
     dictionaryAdded: '단어장에 추가했습니다.',
     dictionaryCancelled: '취소되었습니다.',
     dictionaryNotReviewed: (reason) => `검토되지 않음${reason ? `: ${reason}` : ''}`,
@@ -464,6 +471,7 @@ const TEXT = {
     proposalAborted: (number, words) => `단어 제안 #${number}이 중단되었습니다: ${words}`,
     proposalFailed: (number) => `단어 제안 #${number}을 제출할 수 없습니다.`,
     knowledgeWriteAborted: '지식베이스가 전환되어 작업을 중단했습니다.',
+    corruptBackupFailed: '손상된 데이터를 백업할 수 없습니다. 원본 보호를 위해 저장은 읽기 전용이며 탐색은 계속할 수 있습니다.',
     proposalDescription: (number, words) => `영어 단어장 #${number}: ${words}`,
     request: {
       short: (value) => `"${value}"를 영어 단어장에 추가해 주세요.`, long: '아래 선택 영역에서 학습할 만한 영어 단어를 골라 주세요.',

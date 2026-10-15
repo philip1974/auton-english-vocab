@@ -296,7 +296,9 @@ export function renderPanel(container, controls) {
       }, 'ev-dict-lemma-link'));
       resultBox.append(renderDictionaryDefinition(result.entry, locale));
       const collected = state.entries.some((entry) => entry.word === result.lemma);
+      const ambiguous = state.invalid?.some((item) => item.kind === 'duplicate' && normalizeWord(item.word) === normalizeWord(result.lemma));
       if (collected) resultBox.append(el('p', 'ev-note', t.collectedWord));
+      else if (ambiguous) resultBox.append(el('p', 'ev-note', t.duplicateWord));
       else {
         const collect = button(t.collectWord, async () => {
           if (dictionaryCollecting) return;
@@ -503,6 +505,7 @@ export function renderPanel(container, controls) {
     if (state.recommendationLoading) body.append(el('p', 'ev-note', t.recommendationProgress(state.recommendationLoading.done, state.recommendationLoading.total)));
     const result = state.recommendations;
     const skipped = result?.skipped ?? {};
+    const hasSkipped = Object.values(skipped).some((count) => count > 0);
     const appendSkipped = () => {
       const details = el('details', 'ev-skipped');
       details.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0, skipped.unreadable ?? 0)));
@@ -510,7 +513,7 @@ export function renderPanel(container, controls) {
     };
     if (!result?.items?.length) {
       body.append(el('p', 'ev-empty', t.noRecommendations));
-      if (result && Object.values(skipped).some((count) => count > 0)) appendSkipped();
+      if (result && hasSkipped) appendSkipped();
       return;
     }
     const list = el('div', 'ev-list');
@@ -526,7 +529,7 @@ export function renderPanel(container, controls) {
       list.append(row);
     }
     body.append(list);
-    appendSkipped();
+    if (hasSkipped) appendSkipped();
   };
 
   const rerender = () => {

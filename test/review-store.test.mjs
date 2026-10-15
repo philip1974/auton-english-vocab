@@ -151,13 +151,48 @@ describe('review store', () => {
     await store.load();
     store.review.pendingLogs = [{ id: 'same', word: 'new', rating: 'Good' }];
     expect(store.effectiveLog().map((entry) => entry.id)).toEqual(['same', 'same~recovered-1']);
-    await expect(store.flushPendingLogs()).resolves.toHaveLength(2);
+    const flushed = await store.flushPendingLogs();
+    expect(flushed).toHaveLength(2);
+    expect(flushed.idMap.get('same')).toBe('same~recovered-1');
     await expect(store.flushPendingLogs()).resolves.toHaveLength(2);
     expect(normalizeReview({ version: 1, cards: {}, flags: {}, pendingLogs: [null, { word: 'missing-id' }, { id: 'valid', word: 'run', rating: 'Good' }] }).pendingLogs).toEqual([{ id: 'valid', word: 'run', rating: 'Good' }]);
     expect(mergeReview(
       { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', word: 'alpha', rating: 'Good' }] },
       { version: 1, cards: {}, flags: {}, pendingLogs: [{ id: 'first', word: 'beta', rating: 'Again' }, { id: 'second', word: 'gamma', rating: 'Hard' }] },
     ).pendingLogs.map((entry) => entry.id)).toEqual(['first', 'first~recovered-1', 'second']);
+  });
+
+  it('should keep safe read-only projections when corrupt backups cannot be written', async () => {
+    const app = appWithStorage({
+      'review.json': '{broken',
+      'log.json': '{broken',
+    });
+    const originalWrite = app.storage.write;
+    app.storage.write = async (root, name, text, options) => {
+      if (name.includes('.corrupt-')) throw Object.assign(new Error('disk full'), { code: 'STORAGE_WRITE_FAILED' });
+      return originalWrite(root, name, text, options);
+    };
+    const notices = [];
+    const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
+    await expect(store.load()).resolves.toEqual({ version: 1, cards: {}, flags: {} });
+    expect(app.files['review.json']).toBe('{broken');
+    expect(app.files['log.json']).toBe('{broken');
+    await expect(store.mutateReview({ type: 'setFlag', word: 'run', flag: 'ignored' })).rejects.toMatchObject({ code: 'REVIEW_READ_ONLY' });
+    await expect(store.appendLog({ id: 'one', word: 'run', rating: 'Good' })).rejects.toMatchObject({ code: 'LOG_READ_ONLY' });
+    expect(notices.some((message) => message.includes('只读'))).toBe(true);
+  });
+
+  it('should ignore corrupt backup cleanup failures after preserving the current source', async () => {
+    const app = appWithStorage({
+      'review.json': '{broken',
+      'review.corrupt-20260101000000000-old.json': 'old-1',
+      'review.corrupt-20260102000000000-old.json': 'old-2',
+      'review.corrupt-20260103000000000-old.json': 'old-3',
+    });
+    app.storage.remove = async () => { throw Object.assign(new Error('busy'), { code: 'STORAGE_WRITE_FAILED' }); };
+    const store = new ReviewStore(app);
+    await expect(store.load()).resolves.toEqual({ version: 1, cards: {}, flags: {} });
+    expect(Object.keys(app.files).some((name) => /^review\.corrupt-\d+-[a-z0-9]+\.json$/u.test(name))).toBe(true);
   });
 
   it('should merge review flags when merging reviews directly', () => {

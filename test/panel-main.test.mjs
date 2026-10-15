@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendSelectionRequest, renderPanel } from '../src/panel.mjs';
 import { buildNote } from '../src/note-format.mjs';
-import { newSerializedCard } from '../src/scheduler.mjs';
+import { activeReviewLog, newSerializedCard } from '../src/scheduler.mjs';
 
 class FakePlugin {
   constructor(app, manifest) {
@@ -583,6 +583,20 @@ describe('panel', () => {
     expect(saved.at(-1)).toMatchObject({ vocabularySize: 5000 });
   });
 
+  it('should hide the skipped summary for nonempty recommendations when every count is zero', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }) } },
+      entries: [], review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendations: { items: [{ title: 'Readable', path: 'wiki/read.md', band: 'good', rate: 3, topWords: [] }], skipped: { 'not-english': 0, 'too-short': 0, unreadable: 0 } },
+      canOpenReadingDocument: () => true, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    expect(container.textContent).toContain('Readable');
+    expect(container.textContent).not.toContain('已跳过');
+  });
+
   it('should show recommendation progress, empty state and validation notice when settings are invalid', () => {
     const container = document.createElement('div');
     const notices = [];
@@ -634,7 +648,7 @@ describe('panel', () => {
     const title = [...container.querySelectorAll('button')].find((node) => node.textContent === 'No Open');
     expect(title.disabled).toBe(true);
     expect(container.textContent).toContain('生词: -');
-    expect(container.textContent).toContain('已跳过：中文为主 0 / 太短 0');
+    expect(container.textContent).not.toContain('已跳过');
   });
 
   it('should persist notebook flag actions and filter by familiarity', async () => {
@@ -762,6 +776,25 @@ describe('panel', () => {
     expect(container.textContent).toContain('adj. 短暂的');
     [...container.querySelectorAll('button')].find((node) => node.textContent === '收词').click();
     expect(collected).toEqual(['ephemeral']);
+  });
+
+  it('should show a duplicate-note warning instead of collection for an ambiguous dictionary word', async () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [],
+      invalid: [{ kind: 'duplicate', word: 'alpha', path: 'wiki/vocab/alpha-a.md' }],
+      review: { version: 1, cards: {}, flags: {} },
+      lookupDictionary: async () => ({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母' } }),
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'alpha';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    expect(container.textContent).toContain('存在重复笔记');
+    expect([...container.querySelectorAll('button')].some((node) => node.textContent === '收词')).toBe(false);
   });
 
   it('should render the latest pending dictionary result into the current dom after a state rerender', async () => {
@@ -1415,7 +1448,7 @@ describe('main plugin', () => {
     expect(app.commands[0].id).toBe('start-review');
     expect(app.selectionActions.items[0].surfaces).toEqual(['reading', 'web']);
     expect([...app.tools.keys()]).toEqual(['vocab_lookup', 'vocab_add']);
-    expect(app.events.map((event) => event.name)).toEqual(['knowledge.index-changed', 'knowledge.root-changed', 'appearance.locale-changed']);
+    expect(app.events.map((event) => event.name)).toEqual(['appearance.locale-changed', 'knowledge.index-changed', 'knowledge.root-changed']);
     const rendered = document.createElement('div');
     app.panels[0].render(rendered);
     expect(rendered.textContent).toContain('今日复习');
@@ -1788,6 +1821,42 @@ describe('main plugin', () => {
     expect(plugin.locale).toBe('en');
   });
 
+  it('should capture locale changes that arrive while preferences are loading', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let releasePreferences;
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = () => new Promise((resolve) => { releasePreferences = () => resolve({}); });
+    const loading = plugin.onload();
+    await vi.waitFor(() => expect(app.events.some((event) => event.name === 'appearance.locale-changed')).toBe(true));
+    document.documentElement.lang = 'en';
+    await app.events.find((event) => event.name === 'appearance.locale-changed').listener({ locale: 'en' });
+    releasePreferences();
+    await loading;
+    expect(plugin.locale).toBe('en');
+    expect(app.commands.at(-1).title).toContain('start review');
+    const rendered = document.createElement('div');
+    app.panels.at(-1).render(rendered);
+    expect(rendered.textContent).toContain('Today');
+  });
+
+  it('should resync the current locale after loading when the startup event was missed', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let releasePreferences;
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.loadData = () => new Promise((resolve) => { releasePreferences = () => resolve({}); });
+    const loading = plugin.onload();
+    await vi.waitFor(() => expect(releasePreferences).toBeTypeOf('function'));
+    document.documentElement.lang = 'en';
+    releasePreferences();
+    await loading;
+    expect(plugin.locale).toBe('en');
+    expect(app.commands.at(-1).title).toContain('start review');
+  });
+
   it('should fall back to complete default level settings when persisted settings are partial or invalid', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -1893,6 +1962,45 @@ describe('main plugin', () => {
     expect(proposals[0].changes[0].newContent).toContain('[Read](wiki/read.md)');
     expect(await plugin.collectDictionaryWord({ surface: 'alpha', lemma: 'alpha', entry: { t: 'n. 字母', d: 'letter' } })).toMatchObject({ outcome: 'aborted' });
     expect(proposals).toHaveLength(1);
+  });
+
+  it('should abort dictionary collection when the real vocabulary index contains duplicate notes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.knowledge.listDocuments = async () => [
+      { path: 'wiki/vocab/alpha-a.md', title: 'Alpha A', revision: { contentHash: 'a' } },
+      { path: 'wiki/vocab/alpha-b.md', title: 'Alpha B', revision: { contentHash: 'b' } },
+    ];
+    app.knowledge.readDocument = async ({ path }) => ({
+      meta: { path, title: path, revision: { contentHash: path } },
+      content: buildNote({ word: 'alpha', definition: path }),
+    });
+    app.knowledge.propose = vi.fn();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(plugin.index.isAmbiguous('alpha')).toBe(true);
+    await expect(plugin.collectDictionaryWord({ lemma: 'alpha', entry: { t: 'n. 字母' } })).resolves.toMatchObject({ outcome: 'aborted' });
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
+  });
+
+  it('should undo the recovered persisted log id after a later normal undo', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    await app.storage.write('root', 'log.json', JSON.stringify([
+      { id: 'same', word: 'alpha', rating: 'Good', previousState: 'New', reviewedAt: '2026-10-14T00:00:00.000Z' },
+    ]), { expectedRevision: null });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.nextLogId = () => 'same';
+    const rated = await plugin.rateWord('alpha', 'Good', 'reading-card');
+    expect(rated.undoId).toBe('same~recovered-1');
+    expect(plugin.readingUndoSnapshots.get('alpha').logId).toBe('same~recovered-1');
+    await expect(plugin.undoReadingRating('alpha')).resolves.toBe(true);
+    const persisted = JSON.parse((await app.storage.read('root', 'log.json')).text);
+    expect(persisted.at(-1).undoOf).toBe('same~recovered-1');
+    expect(activeReviewLog(persisted).map((entry) => entry.id)).toEqual(['same']);
   });
 
   it('should write a web url source when collecting a dictionary word from web lookup', async () => {
@@ -2334,7 +2442,20 @@ describe('main plugin', () => {
     expect(statusSets.at(-1)[2]).toMatchObject({ text: '生词 5%·适合学习', action: { kind: 'open-panel', panelId: 'english-vocab' } });
     await plugin.refreshRecommendations();
     expect(suggestionSets.at(-1)[0]).toBe('epoch-1');
-    expect(suggestionSets.at(-1)[1][0]).toMatchObject({ id: 'reading:wiki/read.md', documentPath: 'wiki/read.md' });
+    expect(suggestionSets.at(-1)[1][0]).toMatchObject({ id: expect.stringMatching(/^reading:[a-f0-9]+$/u), documentPath: 'wiki/read.md' });
+  });
+
+  it('should report when the host rejects a learning suggestion batch', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    app.learningSuggestions = { register: () => ({ set: vi.fn(() => false), dispose() {} }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.recommend = async () => ({ stale: false, items: [{ title: 'Read', path: 'wiki/read.md', band: 'good', rate: 3 }], skipped: {} });
+    await plugin.refreshRecommendations();
+    expect(app.notices.some((item) => item.message.includes('推荐阅读刷新失败'))).toBe(true);
   });
 
   it('should calculate initial recommendations and learning suggestions during onload after the index refresh has completed', async () => {
@@ -2351,7 +2472,7 @@ describe('main plugin', () => {
     expect(plugin.state.recommendations.items[0]).toMatchObject({ path: 'wiki/read.md', title: 'Read' });
     expect(suggestionSets).toHaveLength(1);
     expect(suggestionSets[0][0]).toBe('epoch-1');
-    expect(suggestionSets[0][1][0]).toMatchObject({ id: 'reading:wiki/read.md', documentPath: 'wiki/read.md' });
+    expect(suggestionSets[0][1][0]).toMatchObject({ id: expect.stringMatching(/^reading:[a-f0-9]+$/u), documentPath: 'wiki/read.md' });
   });
 
   it('should recalculate recommendations and learning suggestions after knowledge root changes', async () => {
@@ -2423,9 +2544,10 @@ describe('main plugin', () => {
     plugin.rootGeneration = 0;
     plugin.reviewStore = { rootGeneration: 'root' };
     plugin.indexBinding = { generation: 0, epoch: 'epoch-1', storageRootGeneration: 'root' };
-    plugin.initializeReadingLevel();
+    plugin.indexProjectionReady = true;
+    await plugin.initializeReadingLevel();
     plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await plugin.refreshLatestReadingStatus();
     expect(statusSets.length).toBeGreaterThan(0);
   });
 
@@ -2508,6 +2630,51 @@ describe('main plugin', () => {
     await switching;
     expect(score).toHaveBeenCalled();
     expect(statusSet).toHaveBeenCalled();
+  });
+
+  it('should retry a dirty reading status after an index refresh that was still in progress', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const statusSet = vi.fn(() => true);
+    app.readingStatus = { register: () => ({ set: statusSet, dispose() {} }) };
+    app.knowledge.readDocument = async () => ({ content: `${'the '.repeat(80)}rarewordx`, meta: { title: 'Read' }, revision: { contentHash: 'h' } });
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.table = ['the', ...Array.from({ length: 1000 }, (_, index) => `filler${index}`), 'rarewordx'];
+    statusSet.mockClear();
+    let releaseIndex;
+    plugin.index.refresh = () => new Promise((resolve) => { releaseIndex = () => resolve({ entries: plugin.state.entries, invalid: [] }); });
+    const refreshing = plugin.refreshIndex();
+    await vi.waitFor(() => expect(releaseIndex).toBeTypeOf('function'));
+    await expect(plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'h' })).resolves.toBe(false);
+    expect(statusSet).not.toHaveBeenCalled();
+    releaseIndex();
+    await refreshing;
+    expect(statusSet).toHaveBeenCalledOnce();
+  });
+
+  it('should let only the newest concurrent reading status request update the host', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const statusSet = vi.fn(() => true);
+    app.readingStatus = { register: () => ({ set: statusSet, dispose() {} }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    statusSet.mockClear();
+    const resolvers = new Map();
+    app.knowledge.readDocument = ({ path }) => new Promise((resolve) => resolvers.set(path, resolve));
+    const older = plugin.updateReadingStatus({ path: 'wiki/old.md', contentHash: 'old' });
+    const newer = plugin.updateReadingStatus({ path: 'wiki/new.md', contentHash: 'new' });
+    resolvers.get('wiki/new.md')({ content: 'the '.repeat(80), meta: { title: 'New' }, revision: { contentHash: 'new' } });
+    await newer;
+    resolvers.get('wiki/old.md')({ content: 'the '.repeat(80), meta: { title: 'Old' }, revision: { contentHash: 'old' } });
+    await older;
+    expect(statusSet).toHaveBeenCalledOnce();
+    expect(statusSet.mock.calls[0][1]).toBe('wiki/new.md');
   });
 
   it('should keep a saved rating successful when reading level refresh fails', async () => {

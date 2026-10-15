@@ -5,6 +5,11 @@ const DENYLIST = new Set([
   'his', 'hers', 'ours', 'news', 'series', 'species', 'basis', 'analysis',
 ]);
 
+// These high-frequency surfaces have common standalone meanings in the bundled
+// dictionary. Without a reliable local POS tag, treating them as inflections
+// creates more false positives than useful matches.
+export const AMBIGUOUS_INFLECTION_SURFACES = new Set(['does', 'left', 'saw']);
+
 const IRREGULAR_VERBS = new Map(Object.entries({
   abide: ['abode', 'abode'],
   alight: ['alit', 'alit'],
@@ -409,6 +414,7 @@ export function buildSurfaceMap(words, { permissive = false } = {}) {
     for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
+      if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }

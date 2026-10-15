@@ -18,7 +18,7 @@ function isValidLogEntry(entry, requireId = false) {
   return ['Again', 'Hard', 'Good', 'Easy'].includes(entry.rating);
 }
 
-function uniqueLogEntries(values, onCollision = () => undefined) {
+function uniqueLogEntries(values, onCollision = () => undefined, onAssigned = () => undefined) {
   const entries = [];
   const byId = new Map();
   const ratingIds = new Map();
@@ -41,7 +41,10 @@ function uniqueLogEntries(values, onCollision = () => undefined) {
     if (!existing) {
       byId.set(originalId, next);
     } else {
-      if (sameLogEntry(existing, next)) continue;
+      if (sameLogEntry(existing, next)) {
+        onAssigned(value, existing.id);
+        continue;
+      }
       onCollision(originalId);
       let suffix = 1;
       let id = `${originalId}~recovered-${suffix}`;
@@ -53,6 +56,7 @@ function uniqueLogEntries(values, onCollision = () => undefined) {
       byId.set(id, next);
     }
     entries.push(next);
+    onAssigned(value, next.id);
     if (!next.undoOf && !next.undo && next.rating) {
       const candidates = ratingIds.get(originalId) ?? [];
       candidates.push({ id: next.id, word: next.word });
@@ -84,6 +88,8 @@ export class ReviewStore {
     this.review = EMPTY();
     this.log = [];
     this.reviewWritable = true;
+    this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
+    this.logWritable = true;
     this.generation = 0;
   }
 
@@ -113,6 +119,8 @@ export class ReviewStore {
     this.review = EMPTY();
     this.log = [];
     this.reviewWritable = true;
+    this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
+    this.logWritable = true;
     return this.load();
   }
 
@@ -137,19 +145,20 @@ export class ReviewStore {
         onLogIdCollision: () => { logIdCollisions += 1; },
       });
       if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
-        await this.#backupCorrupt('review', result.text, rootGeneration, generation);
+        await this.#preserveCorrupt('review', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
       }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
-      await this.#backupCorrupt('review', result.text, rootGeneration, generation);
+      await this.#preserveCorrupt('review', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
       if (this.#stale(generation, rootGeneration)) return;
       if (codeOf(error) === 'UNSUPPORTED_REVIEW_VERSION') {
         this.notify(this.t.unsupportedReviewVersion);
         this.reviewWritable = false;
+        this.reviewWriteErrorCode = 'UNSUPPORTED_REVIEW_VERSION';
       } else {
         this.notify(this.t.corruptReview);
       }
@@ -181,13 +190,13 @@ export class ReviewStore {
       });
       this.log = uniqueLogEntries(valid, () => { collisions += 1; }).slice(-2000);
       if (collisions > 0 || invalidItems > 0) {
-        await this.#backupCorrupt('log', result.text, rootGeneration, generation);
+        await this.#preserveCorrupt('log', result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
         if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
         if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
     } catch {
-      await this.#backupCorrupt('log', result.text, rootGeneration, generation);
+      await this.#preserveCorrupt('log', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
       if (this.#stale(generation, rootGeneration)) return;
       this.notify(this.t.corruptLog);
@@ -213,16 +222,38 @@ export class ReviewStore {
     }
     /* v8 ignore next -- repeated backup boundary for the same generation contract. */
     if (this.#stale(generation, rootGeneration)) return;
-    const listed = await this.app.storage.list(rootGeneration);
-    /* v8 ignore next -- repeated backup boundary for the same generation contract. */
-    if (this.#stale(generation, rootGeneration)) return;
-    const backups = listed
-      .filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, 'iu').test(item.name))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const item of backups.slice(0, -3)) {
-      await this.app.storage.remove(rootGeneration, item.name);
-      /* v8 ignore next -- repeated backup cleanup boundary for the same generation contract. */
-      if (this.#stale(generation, rootGeneration)) return;
+    try {
+      const listed = await this.app.storage.list(rootGeneration);
+      /* v8 ignore next -- repeated backup boundary for the same generation contract. */
+      if (this.#stale(generation, rootGeneration)) return true;
+      const backups = listed
+        .filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, 'iu').test(item.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const item of backups.slice(0, -3)) {
+        try { await this.app.storage.remove(rootGeneration, item.name); } catch (error) {
+          if (codeOf(error) === 'ROOT_CHANGED') throw error;
+        }
+        /* v8 ignore next -- repeated backup cleanup boundary for the same generation contract. */
+        if (this.#stale(generation, rootGeneration)) return true;
+      }
+    } catch (error) {
+      if (codeOf(error) === 'ROOT_CHANGED') throw error;
+    }
+    return true;
+  }
+
+  async #preserveCorrupt(kind, text, rootGeneration, generation) {
+    try {
+      return await this.#backupCorrupt(kind, text, rootGeneration, generation);
+    } catch (error) {
+      if (codeOf(error) === 'ROOT_CHANGED') throw error;
+      if (kind === 'review') {
+        this.reviewWritable = false;
+        this.reviewWriteErrorCode = 'REVIEW_READ_ONLY';
+      }
+      else this.logWritable = false;
+      this.notify(this.t.corruptBackupFailed);
+      return false;
     }
   }
 
@@ -293,10 +324,16 @@ export class ReviewStore {
   }
 
   async appendLogs(entries) {
+    this.#assertLogWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const next = uniqueLogEntries([...this.log, ...entries]).slice(-2000);
+      const pending = new Set(entries);
+      const idMap = new Map();
+      const next = uniqueLogEntries([...this.log, ...entries], () => undefined, (entry, id) => {
+        if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
+      }).slice(-2000);
+      Object.defineProperty(next, 'idMap', { value: idMap, enumerable: false });
       try {
         const written = await this.app.storage.write(rootGeneration, 'log.json', JSON.stringify(next), {
           expectedRevision: this.logRevision,
@@ -332,7 +369,12 @@ export class ReviewStore {
 
   #assertReviewWritable() {
     if (this.reviewWritable) return;
-    throw Object.assign(new Error('unsupported review version'), { code: 'UNSUPPORTED_REVIEW_VERSION' });
+    throw Object.assign(new Error('review storage is read-only'), { code: this.reviewWriteErrorCode });
+  }
+
+  #assertLogWritable() {
+    if (this.logWritable) return;
+    throw Object.assign(new Error('log storage is read-only'), { code: 'LOG_READ_ONLY' });
   }
 
   #stale(generation, rootGeneration) {

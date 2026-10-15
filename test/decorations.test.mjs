@@ -35,6 +35,12 @@ describe('reading decorations', () => {
     expect(bySurface.has('missing')).toBe(false);
   });
 
+  it('should omit ambiguous inflection surfaces from reading decoration terms', () => {
+    const terms = buildReadingTerms({ entries: [entry('do'), entry('leave'), entry('see')], review: review() });
+    const surfaces = new Set(terms.map((item) => item.surface));
+    for (const ambiguous of ['does', 'left', 'saw']) expect(surfaces.has(ambiguous)).toBe(false);
+  });
+
   it('should publish prototype-shaped collected words without inherited review state', () => {
     const terms = buildReadingTerms({ entries: [entry('constructor', { pos: 'noun' }), entry('toString', { pos: 'noun' }), entry('hasOwnProperty', { pos: 'noun' })], review: JSON.parse('{"version":1,"cards":{},"flags":{}}') });
     expect(terms.map((item) => item.surface)).toEqual(expect.arrayContaining(['constructor', 'constructors', 'tostring', 'hasownproperty']));
@@ -71,6 +77,19 @@ describe('reading decorations', () => {
     await Promise.resolve();
     expect(container.textContent).toContain("don't definition");
     expect(container.querySelectorAll('[data-rating]')).toHaveLength(2);
+  });
+
+  it('should show duplicate-note state without a collect action in a dictionary reading card', async () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [], invalid: [{ kind: 'duplicate', word: 'alpha' }], review: review() }),
+      lookupDictionary: async () => ({ surface: 'alpha', lemma: 'alpha', entry: { t: '字母' } }),
+      onCollectWord: vi.fn(),
+    }).renderCard(container, { word: 'alpha', key: 'alpha', tone: null });
+    await Promise.resolve();
+    expect(container.textContent).toContain('存在重复笔记');
+    expect(container.querySelector('[data-role="collect-dictionary-word"]')).toBeNull();
   });
 
   it('should pass entry pos through when building comparative reading terms', () => {

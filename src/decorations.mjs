@@ -255,8 +255,13 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
             } });
             const state = current();
             const collected = entryMap(state.entries).has(normalizeWord(result.lemma));
+            const ambiguous = state.invalid?.some((item) => item.kind === 'duplicate' && normalizeWord(item.word) === normalizeWord(result.lemma));
             if (collected) {
               body.append(el('p', 'ev-reading-note', t.collectedWord));
+              return;
+            }
+            if (ambiguous) {
+              body.append(el('p', 'ev-reading-note', t.duplicateWord));
               return;
             }
             const status = el('p', 'ev-reading-note');

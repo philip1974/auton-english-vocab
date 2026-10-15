@@ -36,14 +36,33 @@ function localizedBand(t, band) {
   return t.bandHard;
 }
 
+function stablePathHash(path) {
+  const hash = (seed) => {
+    let value = seed >>> 0;
+    for (const character of String(path)) {
+      value ^= character.codePointAt(0);
+      value = Math.imul(value, 16777619);
+    }
+    return (value >>> 0).toString(16).padStart(8, '0');
+  };
+  return `${hash(2166136261)}${hash(3339675911)}`;
+}
+
 export function learningSuggestionsFromRecommendations(items, locale = 'en') {
   const t = uiText(locale);
-  return items.slice(0, 3).map((item) => ({
-    id: `reading:${item.path}`,
-    title: item.title.slice(0, 120),
-    detail: item.band === 'good' ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
-    documentPath: item.path,
-  }));
+  const ids = new Set();
+  return items.slice(0, 3).map((item) => {
+    const base = `reading:${stablePathHash(item.path)}`;
+    let id = base;
+    for (let suffix = 2; ids.has(id); suffix += 1) id = `${base}-${suffix}`;
+    ids.add(id);
+    return {
+      id,
+      title: item.title.slice(0, 120),
+      detail: item.band === 'good' ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
+      documentPath: item.path,
+    };
+  });
 }
 
 export class ReadingRecommender {

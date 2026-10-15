@@ -93,6 +93,7 @@ var TEXT = {
     retry: "Retry",
     collectWord: "Add word",
     collectedWord: "Already in vocabulary",
+    duplicateWord: "Duplicate vocabulary notes exist. Resolve them before adding this word.",
     dictionaryAdded: "Added to vocabulary.",
     dictionaryCancelled: "Cancelled.",
     dictionaryNotReviewed: (reason) => `Not reviewed${reason ? `: ${reason}` : ""}`,
@@ -115,6 +116,7 @@ var TEXT = {
     proposalAborted: (number, words) => `Vocabulary proposal #${number} was aborted: ${words}`,
     proposalFailed: (number) => `Vocabulary proposal #${number} could not be submitted.`,
     knowledgeWriteAborted: "The knowledge base changed, so the operation was aborted.",
+    corruptBackupFailed: "Damaged data could not be backed up. Saving is disabled to protect the original file; browsing remains available.",
     proposalDescription: (number, words) => `English Vocab #${number}: ${words}`,
     request: {
       short: (value) => `Add "${value}" to my English vocabulary.`,
@@ -214,6 +216,7 @@ var TEXT = {
     retry: "重试",
     collectWord: "收词",
     collectedWord: "已在生词本",
+    duplicateWord: "存在重复笔记，请先处理冲突再收录这个词。",
     dictionaryAdded: "已收进生词本",
     dictionaryCancelled: "已取消",
     dictionaryNotReviewed: (reason) => `未审阅${reason ? `：${reason}` : ""}`,
@@ -236,6 +239,7 @@ var TEXT = {
     proposalAborted: (number, words) => `生词提案 #${number} 已中止：${words}`,
     proposalFailed: (number) => `生词提案 #${number} 提交失败。`,
     knowledgeWriteAborted: "知识库已切换，操作已中止。",
+    corruptBackupFailed: "损坏数据无法备份。为保护原文件，保存已进入只读模式；仍可继续浏览。",
     proposalDescription: (number, words) => `英语生词本 #${number}：${words}`,
     request: {
       short: (value) => `请把 "${value}" 收为英语生词。`,
@@ -335,6 +339,7 @@ var TEXT = {
     retry: "再試行",
     collectWord: "単語に追加",
     collectedWord: "単語帳に登録済み",
+    duplicateWord: "重複する単語ノートがあります。競合を解消してから追加してください。",
     dictionaryAdded: "単語帳に追加しました。",
     dictionaryCancelled: "キャンセルしました。",
     dictionaryNotReviewed: (reason) => `未レビュー${reason ? `：${reason}` : ""}`,
@@ -357,6 +362,7 @@ var TEXT = {
     proposalAborted: (number, words) => `単語提案 #${number} は中止されました：${words}`,
     proposalFailed: (number) => `単語提案 #${number} を送信できませんでした。`,
     knowledgeWriteAborted: "ナレッジベースが切り替わったため、操作を中止しました。",
+    corruptBackupFailed: "破損データをバックアップできませんでした。元ファイルを保護するため保存は読み取り専用です。閲覧は続けられます。",
     proposalDescription: (number, words) => `英単語帳 #${number}：${words}`,
     request: {
       short: (value) => `「${value}」を英単語帳に追加してください。`,
@@ -456,6 +462,7 @@ var TEXT = {
     retry: "다시 시도",
     collectWord: "단어 추가",
     collectedWord: "이미 단어장에 있음",
+    duplicateWord: "중복 단어 노트가 있습니다. 충돌을 해결한 뒤 이 단어를 추가하세요.",
     dictionaryAdded: "단어장에 추가했습니다.",
     dictionaryCancelled: "취소되었습니다.",
     dictionaryNotReviewed: (reason) => `검토되지 않음${reason ? `: ${reason}` : ""}`,
@@ -478,6 +485,7 @@ var TEXT = {
     proposalAborted: (number, words) => `단어 제안 #${number}이 중단되었습니다: ${words}`,
     proposalFailed: (number) => `단어 제안 #${number}을 제출할 수 없습니다.`,
     knowledgeWriteAborted: "지식베이스가 전환되어 작업을 중단했습니다.",
+    corruptBackupFailed: "손상된 데이터를 백업할 수 없습니다. 원본 보호를 위해 저장은 읽기 전용이며 탐색은 계속할 수 있습니다.",
     proposalDescription: (number, words) => `영어 단어장 #${number}: ${words}`,
     request: {
       short: (value) => `"${value}"를 영어 단어장에 추가해 주세요.`,
@@ -1183,7 +1191,7 @@ function isValidLogEntry(entry, requireId = false) {
   if (entry.undo !== void 0) return entry.undo === true;
   return ["Again", "Hard", "Good", "Easy"].includes(entry.rating);
 }
-function uniqueLogEntries(values, onCollision = () => void 0) {
+function uniqueLogEntries(values, onCollision = () => void 0, onAssigned = () => void 0) {
   const entries = [];
   const byId = /* @__PURE__ */ new Map();
   const ratingIds = /* @__PURE__ */ new Map();
@@ -1206,7 +1214,10 @@ function uniqueLogEntries(values, onCollision = () => void 0) {
     if (!existing) {
       byId.set(originalId, next);
     } else {
-      if (sameLogEntry(existing, next)) continue;
+      if (sameLogEntry(existing, next)) {
+        onAssigned(value, existing.id);
+        continue;
+      }
       onCollision(originalId);
       let suffix = 1;
       let id = `${originalId}~recovered-${suffix}`;
@@ -1218,6 +1229,7 @@ function uniqueLogEntries(values, onCollision = () => void 0) {
       byId.set(id, next);
     }
     entries.push(next);
+    onAssigned(value, next.id);
     if (!next.undoOf && !next.undo && next.rating) {
       const candidates = ratingIds.get(originalId) ?? [];
       candidates.push({ id: next.id, word: next.word });
@@ -1246,6 +1258,8 @@ var ReviewStore = class {
     this.review = EMPTY();
     this.log = [];
     this.reviewWritable = true;
+    this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
+    this.logWritable = true;
     this.generation = 0;
   }
   async load() {
@@ -1274,6 +1288,8 @@ var ReviewStore = class {
     this.review = EMPTY();
     this.log = [];
     this.reviewWritable = true;
+    this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
+    this.logWritable = true;
     return this.load();
   }
   async #loadReview(generation = this.generation) {
@@ -1302,18 +1318,19 @@ var ReviewStore = class {
         }
       });
       if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
-        await this.#backupCorrupt("review", result.text, rootGeneration, generation);
+        await this.#preserveCorrupt("review", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
       }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       if (logIdCollisions > 0) this.notify(this.t.logIdCollisions(logIdCollisions));
     } catch (error) {
-      await this.#backupCorrupt("review", result.text, rootGeneration, generation);
+      await this.#preserveCorrupt("review", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
       if (codeOf(error) === "UNSUPPORTED_REVIEW_VERSION") {
         this.notify(this.t.unsupportedReviewVersion);
         this.reviewWritable = false;
+        this.reviewWriteErrorCode = "UNSUPPORTED_REVIEW_VERSION";
       } else {
         this.notify(this.t.corruptReview);
       }
@@ -1345,13 +1362,13 @@ var ReviewStore = class {
         collisions += 1;
       }).slice(-2e3);
       if (collisions > 0 || invalidItems > 0) {
-        await this.#backupCorrupt("log", result.text, rootGeneration, generation);
+        await this.#preserveCorrupt("log", result.text, rootGeneration, generation);
         if (this.#stale(generation, rootGeneration)) return;
         if (collisions > 0) this.notify(this.t.logIdCollisions(collisions));
         if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
       }
     } catch {
-      await this.#backupCorrupt("log", result.text, rootGeneration, generation);
+      await this.#preserveCorrupt("log", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
       this.notify(this.t.corruptLog);
       this.log = [];
@@ -1372,12 +1389,34 @@ var ReviewStore = class {
       }
     }
     if (this.#stale(generation, rootGeneration)) return;
-    const listed = await this.app.storage.list(rootGeneration);
-    if (this.#stale(generation, rootGeneration)) return;
-    const backups = listed.filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, "iu").test(item.name)).sort((a, b2) => a.name.localeCompare(b2.name));
-    for (const item of backups.slice(0, -3)) {
-      await this.app.storage.remove(rootGeneration, item.name);
-      if (this.#stale(generation, rootGeneration)) return;
+    try {
+      const listed = await this.app.storage.list(rootGeneration);
+      if (this.#stale(generation, rootGeneration)) return true;
+      const backups = listed.filter((item) => new RegExp(`^${kind}\\.corrupt-\\d+(?:-[a-z0-9]+)?\\.json$`, "iu").test(item.name)).sort((a, b2) => a.name.localeCompare(b2.name));
+      for (const item of backups.slice(0, -3)) {
+        try {
+          await this.app.storage.remove(rootGeneration, item.name);
+        } catch (error) {
+          if (codeOf(error) === "ROOT_CHANGED") throw error;
+        }
+        if (this.#stale(generation, rootGeneration)) return true;
+      }
+    } catch (error) {
+      if (codeOf(error) === "ROOT_CHANGED") throw error;
+    }
+    return true;
+  }
+  async #preserveCorrupt(kind, text, rootGeneration, generation) {
+    try {
+      return await this.#backupCorrupt(kind, text, rootGeneration, generation);
+    } catch (error) {
+      if (codeOf(error) === "ROOT_CHANGED") throw error;
+      if (kind === "review") {
+        this.reviewWritable = false;
+        this.reviewWriteErrorCode = "REVIEW_READ_ONLY";
+      } else this.logWritable = false;
+      this.notify(this.t.corruptBackupFailed);
+      return false;
     }
   }
   async saveReview(next = this.review) {
@@ -1440,10 +1479,16 @@ var ReviewStore = class {
     return this.appendLogs([entry]);
   }
   async appendLogs(entries) {
+    this.#assertLogWritable();
     const generation = this.generation;
     const rootGeneration = this.rootGeneration;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const next = uniqueLogEntries([...this.log, ...entries]).slice(-2e3);
+      const pending = new Set(entries);
+      const idMap = /* @__PURE__ */ new Map();
+      const next = uniqueLogEntries([...this.log, ...entries], () => void 0, (entry, id) => {
+        if (pending.has(entry) && entry.id) idMap.set(entry.id, id);
+      }).slice(-2e3);
+      Object.defineProperty(next, "idMap", { value: idMap, enumerable: false });
       try {
         const written = await this.app.storage.write(rootGeneration, "log.json", JSON.stringify(next), {
           expectedRevision: this.logRevision
@@ -1476,7 +1521,11 @@ var ReviewStore = class {
   }
   #assertReviewWritable() {
     if (this.reviewWritable) return;
-    throw Object.assign(new Error("unsupported review version"), { code: "UNSUPPORTED_REVIEW_VERSION" });
+    throw Object.assign(new Error("review storage is read-only"), { code: this.reviewWriteErrorCode });
+  }
+  #assertLogWritable() {
+    if (this.logWritable) return;
+    throw Object.assign(new Error("log storage is read-only"), { code: "LOG_READ_ONLY" });
   }
   #stale(generation, rootGeneration) {
     return generation !== this.generation || rootGeneration !== this.rootGeneration;
@@ -1564,450 +1613,6 @@ function mergeReview(base, incoming) {
   return merged;
 }
 
-// src/note-format.mjs
-var WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
-var WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
-function normalizeWord(word) {
-  return String(word ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
-}
-function assertEnglishWord(word) {
-  const normalized = normalizeWord(word);
-  if (!WORD_RE.test(normalized)) throw new Error(`invalid English word: ${word}`);
-  return normalized;
-}
-function isEnglishWordPrefix(word) {
-  return WORD_PREFIX_RE.test(normalizeWord(word));
-}
-function slugFor(word) {
-  const normalized = assertEnglishWord(word);
-  return normalized.replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-}
-function normalizeSourceTitle(value, maxLength = 160) {
-  return String(value ?? "").trim().replace(/\s+/gu, " ").slice(0, maxLength);
-}
-function yamlString(value) {
-  return JSON.stringify(String(value ?? ""));
-}
-function today() {
-  const date = /* @__PURE__ */ new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-function sourceLink(source) {
-  if (!source) return "";
-  const title = normalizeSourceTitle(source.title);
-  if (source.url) {
-    if (!title) return `<${source.url}>`;
-    const url = String(source.url).replaceAll("(", "%28").replaceAll(")", "%29");
-    return `[${title.replace(/[\[\]]/g, "\\$&")}](${url})`;
-  }
-  if (source.path) {
-    const path = String(source.path).replaceAll("%", "%25").replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
-    return `[${(title || String(source.path)).replace(/[\[\]]/g, "\\$&")}](${path})`;
-  }
-  return "";
-}
-function exampleLine(example, source) {
-  let text = String(example ?? "").trim().replace(/\s+/g, " ");
-  if (!text) return "";
-  const link = sourceLink(source);
-  if (!link && /\s—\s(?:\[(?:\\.|[^\]])+\]\([^)]+\)|<https?:\/\/[^>]+>)\s*$/u.test(text)) text += " <!-- ev:no-source -->";
-  return `- ${text}${link ? ` — ${link}` : ""}`;
-}
-function buildNote(entry, now = today()) {
-  const word = assertEnglishWord(entry.word);
-  const definition = String(entry.definition ?? "").trim();
-  if (!definition) throw new Error("definition is required");
-  const lines = [
-    "---",
-    "type: vocab",
-    `word: ${yamlString(word)}`,
-    `definition: ${yamlString(definition)}`
-  ];
-  if (entry.phonetic) lines.push(`phonetic: ${yamlString(entry.phonetic)}`);
-  if (entry.pos) lines.push(`pos: ${yamlString(entry.pos)}`);
-  lines.push(`created: ${yamlString(now)}`, "---", `# ${word}`, "", definition, "", "## Examples", "");
-  const example = exampleLine(entry.example, entry.source);
-  if (example) lines.push(example);
-  return `${lines.join("\n")}
-`;
-}
-function parseYamlScalar(value) {
-  const input = value.trim();
-  if (!input.startsWith('"') && !input.startsWith("'")) {
-    const comment = input.search(/\s+#/u);
-    const trimmed2 = (comment < 0 ? input : input.slice(0, comment)).trim();
-    if (/^[|>](?:[+-]?\d?|\d[+-]?)?$/u.test(trimmed2)) throw new Error("unsupported YAML block scalar");
-    return trimmed2;
-  }
-  let quote = null;
-  let escaped = false;
-  let end = input.length;
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote === '"' && character === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (character === '"' || character === "'") quote = quote === character ? null : quote ?? character;
-    if (!quote && character === "#" && index > 0 && /\s/u.test(input[index - 1])) {
-      end = index;
-      break;
-    }
-  }
-  const trimmed = input.slice(0, end).trim();
-  if (trimmed.startsWith('"')) return JSON.parse(trimmed);
-  if (trimmed.startsWith("'")) {
-    if (!trimmed.endsWith("'")) throw new Error("invalid quoted scalar");
-    return trimmed.slice(1, -1).replaceAll("''", "'");
-  }
-  return trimmed;
-}
-function examplesSection(body) {
-  let offset = 0;
-  let start = null;
-  let fence = null;
-  for (const line of body.split("\n")) {
-    const lineStart = offset;
-    const lineEnd = lineStart + line.length;
-    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (fence) {
-      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
-    } else if (marker) {
-      fence = { character: marker[0], length: marker.length };
-    } else if (start === null && /^## Examples\s*$/u.test(line)) {
-      start = lineEnd;
-    } else if (start !== null && /^#{1,2}\s+.+$/u.test(line)) {
-      return { start, end: lineStart, content: body.slice(start, lineStart) };
-    }
-    offset = lineEnd + 1;
-  }
-  return start === null ? null : { start, end: body.length, content: body.slice(start) };
-}
-function listItemsOutsideFences(content) {
-  const items = [];
-  let fence = null;
-  for (const line of content.split("\n")) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (fence) {
-      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
-      continue;
-    }
-    if (marker) {
-      fence = { character: marker[0], length: marker.length };
-      continue;
-    }
-    const item = /^- (.+)$/u.exec(line);
-    if (item) items.push(item[1].trim());
-  }
-  return items;
-}
-function parseNote(text) {
-  const normalized = String(text).replace(/\r\n/g, "\n");
-  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { ok: false, error: "missing frontmatter" };
-  try {
-    const fields = /* @__PURE__ */ Object.create(null);
-    for (const line of match[1].split("\n")) {
-      if (!line.trim() || /^\s*#/u.test(line)) continue;
-      const index = line.indexOf(":");
-      const key = line.slice(0, Math.max(0, index)).trim();
-      if (index <= 0 || /^\s/u.test(line) || !/^[A-Za-z][A-Za-z0-9_-]*$/u.test(key)) throw new Error(`unsupported frontmatter line: ${line}`);
-      fields[key] = parseYamlScalar(line.slice(index + 1));
-    }
-    if (fields.type !== "vocab" || !fields.word) return { ok: false, error: "missing word" };
-    const word = assertEnglishWord(fields.word);
-    const definition = String(fields.definition ?? "").trim();
-    if (!definition) return { ok: false, error: "missing definition" };
-    const section = examplesSection(match[2]);
-    const examples = section ? listItemsOutsideFences(section.content) : [];
-    return { ok: true, entry: { ...fields, word, definition, examples, body: match[2] } };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "invalid frontmatter" };
-  }
-}
-function appendExample(existing, example, source) {
-  const parsed = parseNote(existing);
-  if (!parsed.ok) throw new Error(`frontmatter invalid: ${parsed.error}`);
-  const line = exampleLine(example, source);
-  if (!line) return existing;
-  if (parsed.entry.examples.includes(line.slice(2))) return existing;
-  const newline = String(existing).includes("\r\n") ? "\r\n" : "\n";
-  const normalized = String(existing).replaceAll("\r\n", "\n");
-  const frontmatterEnd = normalized.indexOf("\n---\n") + 5;
-  const body = normalized.slice(frontmatterEnd);
-  const section = examplesSection(body);
-  if (section) {
-    const absoluteEnd = frontmatterEnd + section.end;
-    const before = normalized.slice(0, absoluteEnd).replace(/\s*$/u, "");
-    const after = normalized.slice(absoluteEnd);
-    return `${before}
-
-${line}
-${after.replace(/^\n*/u, "\n")}`.replaceAll("\n", newline);
-  }
-  return `${existing.trimEnd()}${newline}${newline}## Examples${newline}${newline}${line}${newline}`;
-}
-
-// src/vocab-index.mjs
-var VOCAB_PATH = /^wiki\/vocab\/[^/]+\.md$/;
-var sleep = () => new Promise((resolve) => setTimeout(resolve, 0));
-function unwrap(result) {
-  if (result && result._tag === "Err") {
-    const detail = result.error;
-    const error = new Error(String(detail?.message ?? detail?.code ?? detail ?? "knowledge error"));
-    if (typeof detail?.code === "string") error.code = detail.code;
-    throw error;
-  }
-  return result;
-}
-var VocabIndex = class {
-  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0 } = {}) {
-    this.knowledge = knowledge;
-    this.batchSize = batchSize;
-    this.onProgress = onProgress;
-    this.onUpdate = onUpdate;
-    this.cache = /* @__PURE__ */ new Map();
-    this.entries = /* @__PURE__ */ new Map();
-    this.duplicateWords = /* @__PURE__ */ new Set();
-    this.invalid = [];
-    this.refreshing = null;
-    this.pending = false;
-    this.generation = 0;
-  }
-  reset() {
-    this.generation += 1;
-    this.cache.clear();
-    this.entries.clear();
-    this.duplicateWords.clear();
-    this.invalid = [];
-    if (this.refreshing) this.pending = true;
-  }
-  async refresh() {
-    if (this.refreshing) {
-      this.pending = true;
-      return this.refreshing;
-    }
-    this.refreshing = (async () => {
-      let result;
-      do {
-        this.pending = false;
-        const generation = this.generation;
-        try {
-          result = await this.refreshOnce(generation);
-        } catch (error) {
-          if (error?.code !== "ROOT_CHANGED" && generation === this.generation) throw error;
-          this.cache.clear();
-          this.entries.clear();
-          this.duplicateWords.clear();
-          this.invalid = [];
-          if (!this.pending && generation === this.generation) throw error;
-          this.pending = true;
-        }
-      } while (this.pending);
-      return result;
-    })();
-    try {
-      return await this.refreshing;
-    } finally {
-      this.refreshing = null;
-    }
-  }
-  async refreshOnce(generation = this.generation) {
-    const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
-    if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
-    this.invalid = [];
-    const readFailures = [];
-    const live = new Set(metas.map((meta) => meta.path));
-    for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
-    let done = 0;
-    for (let i = 0; i < metas.length; i += this.batchSize) {
-      const batch = metas.slice(i, i + this.batchSize);
-      for (const meta of batch) {
-        const hash = meta.revision?.contentHash ?? "";
-        const cached = this.cache.get(meta.path);
-        if (cached?.hash !== hash) {
-          try {
-            const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
-            this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
-          } catch (error) {
-            if (error?.code === "ROOT_CHANGED" || generation !== this.generation) throw error;
-            this.cache.delete(meta.path);
-            readFailures.push({
-              path: meta.path,
-              kind: "read",
-              code: typeof error?.code === "string" ? error.code : "READ_FAILED",
-              error: error instanceof Error ? error.message : String(error)
-            });
-          }
-        }
-        done += 1;
-        if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
-        this.onProgress(done, metas.length);
-        const partial = this.rebuild(readFailures);
-        this.onUpdate(partial);
-      }
-      if (i + this.batchSize < metas.length) await sleep();
-    }
-    return this.rebuild(readFailures);
-  }
-  rebuild(readFailures = []) {
-    this.entries = /* @__PURE__ */ new Map();
-    this.duplicateWords = /* @__PURE__ */ new Set();
-    this.invalid = [];
-    const byWord = /* @__PURE__ */ new Map();
-    for (const [path, item] of this.cache.entries()) {
-      if (!item.parsed.ok) {
-        this.invalid.push({ path, kind: "parse", error: item.parsed.error });
-        continue;
-      }
-      const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
-      const matches = byWord.get(entry.word) ?? [];
-      matches.push(entry);
-      byWord.set(entry.word, matches);
-    }
-    for (const [word, matches] of byWord.entries()) {
-      if (matches.length === 1) this.entries.set(word, matches[0]);
-      else {
-        this.duplicateWords.add(word);
-        for (const entry of matches) this.invalid.push({ path: entry.path, kind: "duplicate", word });
-      }
-    }
-    this.invalid.push(...readFailures);
-    return { entries: [...this.entries.values()], invalid: this.invalid };
-  }
-  get(word) {
-    return this.entries.get(String(word).toLowerCase());
-  }
-  isAmbiguous(word) {
-    return this.duplicateWords.has(String(word).toLowerCase());
-  }
-};
-
-// src/request-text.mjs
-function countWords(text) {
-  return String(text).trim().split(/\s+/).filter(Boolean).length;
-}
-function requestLanguage(locale) {
-  return uiText(locale).request;
-}
-function requestTextFromSelection(context, locale = "en") {
-  const t = requestLanguage(locale);
-  const selected = String(context.text ?? "").trim().slice(0, 2e3);
-  const sentence = String(context.sentence ?? "").trim().slice(0, 600);
-  const source = context.source?.kind === "document" ? `${context.source.title || ""}
-source.path: ${context.source.path || ""}` : `${context.source?.title ?? ""}
-source.url: ${context.source?.url ?? ""}`;
-  const task = countWords(selected) <= 3 ? t.short(selected) : t.long;
-  return [
-    task,
-    "",
-    `${t.selection}: ${selected}`,
-    sentence ? `${t.sentence}: ${sentence}` : "",
-    `${t.source}: ${source}`,
-    "",
-    t.instruction
-  ].filter(Boolean).join("\n");
-}
-function requestTextForWord(word, locale = "en") {
-  const t = requestLanguage(locale);
-  return [t.short(String(word).trim()), "", t.instruction].join("\n");
-}
-
-// src/reading-level.mjs
-var DEFAULT_LEVEL_SETTINGS = Object.freeze({
-  vocabularySize: 3e3,
-  easyMax: 2,
-  goodMax: 5
-});
-var WORD_RE2 = /[A-Za-z]+(?:['’][A-Za-z]+)*/gu;
-var CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
-function stripFencedCode(markdown) {
-  const kept = [];
-  let fence = null;
-  for (const line of String(markdown ?? "").split("\n")) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (fence) {
-      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
-      kept.push("");
-      continue;
-    }
-    if (marker) {
-      fence = { character: marker[0], length: marker.length };
-      kept.push("");
-      continue;
-    }
-    kept.push(line);
-  }
-  return kept.join("\n");
-}
-function stripMarkdownNoise(markdown) {
-  return stripFencedCode(markdown).replace(/^---[\s\S]*?\n---\s*/u, "").replace(/`[^`]*`/gu, " ").replace(/!\[[^\]]*\]\([^)]*\)/gu, " ").replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1").replace(/https?:\/\/\S+/gu, " ").replace(/!\[\[.*?\]\]/gu, " ").replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/gu, "$1").replace(/<[^>]+>/gu, " ");
-}
-function isHeading(line) {
-  return /^\s{0,3}#{1,6}\s+/u.test(line);
-}
-function isTableDivider(line) {
-  return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(line);
-}
-function normalizeWord2(value) {
-  return String(value ?? "").toLowerCase().replaceAll("’", "'");
-}
-function extractReadingTokens(markdown) {
-  const cleaned = stripMarkdownNoise(markdown);
-  const tokens = [];
-  let sentenceStart = true;
-  for (const rawLine of cleaned.split(/\n/u)) {
-    if (isHeading(rawLine) || isTableDivider(rawLine)) {
-      sentenceStart = true;
-      continue;
-    }
-    const line = rawLine.replace(/^\s*(?:[-*+]|\d+[.)]|>)\s+/u, "");
-    if (!line.trim()) {
-      sentenceStart = true;
-      continue;
-    }
-    for (const match of line.matchAll(WORD_RE2)) {
-      const surface = match[0];
-      const before = line.slice(0, match.index);
-      if (/[.!?:]\s*$/u.test(before)) sentenceStart = true;
-      const properNoun = !sentenceStart && /^[A-Z]/u.test(surface);
-      tokens.push({ surface, word: normalizeWord2(surface), properNoun, counted: !properNoun });
-      sentenceStart = false;
-    }
-    if (/[.!?:]\s*$/u.test(line.trim())) sentenceStart = true;
-  }
-  return tokens;
-}
-function detectEnglish(markdown) {
-  const text = stripMarkdownNoise(markdown);
-  const latinWords = [...text.matchAll(WORD_RE2)].length;
-  const cjkChars = [...text.matchAll(CJK_RE)].length;
-  if (latinWords < 50) return { english: false, reason: "too-short", latinWords, cjkChars };
-  const ratio = latinWords / Math.max(1, latinWords + cjkChars);
-  if (ratio < 0.7) return { english: false, reason: "not-english", latinWords, cjkChars };
-  return { english: true, latinWords, cjkChars };
-}
-function validateLevelSettings(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, reason: "schema" };
-  const next = { vocabularySize: value.vocabularySize, easyMax: value.easyMax, goodMax: value.goodMax };
-  if (![next.vocabularySize, next.easyMax, next.goodMax].every(Number.isFinite)) return { ok: false, reason: "schema" };
-  const allowed = /* @__PURE__ */ new Set([1e3, 2e3, 3e3, 5e3, 8e3, 12e3, 2e4]);
-  if (!allowed.has(next.vocabularySize)) return { ok: false, reason: "vocabulary-size" };
-  if (next.easyMax < 0 || next.easyMax >= next.goodMax || next.goodMax > 20) {
-    return { ok: false, reason: "range" };
-  }
-  return { ok: true, settings: next };
-}
-function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
-  if (rate <= settings.easyMax) return { band: "easy", tone: "good" };
-  if (rate <= settings.goodMax) return { band: "good", tone: "neutral" };
-  return { band: "hard", tone: "warning" };
-}
-
 // src/inflections.mjs
 var SURFACE_RE = /^(?=.{1,64}$)[a-z]+(?:['’-][a-z]+)*$/u;
 var VOWELS = /* @__PURE__ */ new Set(["a", "e", "i", "o", "u"]);
@@ -2033,6 +1638,7 @@ var DENYLIST = /* @__PURE__ */ new Set([
   "basis",
   "analysis"
 ]);
+var AMBIGUOUS_INFLECTION_SURFACES = /* @__PURE__ */ new Set(["does", "left", "saw"]);
 var IRREGULAR_VERBS = new Map(Object.entries({
   abide: ["abode", "abode"],
   alight: ["alit", "alit"],
@@ -2439,6 +2045,7 @@ function buildSurfaceMap(words, { permissive = false } = {}) {
     for (const part of selectedParts) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface)) continue;
+      if (surface !== lemma && AMBIGUOUS_INFLECTION_SURFACES.has(surface)) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }
@@ -2454,6 +2061,28 @@ var TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*)*
 var SOURCE_MARKDOWN_RE = /^(?<sentence>.+?)\s+—\s+\[(?<title>(?:\\.|[^\]])+)\]\((?<path>[^)]+)\)\s*$/u;
 var SOURCE_URL_RE = /^(?<sentence>.+?)\s+—\s+<(?<url>https?:\/\/[^>]+)>\s*$/u;
 var DEFAULT_MAX_LENGTH = 300;
+var NO_SOURCE_MARKER = "<!-- ev:no-source -->";
+var ESCAPED_NO_SOURCE_MARKER = "&lt;!-- ev:no-source --&gt;";
+function escapeExampleText(value) {
+  return String(value ?? "").replaceAll(ESCAPED_NO_SOURCE_MARKER, `${ESCAPED_NO_SOURCE_MARKER}${ESCAPED_NO_SOURCE_MARKER}`).replaceAll(NO_SOURCE_MARKER, ESCAPED_NO_SOURCE_MARKER);
+}
+function unescapeExampleText(value) {
+  const input = String(value ?? "");
+  let output = "";
+  for (let index = 0; index < input.length; ) {
+    if (input.startsWith(`${ESCAPED_NO_SOURCE_MARKER}${ESCAPED_NO_SOURCE_MARKER}`, index)) {
+      output += ESCAPED_NO_SOURCE_MARKER;
+      index += ESCAPED_NO_SOURCE_MARKER.length * 2;
+    } else if (input.startsWith(ESCAPED_NO_SOURCE_MARKER, index)) {
+      output += NO_SOURCE_MARKER;
+      index += ESCAPED_NO_SOURCE_MARKER.length;
+    } else {
+      output += input[index];
+      index += 1;
+    }
+  }
+  return output;
+}
 function stripBullet(text) {
   return String(text ?? "").trim().replace(/^-\s+/, "");
 }
@@ -2470,25 +2099,25 @@ function decodeSourcePath(path) {
 function parseExampleLine(text) {
   const line = stripBullet(text);
   const noSource = line.match(/^(?<sentence>[\s\S]*?)\s+<!-- ev:no-source -->\s*$/u);
-  if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
+  if (noSource?.groups) return { sentence: unescapeExampleText(noSource.groups.sentence), source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
     const rawTarget = markdown.groups.path.trim();
     const web = /^https?:\/\//u.test(rawTarget);
     const target = web ? rawTarget : decodeSourcePath(rawTarget);
     return {
-      sentence: markdown.groups.sentence.trim(),
+      sentence: unescapeExampleText(markdown.groups.sentence.trim()),
       source: web ? { title: unescapeTitle(markdown.groups.title), url: target } : { title: unescapeTitle(markdown.groups.title), path: target }
     };
   }
   const url = line.match(SOURCE_URL_RE);
   if (url?.groups) {
     return {
-      sentence: url.groups.sentence.trim(),
+      sentence: unescapeExampleText(url.groups.sentence.trim()),
       source: { url: url.groups.url.trim() }
     };
   }
-  return { sentence: line, source: null };
+  return { sentence: unescapeExampleText(line), source: null };
 }
 function normalizePath(parts) {
   const normalized = [];
@@ -2526,8 +2155,16 @@ function tokenMatches(sentence, surfaces) {
   const hits = [];
   for (const match of sentence.matchAll(TOKEN_RE)) {
     const surface = match[0];
-    if (!surfaces.has(surface.toLowerCase().replaceAll("’", "'")) && !surfaces.has(surface.toLowerCase())) continue;
-    hits.push({ start: match.index, end: match.index + surface.length, surface });
+    const normalized = surface.toLowerCase().replaceAll("’", "'");
+    if (surfaces.has(normalized) || surfaces.has(surface.toLowerCase())) {
+      hits.push({ start: match.index, end: match.index + surface.length, surface });
+      continue;
+    }
+    const possessive = /^(?<stem>.+)['’]s$/u.exec(surface);
+    if (!possessive?.groups) continue;
+    const stem = possessive.groups.stem;
+    if (!surfaces.has(stem.toLowerCase().replaceAll("’", "'"))) continue;
+    hits.push({ start: match.index, end: match.index + stem.length, surface: stem });
   }
   return hits;
 }
@@ -2587,6 +2224,452 @@ function pickExample(entry, count = 0) {
   if (candidates.length === 0) return null;
   const index = Math.abs(Number(count) || 0) % candidates.length;
   return candidates[index];
+}
+
+// src/note-format.mjs
+var WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
+var WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
+function normalizeWord(word) {
+  return String(word ?? "").normalize("NFC").trim().toLowerCase().replaceAll("’", "'");
+}
+function assertEnglishWord(word) {
+  const normalized = normalizeWord(word);
+  if (!WORD_RE.test(normalized)) throw new Error(`invalid English word: ${word}`);
+  return normalized;
+}
+function isEnglishWordPrefix(word) {
+  return WORD_PREFIX_RE.test(normalizeWord(word));
+}
+function slugFor(word) {
+  const normalized = assertEnglishWord(word);
+  return normalized.replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+function normalizeSourceTitle(value, maxLength = 160) {
+  return String(value ?? "").trim().replace(/\s+/gu, " ").slice(0, maxLength);
+}
+function yamlString(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+function today() {
+  const date = /* @__PURE__ */ new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function sourceLink(source) {
+  if (!source) return "";
+  const title = normalizeSourceTitle(source.title);
+  if (source.url) {
+    if (!title) return `<${source.url}>`;
+    const url = String(source.url).replaceAll("(", "%28").replaceAll(")", "%29");
+    return `[${title.replace(/[\[\]]/g, "\\$&")}](${url})`;
+  }
+  if (source.path) {
+    const path = String(source.path).replaceAll("%", "%25").replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
+    return `[${(title || String(source.path)).replace(/[\[\]]/g, "\\$&")}](${path})`;
+  }
+  return "";
+}
+function exampleLine(example, source) {
+  let text = String(example ?? "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  const link = sourceLink(source);
+  const needsNoSourceMarker = !link && /\s—\s(?:\[(?:\\.|[^\]])+\]\([^)]+\)|<https?:\/\/[^>]+>)\s*$/u.test(text);
+  text = escapeExampleText(text);
+  if (needsNoSourceMarker) text += " <!-- ev:no-source -->";
+  return `- ${text}${link ? ` — ${link}` : ""}`;
+}
+function buildNote(entry, now = today()) {
+  const word = assertEnglishWord(entry.word);
+  const definition = String(entry.definition ?? "").trim();
+  if (!definition) throw new Error("definition is required");
+  const lines = [
+    "---",
+    "type: vocab",
+    `word: ${yamlString(word)}`,
+    `definition: ${yamlString(definition)}`
+  ];
+  if (entry.phonetic) lines.push(`phonetic: ${yamlString(entry.phonetic)}`);
+  if (entry.pos) lines.push(`pos: ${yamlString(entry.pos)}`);
+  lines.push(`created: ${yamlString(now)}`, "---", `# ${word}`, "", definition, "", "## Examples", "");
+  const example = exampleLine(entry.example, entry.source);
+  if (example) lines.push(example);
+  return `${lines.join("\n")}
+`;
+}
+function parseYamlScalar(value) {
+  const input = value.trim();
+  if (!input.startsWith('"') && !input.startsWith("'")) {
+    const comment = input.search(/\s+#/u);
+    const trimmed2 = (comment < 0 ? input : input.slice(0, comment)).trim();
+    if (/^[|>](?:[+-]?\d?|\d[+-]?)?$/u.test(trimmed2)) throw new Error("unsupported YAML block scalar");
+    return trimmed2;
+  }
+  let quote = null;
+  let escaped = false;
+  let end = input.length;
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = quote === character ? null : quote ?? character;
+    if (!quote && character === "#" && index > 0 && /\s/u.test(input[index - 1])) {
+      end = index;
+      break;
+    }
+  }
+  const trimmed = input.slice(0, end).trim();
+  if (trimmed.startsWith('"')) return JSON.parse(trimmed);
+  if (trimmed.startsWith("'")) {
+    if (!trimmed.endsWith("'")) throw new Error("invalid quoted scalar");
+    return trimmed.slice(1, -1).replaceAll("''", "'");
+  }
+  return trimmed;
+}
+function examplesSection(body) {
+  let offset = 0;
+  let start = null;
+  let fence = null;
+  for (const line of body.split("\n")) {
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+    } else if (marker) {
+      fence = { character: marker[0], length: marker.length };
+    } else if (start === null && /^## Examples\s*$/u.test(line)) {
+      start = lineEnd;
+    } else if (start !== null && /^#{1,2}\s+.+$/u.test(line)) {
+      return { start, end: lineStart, content: body.slice(start, lineStart) };
+    }
+    offset = lineEnd + 1;
+  }
+  return start === null ? null : { start, end: body.length, content: body.slice(start) };
+}
+function listItemsOutsideFences(content) {
+  const items = [];
+  let fence = null;
+  for (const line of content.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      continue;
+    }
+    const item = /^- (.+)$/u.exec(line);
+    if (item) items.push(item[1].trim());
+  }
+  return items;
+}
+function parseNote(text) {
+  const normalized = String(text).replace(/\r\n/g, "\n");
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { ok: false, error: "missing frontmatter" };
+  try {
+    const fields = /* @__PURE__ */ Object.create(null);
+    for (const line of match[1].split("\n")) {
+      if (!line.trim() || /^\s*#/u.test(line)) continue;
+      const index = line.indexOf(":");
+      const key = line.slice(0, Math.max(0, index)).trim();
+      if (index <= 0 || /^\s/u.test(line) || !/^[A-Za-z][A-Za-z0-9_-]*$/u.test(key)) throw new Error(`unsupported frontmatter line: ${line}`);
+      fields[key] = parseYamlScalar(line.slice(index + 1));
+    }
+    if (fields.type !== "vocab" || !fields.word) return { ok: false, error: "missing word" };
+    const word = assertEnglishWord(fields.word);
+    const definition = String(fields.definition ?? "").trim();
+    if (!definition) return { ok: false, error: "missing definition" };
+    const section = examplesSection(match[2]);
+    const examples = section ? listItemsOutsideFences(section.content) : [];
+    return { ok: true, entry: { ...fields, word, definition, examples, body: match[2] } };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "invalid frontmatter" };
+  }
+}
+function appendExample(existing, example, source) {
+  const parsed = parseNote(existing);
+  if (!parsed.ok) throw new Error(`frontmatter invalid: ${parsed.error}`);
+  const line = exampleLine(example, source);
+  if (!line) return existing;
+  if (parsed.entry.examples.includes(line.slice(2))) return existing;
+  const newline = String(existing).includes("\r\n") ? "\r\n" : "\n";
+  const normalized = String(existing).replaceAll("\r\n", "\n");
+  const frontmatterEnd = normalized.indexOf("\n---\n") + 5;
+  const body = normalized.slice(frontmatterEnd);
+  const section = examplesSection(body);
+  if (section) {
+    const absoluteEnd = frontmatterEnd + section.end;
+    const before = normalized.slice(0, absoluteEnd).replace(/\s*$/u, "");
+    const after = normalized.slice(absoluteEnd);
+    return `${before}
+
+${line}
+${after.replace(/^\n*/u, "\n")}`.replaceAll("\n", newline);
+  }
+  return `${existing.trimEnd()}${newline}${newline}## Examples${newline}${newline}${line}${newline}`;
+}
+
+// src/vocab-index.mjs
+var VOCAB_PATH = /^wiki\/vocab\/[^/]+\.md$/;
+var sleep = () => new Promise((resolve) => setTimeout(resolve, 0));
+function unwrap(result) {
+  if (result && result._tag === "Err") {
+    const detail = result.error;
+    const error = new Error(String(detail?.message ?? detail?.code ?? detail ?? "knowledge error"));
+    if (typeof detail?.code === "string") error.code = detail.code;
+    throw error;
+  }
+  return result;
+}
+var VocabIndex = class {
+  constructor(knowledge, { batchSize = 50, onProgress = () => void 0, onUpdate = () => void 0 } = {}) {
+    this.knowledge = knowledge;
+    this.batchSize = batchSize;
+    this.onProgress = onProgress;
+    this.onUpdate = onUpdate;
+    this.cache = /* @__PURE__ */ new Map();
+    this.entries = /* @__PURE__ */ new Map();
+    this.duplicateWords = /* @__PURE__ */ new Set();
+    this.invalid = [];
+    this.refreshing = null;
+    this.pending = false;
+    this.generation = 0;
+  }
+  reset() {
+    this.generation += 1;
+    this.cache.clear();
+    this.entries.clear();
+    this.duplicateWords.clear();
+    this.invalid = [];
+    if (this.refreshing) this.pending = true;
+  }
+  async refresh() {
+    if (this.refreshing) {
+      this.pending = true;
+      return this.refreshing;
+    }
+    this.refreshing = (async () => {
+      let result;
+      do {
+        this.pending = false;
+        const generation = this.generation;
+        try {
+          result = await this.refreshOnce(generation);
+        } catch (error) {
+          if (error?.code !== "ROOT_CHANGED" && generation === this.generation) throw error;
+          this.cache.clear();
+          this.entries.clear();
+          this.duplicateWords.clear();
+          this.invalid = [];
+          if (!this.pending && generation === this.generation) throw error;
+          this.pending = true;
+        }
+      } while (this.pending);
+      return result;
+    })();
+    try {
+      return await this.refreshing;
+    } finally {
+      this.refreshing = null;
+    }
+  }
+  async refreshOnce(generation = this.generation) {
+    const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
+    if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
+    this.invalid = [];
+    const readFailures = [];
+    const live = new Set(metas.map((meta) => meta.path));
+    for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
+    let done = 0;
+    for (let i = 0; i < metas.length; i += this.batchSize) {
+      const batch = metas.slice(i, i + this.batchSize);
+      for (const meta of batch) {
+        const hash = meta.revision?.contentHash ?? "";
+        const cached = this.cache.get(meta.path);
+        if (cached?.hash !== hash) {
+          try {
+            const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
+            this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
+          } catch (error) {
+            if (error?.code === "ROOT_CHANGED" || generation !== this.generation) throw error;
+            this.cache.delete(meta.path);
+            readFailures.push({
+              path: meta.path,
+              kind: "read",
+              code: typeof error?.code === "string" ? error.code : "READ_FAILED",
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+        done += 1;
+        if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
+        this.onProgress(done, metas.length);
+        const partial = this.rebuild(readFailures);
+        this.onUpdate(partial);
+      }
+      if (i + this.batchSize < metas.length) await sleep();
+    }
+    return this.rebuild(readFailures);
+  }
+  rebuild(readFailures = []) {
+    this.entries = /* @__PURE__ */ new Map();
+    this.duplicateWords = /* @__PURE__ */ new Set();
+    this.invalid = [];
+    const byWord = /* @__PURE__ */ new Map();
+    for (const [path, item] of this.cache.entries()) {
+      if (!item.parsed.ok) {
+        this.invalid.push({ path, kind: "parse", error: item.parsed.error });
+        continue;
+      }
+      const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
+      const matches = byWord.get(entry.word) ?? [];
+      matches.push(entry);
+      byWord.set(entry.word, matches);
+    }
+    for (const [word, matches] of byWord.entries()) {
+      if (matches.length === 1) this.entries.set(word, matches[0]);
+      else {
+        this.duplicateWords.add(word);
+        for (const entry of matches) this.invalid.push({ path: entry.path, kind: "duplicate", word });
+      }
+    }
+    this.invalid.push(...readFailures);
+    return { entries: [...this.entries.values()], invalid: this.invalid };
+  }
+  get(word) {
+    return this.entries.get(String(word).toLowerCase());
+  }
+  isAmbiguous(word) {
+    return this.duplicateWords.has(String(word).toLowerCase());
+  }
+};
+
+// src/request-text.mjs
+function countWords(text) {
+  return String(text).trim().split(/\s+/).filter(Boolean).length;
+}
+function requestLanguage(locale) {
+  return uiText(locale).request;
+}
+function requestTextFromSelection(context, locale = "en") {
+  const t = requestLanguage(locale);
+  const selected = String(context.text ?? "").trim().slice(0, 2e3);
+  const sentence = String(context.sentence ?? "").trim().slice(0, 600);
+  const source = context.source?.kind === "document" ? `${context.source.title || ""}
+source.path: ${context.source.path || ""}` : `${context.source?.title ?? ""}
+source.url: ${context.source?.url ?? ""}`;
+  const task = countWords(selected) <= 3 ? t.short(selected) : t.long;
+  return [
+    task,
+    "",
+    `${t.selection}: ${selected}`,
+    sentence ? `${t.sentence}: ${sentence}` : "",
+    `${t.source}: ${source}`,
+    "",
+    t.instruction
+  ].filter(Boolean).join("\n");
+}
+function requestTextForWord(word, locale = "en") {
+  const t = requestLanguage(locale);
+  return [t.short(String(word).trim()), "", t.instruction].join("\n");
+}
+
+// src/reading-level.mjs
+var DEFAULT_LEVEL_SETTINGS = Object.freeze({
+  vocabularySize: 3e3,
+  easyMax: 2,
+  goodMax: 5
+});
+var WORD_RE2 = /[A-Za-z]+(?:['’][A-Za-z]+)*/gu;
+var CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+function stripFencedCode(markdown) {
+  const kept = [];
+  let fence = null;
+  for (const line of String(markdown ?? "").split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (fence) {
+      if (marker?.[0] === fence.character && marker.length >= fence.length && /^\s*$/u.test(line.slice(line.indexOf(marker) + marker.length))) fence = null;
+      kept.push("");
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[0], length: marker.length };
+      kept.push("");
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+function stripMarkdownNoise(markdown) {
+  return stripFencedCode(markdown).replace(/^---[\s\S]*?\n---\s*/u, "").replace(/`[^`]*`/gu, " ").replace(/!\[[^\]]*\]\([^)]*\)/gu, " ").replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1").replace(/https?:\/\/\S+/gu, " ").replace(/!\[\[.*?\]\]/gu, " ").replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/gu, "$1").replace(/<[^>]+>/gu, " ");
+}
+function isHeading(line) {
+  return /^\s{0,3}#{1,6}\s+/u.test(line);
+}
+function isTableDivider(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(line);
+}
+function normalizeWord2(value) {
+  return String(value ?? "").toLowerCase().replaceAll("’", "'");
+}
+function extractReadingTokens(markdown) {
+  const cleaned = stripMarkdownNoise(markdown);
+  const tokens = [];
+  let sentenceStart = true;
+  for (const rawLine of cleaned.split(/\n/u)) {
+    if (isHeading(rawLine) || isTableDivider(rawLine)) {
+      sentenceStart = true;
+      continue;
+    }
+    const line = rawLine.replace(/^\s*(?:[-*+]|\d+[.)]|>)\s+/u, "");
+    if (!line.trim()) {
+      sentenceStart = true;
+      continue;
+    }
+    for (const match of line.matchAll(WORD_RE2)) {
+      const surface = match[0];
+      const before = line.slice(0, match.index);
+      if (/[.!?:]\s*$/u.test(before)) sentenceStart = true;
+      const properNoun = !sentenceStart && /^[A-Z]/u.test(surface);
+      tokens.push({ surface, word: normalizeWord2(surface), properNoun, counted: !properNoun });
+      sentenceStart = false;
+    }
+    if (/[.!?:]\s*$/u.test(line.trim())) sentenceStart = true;
+  }
+  return tokens;
+}
+function detectEnglish(markdown) {
+  const text = stripMarkdownNoise(markdown);
+  const latinWords = [...text.matchAll(WORD_RE2)].length;
+  const cjkChars = [...text.matchAll(CJK_RE)].length;
+  if (latinWords < 50) return { english: false, reason: "too-short", latinWords, cjkChars };
+  const ratio = latinWords / Math.max(1, latinWords + cjkChars);
+  if (ratio < 0.7) return { english: false, reason: "not-english", latinWords, cjkChars };
+  return { english: true, latinWords, cjkChars };
+}
+function validateLevelSettings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, reason: "schema" };
+  const next = { vocabularySize: value.vocabularySize, easyMax: value.easyMax, goodMax: value.goodMax };
+  if (![next.vocabularySize, next.easyMax, next.goodMax].every(Number.isFinite)) return { ok: false, reason: "schema" };
+  const allowed = /* @__PURE__ */ new Set([1e3, 2e3, 3e3, 5e3, 8e3, 12e3, 2e4]);
+  if (!allowed.has(next.vocabularySize)) return { ok: false, reason: "vocabulary-size" };
+  if (next.easyMax < 0 || next.easyMax >= next.goodMax || next.goodMax > 20) {
+    return { ok: false, reason: "range" };
+  }
+  return { ok: true, settings: next };
+}
+function classifyNovelRate(rate, settings = DEFAULT_LEVEL_SETTINGS) {
+  if (rate <= settings.easyMax) return { band: "easy", tone: "good" };
+  if (rate <= settings.goodMax) return { band: "good", tone: "neutral" };
+  return { band: "hard", tone: "warning" };
 }
 
 // src/dictionary.mjs
@@ -3115,7 +3198,9 @@ function renderPanel(container, controls) {
       }, "ev-dict-lemma-link"));
       resultBox.append(renderDictionaryDefinition(result.entry, locale));
       const collected = state.entries.some((entry) => entry.word === result.lemma);
+      const ambiguous = state.invalid?.some((item) => item.kind === "duplicate" && normalizeWord(item.word) === normalizeWord(result.lemma));
       if (collected) resultBox.append(el("p", "ev-note", t.collectedWord));
+      else if (ambiguous) resultBox.append(el("p", "ev-note", t.duplicateWord));
       else {
         const collect = button(t.collectWord, async () => {
           if (dictionaryCollecting) return;
@@ -3334,6 +3419,7 @@ function renderPanel(container, controls) {
     if (state.recommendationLoading) body.append(el("p", "ev-note", t.recommendationProgress(state.recommendationLoading.done, state.recommendationLoading.total)));
     const result = state.recommendations;
     const skipped = result?.skipped ?? {};
+    const hasSkipped = Object.values(skipped).some((count) => count > 0);
     const appendSkipped = () => {
       const details = el("details", "ev-skipped");
       details.append(el("summary", "", t.skippedSummary(skipped["not-english"] ?? 0, skipped["too-short"] ?? 0, skipped.unreadable ?? 0)));
@@ -3341,7 +3427,7 @@ function renderPanel(container, controls) {
     };
     if (!result?.items?.length) {
       body.append(el("p", "ev-empty", t.noRecommendations));
-      if (result && Object.values(skipped).some((count) => count > 0)) appendSkipped();
+      if (result && hasSkipped) appendSkipped();
       return;
     }
     const list = el("div", "ev-list");
@@ -3357,7 +3443,7 @@ function renderPanel(container, controls) {
       list.append(row);
     }
     body.append(list);
-    appendSkipped();
+    if (hasSkipped) appendSkipped();
   };
   const rerender = () => {
     locale = read().locale ?? controls.locale ?? currentLocale();
@@ -3911,8 +3997,13 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
             } });
             const state = current();
             const collected = entryMap(state.entries).has(normalizeWord(result.lemma));
+            const ambiguous = state.invalid?.some((item) => item.kind === "duplicate" && normalizeWord(item.word) === normalizeWord(result.lemma));
             if (collected) {
               body.append(el2("p", "ev-reading-note", t.collectedWord));
+              return;
+            }
+            if (ambiguous) {
+              body.append(el2("p", "ev-reading-note", t.duplicateWord));
               return;
             }
             const status = el2("p", "ev-reading-note");
@@ -34315,14 +34406,32 @@ function localizedBand(t, band) {
   if (band === "easy") return t.bandEasy;
   return t.bandHard;
 }
+function stablePathHash(path) {
+  const hash = (seed) => {
+    let value = seed >>> 0;
+    for (const character of String(path)) {
+      value ^= character.codePointAt(0);
+      value = Math.imul(value, 16777619);
+    }
+    return (value >>> 0).toString(16).padStart(8, "0");
+  };
+  return `${hash(2166136261)}${hash(3339675911)}`;
+}
 function learningSuggestionsFromRecommendations(items, locale = "en") {
   const t = uiText(locale);
-  return items.slice(0, 3).map((item) => ({
-    id: `reading:${item.path}`,
-    title: item.title.slice(0, 120),
-    detail: item.band === "good" ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
-    documentPath: item.path
-  }));
+  const ids = /* @__PURE__ */ new Set();
+  return items.slice(0, 3).map((item) => {
+    const base = `reading:${stablePathHash(item.path)}`;
+    let id = base;
+    for (let suffix = 2; ids.has(id); suffix += 1) id = `${base}-${suffix}`;
+    ids.add(id);
+    return {
+      id,
+      title: item.title.slice(0, 120),
+      detail: item.band === "good" ? `${item.rate.toFixed(1)}%` : `${localizedBand(t, item.band)} · ${item.rate.toFixed(1)}%`,
+      documentPath: item.path
+    };
+  });
 }
 var ReadingRecommender = class {
   constructor(app, {
@@ -34511,10 +34620,14 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
+    this.readingStatusRequest = 0;
+    this.readingStatusDirty = false;
+    this.indexProjectionReady = false;
     this.readingUndoSnapshots = /* @__PURE__ */ new Map();
     this.localizedPanelHandle = null;
     this.localizedCommandHandle = null;
     this.selectionActionHandle = null;
+    this.onEvent?.("appearance.locale-changed", (event) => this.handleLocaleChanged(event));
     this.registerLocalizedShell();
     if (!hasRequiredHost(this.app)) return;
     await this.loadPreferences();
@@ -34527,7 +34640,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       const generation = this.invalidateRoot();
       return this.handleRootChanged(generation);
     });
-    this.onEvent?.("appearance.locale-changed", (event) => this.handleLocaleChanged(event));
+    const finalLocale = currentLocale();
+    if (finalLocale !== this.locale) await this.handleLocaleChanged(finalLocale);
   }
   registerLocalizedShell() {
     this.localizedPanelHandle?.dispose?.();
@@ -34567,6 +34681,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.recommendationRequest += 1;
     this.index?.reset?.();
     this.indexBinding = null;
+    this.indexProjectionReady = false;
     this.state.entries = [];
     this.state.invalid = [];
     this.state.review = emptyReview();
@@ -34574,6 +34689,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.state.recommendations = null;
     this.state.recommendationLoading = null;
     this.latestReadingEvent = null;
+    this.readingStatusDirty = false;
+    this.readingStatusRequest += 1;
     this.readingUndoSnapshots.clear();
     this.readingHandle?.setTerms?.([]);
     this.emitState();
@@ -34735,6 +34852,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
     try {
       this.indexBinding = { generation, epoch: binding.workspaceEpoch, storageRootGeneration: binding.storageRootGeneration };
+      this.indexProjectionReady = false;
       let result;
       try {
         result = await this.index.refresh();
@@ -34750,6 +34868,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
+      this.indexProjectionReady = true;
       const beforeRecommendations = await this.captureRootBinding();
       if (generation !== this.rootGeneration) return;
       if (!beforeRecommendations.stable || beforeRecommendations.workspaceEpoch !== binding.workspaceEpoch || beforeRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
@@ -34768,6 +34887,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (!finalBinding.stable || finalBinding.workspaceEpoch !== binding.workspaceEpoch || finalBinding.storageRootGeneration !== binding.storageRootGeneration) {
         return this.handleRootChanged(this.invalidateRoot());
       }
+      if (this.readingStatusDirty) await this.refreshLatestReadingStatus();
     } finally {
       if (generation === this.rootGeneration) {
         this.state.loading = null;
@@ -34840,6 +34960,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
         if (!isCurrent()) return false;
         this.state.log = log;
         this.state.review = this.reviewStore.review;
+        const persistedId = log.idMap?.get(id) ?? id;
+        const snapshot = this.readingUndoSnapshots.get(word);
+        if (snapshot?.logId === id) snapshot.logId = persistedId;
         this.emitState();
       } catch {
         if (!isCurrent()) return false;
@@ -34847,7 +34970,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       }
       await this.refreshReadingLevelSurfacesBestEffort();
       if (!isCurrent()) return false;
-      return mode === "reading-card" ? { ok: true, undoId: id } : true;
+      const undoId = this.readingUndoSnapshots.get(word)?.logId ?? id;
+      return mode === "reading-card" ? { ok: true, undoId } : true;
     });
   }
   async undoReadingRating(word, expectedId) {
@@ -35096,7 +35220,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       });
       if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch) return null;
       this.state.recommendations = result;
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
+      const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
+      if (accepted === false) this.notice(this.t.recommendationFailed);
       return result;
     } catch {
       if (request === this.recommendationRequest && !silent) this.notice(this.t.recommendationFailed);
@@ -35111,8 +35236,11 @@ var EnglishVocabPlugin = class extends BasePlugin {
   async updateReadingStatus(event) {
     const path = event?.path ?? event?.documentPath;
     if (!path) return false;
+    this.readingStatusRequest = (this.readingStatusRequest ?? 0) + 1;
+    const request = this.readingStatusRequest;
     this.latestReadingEvent = { ...event, path };
-    if (!this.readingStatusHandle || !this.recommender) return false;
+    this.readingStatusDirty = true;
+    if (!this.readingStatusHandle || !this.recommender || !this.indexProjectionReady) return false;
     const generation = this.rootGeneration;
     const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
     let doc;
@@ -35121,7 +35249,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } catch {
       return false;
     }
-    if (this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
+    if (request !== this.readingStatusRequest || this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
     if (doc?._tag === "Err") return false;
     let binding;
     try {
@@ -35129,21 +35257,27 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } catch {
       return false;
     }
-    if (generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch || this.reviewStore?.rootGeneration !== binding.storageRootGeneration || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
+    if (request !== this.readingStatusRequest || generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch || this.reviewStore?.rootGeneration !== binding.storageRootGeneration || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
     const review = this.state.review;
     const entries = this.state.entries;
     const detected = detectEnglish(doc.content);
-    if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
+    if (!detected.english) {
+      const accepted2 = this.readingStatusHandle.set(epoch, path, null);
+      if (request === this.readingStatusRequest && accepted2 !== false) this.readingStatusDirty = false;
+      return accepted2;
+    }
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? "" } };
     const item = await this.recommender.scoreDocument(meta, doc, review, entries, epoch);
     if (!item) return false;
-    if ((this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch || generation !== this.rootGeneration || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
-    return this.readingStatusHandle.set(epoch, path, {
+    if (request !== this.readingStatusRequest || (this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch || generation !== this.rootGeneration || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
+    const accepted = this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
       tone: item.tone,
       title: this.t.readingStatusTitle(item.rate, item.counted),
       action: { kind: "open-panel", panelId: "english-vocab" }
     });
+    if (request === this.readingStatusRequest && accepted !== false) this.readingStatusDirty = false;
+    return accepted;
   }
   async registerTools() {
     await this.addAgentTool({
@@ -35185,7 +35319,8 @@ var EnglishVocabPlugin = class extends BasePlugin {
       this.learningSuggestionsHandle?.dispose?.();
       this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: "reading-recommendations", heading: this.t.recommendations }));
       const epoch = this.app.workspace?.scope?.().epoch ?? "legacy";
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
+      const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
+      if (accepted === false) this.notice(this.t.recommendationFailed);
     }
     this.emitState();
     await this.refreshLatestReadingStatus();
@@ -35237,6 +35372,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
       const lemma = result?.lemma;
       const entry = result?.entry;
       if (!lemma || !entry) return { outcome: "aborted", summary: "missing dictionary entry" };
+      if (this.index?.isAmbiguous(lemma)) return { outcome: "aborted", summary: this.t.duplicateWord };
       if (this.index?.get(lemma)) return { outcome: "aborted", summary: this.t.collectedWord };
       const slug = slugFor(lemma);
       let path;

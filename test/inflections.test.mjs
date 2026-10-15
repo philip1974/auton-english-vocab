@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSurfaceMap } from '../src/inflections.mjs';
+import { AMBIGUOUS_INFLECTION_SURFACES, buildSurfaceMap } from '../src/inflections.mjs';
 
 describe('inflections', () => {
   it('should generate regular noun verb participle and adjective surfaces when lemma is collected', () => {
@@ -67,9 +67,15 @@ describe('inflections', () => {
     expect(buildSurfaceMap(['ran']).get('ran')).toBe('ran');
   });
 
-  it('should generate third person es forms for verbs ending in o', () => {
+  it('should not map ambiguous independent words to an inflection lemma', () => {
+    expect([...AMBIGUOUS_INFLECTION_SURFACES]).toEqual(['does', 'left', 'saw']);
+    const map = buildSurfaceMap([{ word: 'do', pos: 'verb' }, { word: 'leave', pos: 'verb' }, { word: 'see', pos: 'verb' }]);
+    for (const surface of AMBIGUOUS_INFLECTION_SURFACES) expect(map.has(surface)).toBe(false);
+  });
+
+  it('should generate unambiguous third person es forms for verbs ending in o', () => {
     const map = buildSurfaceMap([{ word: 'do', pos: 'verb' }, { word: 'go', pos: 'verb' }]);
-    expect(map.get('does')).toBe('do');
+    expect(map.has('does')).toBe(false);
     expect(map.get('goes')).toBe('go');
   });
 
@@ -151,7 +157,8 @@ describe('inflections', () => {
       { word: 'child', pos: 'noun' }, { word: 'beautiful', pos: 'adjective' },
       { word: "can't", pos: 'verb' }, { word: 'does', pos: 'verb' },
     ]);
-    expect([...map.keys()]).toEqual(expect.arrayContaining(['see', 'sees', 'seeing', 'saw', 'seen', 'run', 'runs', 'running', 'ran', 'write', 'writes', 'writing', 'wrote', 'written', 'child', 'children', 'beautiful', "can't", 'does']));
+    expect([...map.keys()]).toEqual(expect.arrayContaining(['see', 'sees', 'seeing', 'seen', 'run', 'runs', 'running', 'ran', 'write', 'writes', 'writing', 'wrote', 'written', 'child', 'children', 'beautiful', "can't", 'does']));
+    expect(map.has('saw')).toBe(false);
     for (const fake of ['seed', 'seing', 'runed', 'runing', 'runned', 'writed', 'childs', 'beautifuler', 'beautifulest', "can'ted", "can'ting", 'doeses', 'doesed']) expect(map.has(fake)).toBe(false);
   });
 

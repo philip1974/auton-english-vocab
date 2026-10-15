@@ -1,3 +1,5 @@
+import { escapeExampleText } from './context-cloze.mjs';
+
 const WORD_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*$/i;
 const WORD_PREFIX_RE = /^(?=.{1,64}$)[a-z]+(?:['-][a-z]+)*(?:['-])?$/i;
 
@@ -52,7 +54,9 @@ export function exampleLine(example, source) {
   let text = String(example ?? '').trim().replace(/\s+/g, ' ');
   if (!text) return '';
   const link = sourceLink(source);
-  if (!link && /\s—\s(?:\[(?:\\.|[^\]])+\]\([^)]+\)|<https?:\/\/[^>]+>)\s*$/u.test(text)) text += ' <!-- ev:no-source -->';
+  const needsNoSourceMarker = !link && /\s—\s(?:\[(?:\\.|[^\]])+\]\([^)]+\)|<https?:\/\/[^>]+>)\s*$/u.test(text);
+  text = escapeExampleText(text);
+  if (needsNoSourceMarker) text += ' <!-- ev:no-source -->';
   return `- ${text}${link ? ` — ${link}` : ''}`;
 }
 

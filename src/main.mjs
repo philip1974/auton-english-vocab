@@ -76,10 +76,14 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
+    this.readingStatusRequest = 0;
+    this.readingStatusDirty = false;
+    this.indexProjectionReady = false;
     this.readingUndoSnapshots = new Map();
     this.localizedPanelHandle = null;
     this.localizedCommandHandle = null;
     this.selectionActionHandle = null;
+    this.onEvent?.('appearance.locale-changed', (event) => this.handleLocaleChanged(event));
     this.registerLocalizedShell();
     if (!hasRequiredHost(this.app)) return;
     await this.loadPreferences();
@@ -92,7 +96,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const generation = this.invalidateRoot();
       return this.handleRootChanged(generation);
     });
-    this.onEvent?.('appearance.locale-changed', (event) => this.handleLocaleChanged(event));
+    const finalLocale = currentLocale();
+    if (finalLocale !== this.locale) await this.handleLocaleChanged(finalLocale);
   }
 
   registerLocalizedShell() {
@@ -138,6 +143,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.recommendationRequest += 1;
     this.index?.reset?.();
     this.indexBinding = null;
+    this.indexProjectionReady = false;
     this.state.entries = [];
     this.state.invalid = [];
     this.state.review = emptyReview();
@@ -145,6 +151,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.state.recommendations = null;
     this.state.recommendationLoading = null;
     this.latestReadingEvent = null;
+    this.readingStatusDirty = false;
+    this.readingStatusRequest += 1;
     this.readingUndoSnapshots.clear();
     this.readingHandle?.setTerms?.([]);
     this.emitState();
@@ -305,6 +313,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     }
     try {
       this.indexBinding = { generation, epoch: binding.workspaceEpoch, storageRootGeneration: binding.storageRootGeneration };
+      this.indexProjectionReady = false;
       let result;
       try {
         result = await this.index.refresh();
@@ -320,6 +329,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
+      this.indexProjectionReady = true;
       const beforeRecommendations = await this.captureRootBinding();
       if (generation !== this.rootGeneration) return;
       if (!beforeRecommendations.stable || beforeRecommendations.workspaceEpoch !== binding.workspaceEpoch || beforeRecommendations.storageRootGeneration !== binding.storageRootGeneration) {
@@ -338,6 +348,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       if (!finalBinding.stable || finalBinding.workspaceEpoch !== binding.workspaceEpoch || finalBinding.storageRootGeneration !== binding.storageRootGeneration) {
         return this.handleRootChanged(this.invalidateRoot());
       }
+      if (this.readingStatusDirty) await this.refreshLatestReadingStatus();
     } finally {
       if (generation === this.rootGeneration) {
         this.state.loading = null;
@@ -415,6 +426,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
         if (!isCurrent()) return false;
         this.state.log = log;
         this.state.review = this.reviewStore.review;
+        const persistedId = log.idMap?.get(id) ?? id;
+        const snapshot = this.readingUndoSnapshots.get(word);
+        if (snapshot?.logId === id) snapshot.logId = persistedId;
         this.emitState();
       } catch {
         if (!isCurrent()) return false;
@@ -422,7 +436,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       }
       await this.refreshReadingLevelSurfacesBestEffort();
       if (!isCurrent()) return false;
-      return mode === 'reading-card' ? { ok: true, undoId: id } : true;
+      const undoId = this.readingUndoSnapshots.get(word)?.logId ?? id;
+      return mode === 'reading-card' ? { ok: true, undoId } : true;
     });
   }
 
@@ -694,7 +709,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       });
       if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return null;
       this.state.recommendations = result;
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
+      const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items, this.locale));
+      if (accepted === false) this.notice(this.t.recommendationFailed);
       return result;
     } catch {
       if (request === this.recommendationRequest && !silent) this.notice(this.t.recommendationFailed);
@@ -710,8 +726,11 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async updateReadingStatus(event) {
     const path = event?.path ?? event?.documentPath;
     if (!path) return false;
+    this.readingStatusRequest = (this.readingStatusRequest ?? 0) + 1;
+    const request = this.readingStatusRequest;
     this.latestReadingEvent = { ...event, path };
-    if (!this.readingStatusHandle || !this.recommender) return false;
+    this.readingStatusDirty = true;
+    if (!this.readingStatusHandle || !this.recommender || !this.indexProjectionReady) return false;
     const generation = this.rootGeneration;
     const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
     let doc;
@@ -720,29 +739,35 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } catch {
       return false;
     }
-    if (this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
+    if (request !== this.readingStatusRequest || this.workspaceEpoch() !== epoch || generation !== this.rootGeneration) return false;
     if (doc?._tag === 'Err') return false;
     let binding;
     try { binding = await this.captureRootBinding(); } catch { return false; }
-    if (generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch
+    if (request !== this.readingStatusRequest || generation !== this.rootGeneration || !binding.stable || binding.workspaceEpoch !== epoch
       || this.reviewStore?.rootGeneration !== binding.storageRootGeneration
       || this.indexBinding?.generation !== generation || this.indexBinding?.epoch !== epoch
       || this.indexBinding?.storageRootGeneration !== binding.storageRootGeneration) return false;
     const review = this.state.review;
     const entries = this.state.entries;
     const detected = detectEnglish(doc.content);
-    if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
+    if (!detected.english) {
+      const accepted = this.readingStatusHandle.set(epoch, path, null);
+      if (request === this.readingStatusRequest && accepted !== false) this.readingStatusDirty = false;
+      return accepted;
+    }
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? '' } };
     const item = await this.recommender.scoreDocument(meta, doc, review, entries, epoch);
     if (!item) return false;
-    if ((this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch || generation !== this.rootGeneration
+    if (request !== this.readingStatusRequest || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch || generation !== this.rootGeneration
       || review !== this.state.review || this.reviewStore?.rootGeneration !== binding.storageRootGeneration) return false;
-    return this.readingStatusHandle.set(epoch, path, {
+    const accepted = this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
       tone: item.tone,
       title: this.t.readingStatusTitle(item.rate, item.counted),
       action: { kind: 'open-panel', panelId: 'english-vocab' },
     });
+    if (request === this.readingStatusRequest && accepted !== false) this.readingStatusDirty = false;
+    return accepted;
   }
 
   async registerTools() {
@@ -786,7 +811,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       this.learningSuggestionsHandle?.dispose?.();
       this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: 'reading-recommendations', heading: this.t.recommendations }));
       const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
-      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
+      const accepted = this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? [], this.locale));
+      if (accepted === false) this.notice(this.t.recommendationFailed);
     }
     this.emitState();
     await this.refreshLatestReadingStatus();
@@ -843,6 +869,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const lemma = result?.lemma;
       const entry = result?.entry;
       if (!lemma || !entry) return { outcome: 'aborted', summary: 'missing dictionary entry' };
+      if (this.index?.isAmbiguous(lemma)) return { outcome: 'aborted', summary: this.t.duplicateWord };
       if (this.index?.get(lemma)) return { outcome: 'aborted', summary: this.t.collectedWord };
       const slug = slugFor(lemma);
       let path;

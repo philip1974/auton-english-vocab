@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath, surfacesFor } from '../src/context-cloze.mjs';
+import { buildNote, parseNote } from '../src/note-format.mjs';
 
 describe('context cloze', () => {
   it('should cloze explicit be and have irregular forms without leaking the answer', () => {
@@ -44,6 +45,15 @@ describe('context cloze', () => {
     expect(parseExampleLine('- Run now.')).toEqual({ sentence: 'Run now.', source: null });
   });
 
+  it('should preserve a literal internal no-source marker in user example text', () => {
+    const sentence = 'Keep <!-- ev:no-source -->';
+    const noteLine = parseNote(buildNote({ word: 'keep', definition: 'retain', example: sentence })).entry.examples[0];
+    expect(parseExampleLine(noteLine)).toEqual({ sentence, source: null });
+    const encoded = 'Keep &lt;!-- ev:no-source --&gt; too';
+    const encodedLine = parseNote(buildNote({ word: 'keep', definition: 'retain', example: encoded })).entry.examples[0];
+    expect(parseExampleLine(encodedLine)).toEqual({ sentence: encoded, source: null });
+  });
+
   it('should resolve example source path when source stays inside readable markdown roots', () => {
     expect(resolveExampleSourcePath('wiki/vocab/run.md', 'wiki/source.md')).toBe('wiki/source.md');
     expect(resolveExampleSourcePath('wiki/vocab/run.md', '../sources/run.md')).toBe('wiki/sources/run.md');
@@ -70,6 +80,18 @@ describe('context cloze', () => {
     expect(clozeSentence('Run, she ran while running studies.', { word: 'run', pos: 'verb' }).text).toBe('_____, she _____ while _____ studies.');
     expect(clozeSentence('She studies daily.', { word: 'study', pos: 'verb' }).text).toBe('She _____ daily.');
     expect(clozeSentence('A rerun is not run.', { word: 'run' }).text).toBe('A rerun is not _____.');
+  });
+
+  it('should skip ambiguous inflection surfaces without reliable local part of speech', () => {
+    expect(clozeSentence('He bought a new saw.', { word: 'see', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('Turn left here.', { word: 'leave', pos: 'verb' }).hits).toEqual([]);
+    expect(clozeSentence('The does crossed the road.', { word: 'do', pos: 'verb' }).hits).toEqual([]);
+  });
+
+  it('should cloze straight and curly possessive stems without splitting contractions', () => {
+    expect(clozeSentence("The runner's pace and runner’s speed increased.", { word: 'runner', pos: 'noun' }).text).toBe("The _____'s pace and _____’s speed increased.");
+    expect(clozeSentence("The runners' pace increased.", { word: 'runner', pos: 'noun' }).text).toBe("The _____' pace increased.");
+    expect(clozeSentence("I can't stop.", { word: 'can', pos: 'verb' }).hits).toEqual([]);
   });
 
   it('should cloze prototype-shaped words as ordinary vocabulary surfaces', () => {
