@@ -16,6 +16,14 @@ English Vocab is an Auton Knowledge runtime plugin for collecting English words 
 - 跳过无变化的收词提案，并隔离损坏复习卡与不支持的存储版本。
 - 严格校验复习存储结构，并用 generation 与条件撤销隔离切库、并发评分竞态。
 - 支持运行时切换界面语言，改进首次使用空态、拼写输入与超大词表提示。
+- 词形以随包离线词典为准：词典给出的变形需反向校验，规则只在词典缺该类变形时补充，并过滤与独立词条冲突的形式；`saw/left/rose` 等 17 个同形词经人工审定后不自动归并。
+- 知识库切换收敛到单一一致性入口：事件在加载最早处注册并重放，静默切库可自愈，旧库的写入与计算不会落到新库。
+- FSRS 卡片完整保存 `learning_steps`（旧卡按间隔推断）；当天新词额度单独记录，日志有数量与字节上限。
+- 偏好保存串行化（最后一次操作获胜）；停用插件时会等待在途写入（最多 8 秒）并取消朗读、索引与推荐扫描。
+
+已知限制：宿主的插件数据写入没有条件写入（CAS）或取消能力。如果一次偏好写入耗时超过 8 秒、停用时被迫放弃等待，且这次写入在新实例保存之后才落盘，那么较早的偏好可能覆盖较新的选择。正常存储下写入只需毫秒，这种情况只会在存储严重异常时出现。
+
+Known limitation: host plugin-data writes have no compare-and-swap or cancellation. If a single preference write takes longer than the 8-second unload drain and lands after the re-enabled instance saves, the older preference can win. This only happens when storage is already badly degraded.
 
 ## 功能 / Features
 
