@@ -4,6 +4,19 @@ English Vocab 是一个 Auton Knowledge 运行时插件，用来把阅读中的�
 
 English Vocab is an Auton Knowledge runtime plugin for collecting English words from reading and reviewing them with FSRS spaced repetition.
 
+## 0.7.0 修复
+
+- 串行化复习写入，并在 revision 冲突后重放评分、撤销与状态操作。
+- 修正词形还原、离线词典释义、笔记例句边界和推荐阅读容错。
+- 改善面板输入保持、阅读卡片布局、状态文案与超大生词本降级行为。
+- 评分日志采用可恢复待写队列，日志写入失败后会在下次加载时补齐。
+- 收紧词性约束与词典建议排序，并补全无效笔记、不可读文章和刷新失败提示。
+- 将阅读卡片撤销绑定到知识库与评分结果，避免切换知识库或后续评分后误撤销。
+- 无词性笔记会从释义前缀推断词性；规则词形采用保守拼写，不再生成常见假词形。
+- 跳过无变化的收词提案，并隔离损坏复习卡与不支持的存储版本。
+- 严格校验复习存储结构，并用 generation 与条件撤销隔离切库、并发评分竞态。
+- 支持运行时切换界面语言，改进首次使用空态、拼写输入与超大词表提示。
+
 ## 功能 / Features
 
 - 右侧面板 `English Vocab`：今日复习、生词本搜索、熟悉度标记、忽略与恢复。

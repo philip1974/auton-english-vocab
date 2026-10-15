@@ -5,6 +5,7 @@ import { familiarityFor } from './familiarity.mjs';
 
 const SHARDS = ['level-cache-0.json', 'level-cache-1.json', 'level-cache-2.json', 'level-cache-3.json'];
 const MAX_SHARD_BYTES = 3.5 * 1024 * 1024;
+const utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 
 function hashPath(path) {
   let hash = 2166136261;
@@ -149,9 +150,9 @@ export class LevelCache {
     const items = {};
     for (const [path, entry] of this.items.entries()) if (entryShard(path) === name) items[path] = entry;
     let text = JSON.stringify({ version: 1, items });
-    if (text.length > this.maxShardBytes) {
+    if (utf8Bytes(text) > this.maxShardBytes) {
       const sorted = Object.entries(items).sort((a, b) => (a[1].usedAt ?? 0) - (b[1].usedAt ?? 0));
-      while (text.length > this.maxShardBytes && sorted.length > 0) {
+      while (utf8Bytes(text) > this.maxShardBytes && sorted.length > 0) {
         const [oldPath] = sorted.shift();
         delete items[oldPath];
         this.items.delete(oldPath);

@@ -196,6 +196,16 @@ const IRREGULAR_VERBS = {
   write: ['wrote', 'written'],
 };
 
+const IRREGULAR_NOUNS = {
+  child: ['children'], man: ['men'], woman: ['women'], person: ['people'], mouse: ['mice'],
+  tooth: ['teeth'], foot: ['feet'], goose: ['geese'], ox: ['oxen'],
+};
+
+const IRREGULAR_COMPARATIVES = {
+  good: ['better', 'best'], well: ['better', 'best'], bad: ['worse', 'worst'],
+  far: ['farther', 'farthest', 'further', 'furthest'],
+};
+
 const IRREGULAR = new Map(Object.entries({
   ...IRREGULAR_VERBS,
   be: ['am', 'are', 'is', 'was', 'were', 'been', 'being'],
@@ -215,7 +225,7 @@ const IRREGULAR = new Map(Object.entries({
 }).map(([lemma, forms]) => [lemma, [...new Set(forms)].filter((form) => form !== lemma)]));
 
 function normalize(value) {
-  return String(value ?? '').normalize('NFC').trim().toLowerCase();
+  return String(value ?? '').normalize('NFC').trim().toLowerCase().replaceAll('’', "'");
 }
 
 function isSurface(value) {
@@ -240,47 +250,96 @@ function addCandidate(set, surface) {
   if (isSurface(surface) && !DENYLIST.has(surface)) set.add(surface);
 }
 
-function isComparativePos(value) {
-  const pos = normalize(value);
-  return ['adj', 'adjective', 'adv', 'adverb', '形容词', '副词'].includes(pos);
+function normalizePos(value) {
+  const pos = normalize(value).replace(/\.$/u, '');
+  if (['n', 'noun', '名词'].includes(pos)) return 'noun';
+  if (['v', 'verb', '动词'].includes(pos)) return 'verb';
+  if (['adj', 'adjective', 'adv', 'adverb', '形容词', '副词'].includes(pos)) return 'comparative';
+  return '';
 }
 
-function generatedForms(lemma, comparative) {
+function partsOf(value) {
+  const parts = new Set();
+  const add = (token) => {
+    const part = normalizePos(token);
+    if (part) parts.add(part);
+  };
+  const pos = typeof value === 'object' && value !== null ? value.pos : '';
+  for (const token of String(pos ?? '').split(/[\s,;/；|]+/u)) add(token);
+  if (parts.size === 0 && typeof value === 'object' && value !== null) {
+    const definition = String(value.definition ?? '');
+    for (const match of definition.matchAll(/(?:^|[;；\n])\s*(vt|vi|v|n|a|adj|adv|verb|noun|adjective|adverb)\./giu)) add(match[1]);
+  }
+  return parts;
+}
+
+const INFLECTED_VERB_SURFACES = new Set([
+  ...Object.values(IRREGULAR_VERBS).flat(), 'am', 'are', 'is', 'does', 'has',
+]);
+const INFLECTED_NOUN_SURFACES = new Set(Object.values(IRREGULAR_NOUNS).flat());
+
+function thirdPerson(lemma) {
+  if (lemma === 'be') return 'is';
+  if (lemma === 'have') return 'has';
+  if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ies`;
+  return /(s|x|z|ch|sh|o)$/u.test(lemma) ? `${lemma}es` : `${lemma}s`;
+}
+
+function presentParticiple(lemma) {
+  if (lemma === 'be') return 'being';
+  if (lemma.endsWith('ie')) return `${lemma.slice(0, -2)}ying`;
+  if (/(?:ee|ye|oe)$/u.test(lemma)) return `${lemma}ing`;
+  if (lemma.endsWith('e')) return `${lemma.slice(0, -1)}ing`;
+  const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
+  if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ing`;
+  if (syllables > 1 && isCvc(lemma)) return `${lemma}ing`;
+  return `${lemma}ing`;
+}
+
+function regularPast(lemma) {
+  if (endsConsonantY(lemma)) return `${lemma.slice(0, -1)}ied`;
+  if (lemma.endsWith('e')) return `${lemma}d`;
+  const syllables = lemma.match(/[aeiouy]+/gu)?.length ?? 0;
+  if (syllables === 1 && isCvc(lemma)) return `${lemma}${lemma.at(-1)}ed`;
+  if (syllables > 1 && isCvc(lemma)) return `${lemma}ed`;
+  return `${lemma}ed`;
+}
+
+function generatedForms(lemma, pos) {
   const forms = new Set();
-  for (const form of IRREGULAR.get(lemma) ?? []) addCandidate(forms, form);
-  if (lemma.length < 3) return forms;
-  if (endsConsonantY(lemma)) {
-    addCandidate(forms, `${lemma.slice(0, -1)}ies`);
-    addCandidate(forms, `${lemma.slice(0, -1)}ied`);
-    if (comparative) {
+  if (lemma.includes("'")) return forms;
+  if (pos === 'noun') {
+    if (INFLECTED_NOUN_SURFACES.has(lemma) && !IRREGULAR_NOUNS[lemma]) return forms;
+    const irregular = IRREGULAR_NOUNS[lemma];
+    if (irregular) for (const form of irregular) addCandidate(forms, form);
+    else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
+    else if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+    else addCandidate(forms, `${lemma}s`);
+    return forms;
+  }
+  if (pos === 'comparative') {
+    const irregular = IRREGULAR_COMPARATIVES[lemma];
+    if (irregular) for (const form of irregular) addCandidate(forms, form);
+    else if (endsConsonantY(lemma)) {
       addCandidate(forms, `${lemma.slice(0, -1)}ier`);
       addCandidate(forms, `${lemma.slice(0, -1)}iest`);
-    }
-  } else {
-    addCandidate(forms, `${lemma}s`);
-    addCandidate(forms, `${lemma}ed`);
-    if (comparative) {
+    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1 && isCvc(lemma)) {
+      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
+      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
+    } else if ((lemma.match(/[aeiouy]+/gu)?.length ?? 0) === 1) {
       addCandidate(forms, `${lemma}er`);
       addCandidate(forms, `${lemma}est`);
     }
+    return forms;
   }
-  if (/(s|x|z|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
-  if (lemma.endsWith('ie')) {
-    addCandidate(forms, `${lemma.slice(0, -2)}ying`);
-  } else if (lemma.endsWith('e')) {
-    addCandidate(forms, `${lemma}d`);
-    addCandidate(forms, `${lemma.slice(0, -1)}ing`);
-  } else {
-    addCandidate(forms, `${lemma}ing`);
-  }
-  if (isCvc(lemma)) {
-    addCandidate(forms, `${lemma}${lemma.at(-1)}ed`);
-    addCandidate(forms, `${lemma}${lemma.at(-1)}ing`);
-    if (comparative) {
-      addCandidate(forms, `${lemma}${lemma.at(-1)}er`);
-      addCandidate(forms, `${lemma}${lemma.at(-1)}est`);
-    }
-  }
+  if (pos !== 'verb') return forms;
+  if (INFLECTED_VERB_SURFACES.has(lemma) && !IRREGULAR_VERBS[lemma]) return forms;
+  const irregular = IRREGULAR_VERBS[lemma];
+  for (const form of irregular ?? []) addCandidate(forms, form);
+  if (lemma === 'be') for (const form of ['am', 'are', 'is', 'was', 'were', 'been', 'being']) addCandidate(forms, form);
+  addCandidate(forms, thirdPerson(lemma));
+  addCandidate(forms, presentParticiple(lemma));
+  if (!irregular) addCandidate(forms, regularPast(lemma));
   return forms;
 }
 
@@ -293,23 +352,29 @@ function chooseLemma(surface, current, next, collected) {
 
 export function buildSurfaceMap(words) {
   const collected = new Set();
-  const comparative = new Set();
+  const parts = new Map();
   for (const value of words) {
     const word = normalize(typeof value === 'object' && value !== null ? value.word : value);
     if (!isSurface(word)) continue;
     collected.add(word);
-    if (typeof value === 'object' && value !== null && isComparativePos(value.pos)) comparative.add(word);
+    const found = parts.get(word) ?? new Set();
+    for (const part of partsOf(value)) found.add(part);
+    parts.set(word, found);
   }
   const candidates = new Map();
   for (const lemma of collected) {
-    const surfaces = new Set([lemma, ...generatedForms(lemma, comparative.has(lemma))]);
-    for (const [base, forms] of IRREGULAR.entries()) {
-      if (forms.includes(lemma)) surfaces.add(base);
-    }
+    const surfaces = new Set([lemma]);
+    if (lemma.includes("'")) surfaces.add(lemma.replaceAll("'", '’'));
+    for (const part of parts.get(lemma) ?? []) for (const surface of generatedForms(lemma, part)) surfaces.add(surface);
     for (const surface of surfaces) {
       if (!isSurface(surface) || (surface !== lemma && DENYLIST.has(surface))) continue;
       candidates.set(surface, chooseLemma(surface, candidates.get(surface), lemma, collected));
     }
   }
   return candidates;
+}
+
+export function inflectionPriority(lemma, surface) {
+  if (surface === lemma) return 0;
+  return (IRREGULAR.get(lemma) ?? []).includes(surface) ? 1 : 2;
 }

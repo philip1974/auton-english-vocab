@@ -94,6 +94,16 @@ describe('level cache and novel word scoring', () => {
     expect(cache.items.size).toBeLessThan(2);
   });
 
+  it('should enforce shard limits by utf8 bytes when paths and titles contain unicode', async () => {
+    const io = storage();
+    const cache = new LevelCache(io, { maxShardBytes: 400 });
+    await cache.load();
+    await cache.set(cache.epoch, `wiki/${'界'.repeat(40)}.md`, 'h1', { title: '界'.repeat(80), counted: 1, base: 0, words: {}, usedAt: 1 });
+    await cache.flush();
+    const written = [...io.files.values()][0];
+    expect(new TextEncoder().encode(written).byteLength).toBeLessThanOrEqual(400);
+  });
+
   it('should drop late async writes when the workspace epoch has changed', async () => {
     const cache = new LevelCache(storage());
     await cache.load();

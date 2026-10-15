@@ -31,8 +31,17 @@ describe('ui text', () => {
         text.proposalAborted(1, 'alpha'),
         text.proposalFailed(1),
         text.proposalDescription(1, 'alpha'),
-        text.skippedSummary(1, 2),
+        text.skippedSummary(1, 2, 3),
         text.recommendationProgress(1, 2),
+        text.invalidNotes(1),
+        text.invalidNoteReason({ kind: 'parse' }),
+        text.invalidNoteReason({ kind: 'read', code: 'DOCUMENT_TOO_LARGE' }),
+        text.invalidNoteReason({ kind: 'read', code: 'DOCUMENT_NOT_TEXT' }),
+        text.invalidNoteReason({ kind: 'read', code: 'READ_FAILED' }),
+        text.invalidReviewCards(1),
+        text.unsupportedReviewVersion,
+        text.pendingLogRecoveryFailed,
+        text.emptyNotebook,
         text.readingStatus(1, 'easy'),
         text.readingStatus(4, 'good'),
         text.readingStatus(9, 'hard'),
@@ -57,6 +66,15 @@ describe('ui text', () => {
         text.addExampleDescription('alpha'),
       ];
       expect(rendered.every(Boolean)).toBe(true);
+    }
+  });
+
+  it('should localize every inflection relation and its generic fallback', () => {
+    const kinds = ['past', 'pastParticiple', 'presentParticiple', 'plural', 'thirdPerson', 'comparative', 'superlative', ''];
+    for (const locale of ['en', 'zh', 'ja', 'ko']) {
+      const rendered = kinds.map((kind) => uiText(locale).inflectionOf('run', kind));
+      expect(rendered.every((value) => value.includes('run'))).toBe(true);
+      expect(new Set(rendered).size).toBe(kinds.length);
     }
   });
 

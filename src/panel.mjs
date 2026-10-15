@@ -1,10 +1,11 @@
-import { dueQueue } from './scheduler.mjs';
+import { activeReviewLog, dueQueue } from './scheduler.mjs';
 import { familiarityFor } from './familiarity.mjs';
 import { assertEnglishWord } from './note-format.mjs';
 import { uiText, currentLocale } from './ui-text.mjs';
 import { requestTextForWord, requestTextFromSelection } from './request-text.mjs';
 import { validateLevelSettings } from './reading-level.mjs';
 import { clozeSentence, parseExampleLine, pickExample, resolveExampleSourcePath } from './context-cloze.mjs';
+import { normalizeDefinitionLine } from './dictionary.mjs';
 
 
 function el(tag, className, text) {
@@ -22,7 +23,7 @@ function button(text, onClick, className = '') {
 }
 
 function reviewCount(log, word) {
-  return (log ?? []).filter((item) => item?.word === word).length;
+  return activeReviewLog(log).filter((item) => item?.word === word).length;
 }
 
 /** The "From <article>" line under a context sentence: a link when the host can open it, text otherwise. */
@@ -83,7 +84,7 @@ function defaultModeFor(state, item) {
 
 function dictionaryLineGroups(entry, locale) {
   const zh = String(entry?.t ?? '').split('\n').filter(Boolean);
-  const en = String(entry?.d ?? '').split('\n').filter(Boolean);
+  const en = String(entry?.d ?? '').split('\n').filter(Boolean).map(normalizeDefinitionLine);
   const groups = locale.toLowerCase().startsWith('zh')
     ? [['zh', zh], ['en', en]]
     : [['en', en], ['zh', zh]];
@@ -105,7 +106,8 @@ export function hasRequiredHost(app) {
 }
 
 export function renderPanel(container, controls) {
-  const t = uiText(currentLocale());
+  let locale = controls.locale ?? currentLocale();
+  let t = uiText(locale);
   const read = () => controls.getState?.() ?? controls;
   container.textContent = '';
   container.className = 'english-vocab-panel';
@@ -124,10 +126,13 @@ export function renderPanel(container, controls) {
   let flipped = false;
   let lastSpokenWord = null;
   let dictionaryResult = null;
+  let suggestionRequest = 0;
+  let lookupRequest = 0;
   const phonetics = new Map();
 
   const review = (rating) => {
     const state = read();
+    if (state.mutationPending) return;
     const item = dueQueue(state.entries, state.review, { log: state.log })[0];
     if (!item) return;
     controls.cancelSpeech?.();
@@ -144,6 +149,7 @@ export function renderPanel(container, controls) {
       button(`3 ${t.good}`, () => review('Good')),
       button(`4 ${t.easy}`, () => review('Easy'), 'ev-rating-easy'),
     );
+    for (const rating of row.querySelectorAll('button')) rating.disabled = read().mutationPending === true;
     return row;
   };
 
@@ -158,6 +164,8 @@ export function renderPanel(container, controls) {
     } else if (item && !modeSelected && (modeWord !== item.word || !validModes.includes(mode))) {
       mode = defaultModeFor(state, item);
       modeWord = item.word;
+    } else if (!item && !validModes.includes(mode)) {
+      mode = 'context';
     }
     const modeRow = el('div', 'ev-mode');
     for (const [id, label] of [['context', t.context], ['flip', t.flip], ['reverse', t.reverse], ['listening', t.listening]]) {
@@ -179,7 +187,7 @@ export function renderPanel(container, controls) {
     if (state.entries.length > 0 && !hasProgress) body.append(el('p', 'ev-note', t.emptyProgress));
     if (mode === 'listening') body.append(el('p', 'ev-note', controls.hasEnglishVoice?.() ? t.listeningInterrupts : t.noEnglishVoice));
     if (!item) {
-      body.append(el('p', 'ev-empty', t.noCards));
+      body.append(el('p', 'ev-empty', state.entries.length === 0 ? t.emptyNotebook : t.noCards));
       return;
     }
     if (mode === 'listening' && lastSpokenWord !== item.word) {
@@ -231,6 +239,7 @@ export function renderPanel(container, controls) {
       if (example) card.append(el('p', 'ev-example', example));
       const input = el('input', 'ev-input');
       input.placeholder = t.spellingPlaceholder;
+      input.dataset.role = 'spelling-answer';
       const submit = () => review(input.value.trim().toLowerCase() === item.word ? 'Good' : 'Again');
       input.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
       card.append(input, button(t.answer, submit));
@@ -257,29 +266,43 @@ export function renderPanel(container, controls) {
       const title = el('div', 'ev-dict-head');
       title.append(el('strong', 'ev-row-word', result.surface === result.lemma ? result.lemma : `${result.surface} → ${result.lemma}`));
       if (result.entry.p) title.append(el('small', 'ev-reading-phonetic', `/${result.entry.p}/`));
-      resultBox.append(title, renderDictionaryDefinition(result.entry, currentLocale()));
+      resultBox.append(title);
+      if (result.inflection) resultBox.append(button(t.inflectionOf(result.inflection.lemma, result.inflection.kind), () => {
+        lookupInput.value = result.inflection.lemma;
+        runLookup(result.inflection.lemma);
+      }, 'ev-dict-lemma-link'));
+      resultBox.append(renderDictionaryDefinition(result.entry, locale));
       const collected = state.entries.some((entry) => entry.word === result.lemma);
       resultBox.append(collected ? el('p', 'ev-note', t.collectedWord) : button(t.collectWord, () => controls.onCollectDictionaryWord?.(result, { word: result.surface, key: result.lemma, tone: null })));
     };
+    const runLookup = async (word) => {
+      const request = ++lookupRequest;
+      const query = String(word ?? '').trim().toLowerCase();
+      const result = await controls.lookupDictionary?.(query);
+      if (request !== lookupRequest || lookupInput.value.trim().toLowerCase() !== query) return;
+      showResult(result);
+    };
     const runSuggest = async () => {
+      const request = ++suggestionRequest;
       const q = lookupInput.value.trim().toLowerCase();
       suggestions.textContent = '';
       resultBox.textContent = '';
       if (q.length < 2) return;
       const items = await controls.suggestDictionary?.(q, 8) ?? [];
+      if (request !== suggestionRequest || lookupInput.value.trim().toLowerCase() !== q) return;
       if (!items.length) {
         suggestions.append(el('p', 'ev-empty', t.dictionaryNoEntry));
         return;
       }
       for (const item of items) {
-        suggestions.append(button(item.word, async () => showResult(await controls.lookupDictionary?.(item.word)), 'ev-dict-chip'));
+        suggestions.append(button(item.word, () => { lookupInput.value = item.word; runLookup(item.word); }, 'ev-dict-chip'));
       }
     };
-    lookupInput.addEventListener('input', () => { runSuggest(); });
-    lookupInput.addEventListener('keydown', async (event) => {
+    lookupInput.addEventListener('input', () => { dictionaryResult = null; runSuggest(); });
+    lookupInput.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
-      showResult(await controls.lookupDictionary?.(lookupInput.value));
+      runLookup(lookupInput.value);
     });
     lookupBox.append(lookupInput, suggestions, resultBox);
     body.append(lookupBox);
@@ -292,11 +315,13 @@ export function renderPanel(container, controls) {
     addRow.append(addInput, button(t.add, () => {
       let word;
       try { word = assertEnglishWord(addInput.value); } catch { controls.notify?.(t.invalidManualWord); return; }
-      if (!controls.app.chat.appendToComposer(requestTextForWord(word, currentLocale()))) controls.notify?.(t.collectFailed);
+      if (!controls.app.chat.appendToComposer(requestTextForWord(word, locale))) controls.notify?.(t.collectFailed);
     }));
     const search = el('input', 'ev-input');
     search.placeholder = t.search;
+    search.dataset.role = 'notebook-search';
     const filter = el('select', 'ev-input');
+    filter.dataset.role = 'notebook-filter';
     for (const key of ['all', 'new', 'learning', 'familiar', 'mastered', 'ignored']) {
       const option = el('option', '', t[key]);
       option.value = key;
@@ -315,9 +340,9 @@ export function renderPanel(container, controls) {
         head.append(el('strong', 'ev-row-word', entry.word), el('small', 'ev-badge', t[fam] || fam));
         const actions = el('div', 'ev-row-actions');
         const flag = current.review.flags[entry.word];
-        if (flag !== 'mastered') actions.append(button(t.markMastered, () => setFlag(entry.word, 'mastered')));
+        if (fam !== 'mastered' && flag !== 'ignored') actions.append(button(t.markMastered, () => setFlag(entry.word, 'mastered')));
         if (flag !== 'ignored') actions.append(button(t.ignore, () => setFlag(entry.word, 'ignored')));
-        if (flag === 'mastered' || flag === 'ignored') actions.append(button(t.restore, () => setFlag(entry.word, undefined)));
+        if (flag === 'mastered' || flag === 'ignored') actions.append(button(flag === 'mastered' ? t.restoreReview : t.restore, () => setFlag(entry.word, undefined)));
         row.append(head, el('div', 'ev-row-definition', entry.definition), actions);
         list.append(row);
       }
@@ -334,6 +359,19 @@ export function renderPanel(container, controls) {
     notebookTools.append(addRow, search, filter);
     body.append(notebookTools, list);
     draw();
+    if (state.invalid?.length) {
+      const invalid = el('details', 'ev-invalid-notes');
+      invalid.append(el('summary', '', t.invalidNotes(state.invalid.length)));
+      for (const item of state.invalid) {
+        const row = el('div', 'ev-invalid-note');
+        row.append(el('strong', '', item.path), el('span', '', t.invalidNoteReason(item)));
+        const raw = el('small', 'ev-note', String(item.error ?? ''));
+        raw.dataset.rawError = String(item.error ?? '');
+        row.append(raw);
+        invalid.append(row);
+      }
+      body.append(invalid);
+    }
   };
 
   const renderRecommendations = (state) => {
@@ -341,6 +379,7 @@ export function renderPanel(container, controls) {
     const settingsBox = el('section', 'ev-settings');
     settingsBox.append(el('h3', '', t.readingSettings));
     const vocab = el('select', 'ev-input');
+    vocab.dataset.role = 'level-vocabulary-size';
     for (const value of [1000, 2000, 3000, 5000, 8000, 12000, 20000]) {
       const option = el('option', '', String(value));
       option.value = String(value);
@@ -348,12 +387,14 @@ export function renderPanel(container, controls) {
       vocab.append(option);
     }
     const easy = el('input', 'ev-input');
+    easy.dataset.role = 'level-easy-max';
     easy.type = 'number';
     easy.min = '0';
     easy.max = '20';
     easy.step = '0.5';
     easy.value = String(settings.easyMax);
     const hard = el('input', 'ev-input');
+    hard.dataset.role = 'level-good-max';
     hard.type = 'number';
     hard.min = '0';
     hard.max = '20';
@@ -394,10 +435,19 @@ export function renderPanel(container, controls) {
     body.append(list);
     const skipped = result.skipped ?? {};
     body.append(el('details', 'ev-skipped'));
-    body.lastElementChild.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0)));
+    body.lastElementChild.append(el('summary', '', t.skippedSummary(skipped['not-english'] ?? 0, skipped['too-short'] ?? 0, skipped.unreadable ?? 0)));
   };
 
   const rerender = () => {
+    locale = read().locale ?? controls.locale ?? currentLocale();
+    t = uiText(locale);
+    const savedInputs = new Map([...body.querySelectorAll('[data-role]')].map((node) => [node.dataset.role, {
+      value: node.value,
+      start: node.selectionStart,
+      end: node.selectionEnd,
+      focused: document.activeElement === node,
+      word: renderedWord,
+    }]));
     const state = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [], loading: null, ...read() };
     toolbar.textContent = '';
     if (controls.app?.readingDecorations) {
@@ -428,10 +478,20 @@ export function renderPanel(container, controls) {
     if (tab === 'today') renderToday(state);
     else if (tab === 'notebook') renderNotebook(state);
     else renderRecommendations(state);
+    for (const [role, saved] of savedInputs) {
+      const node = body.querySelector(`[data-role="${role}"]`);
+      if (!node) continue;
+      if (role === 'spelling-answer' && saved.word !== renderedWord) continue;
+      node.value = saved.value;
+      if (typeof saved.start === 'number' && typeof node.setSelectionRange === 'function') node.setSelectionRange(saved.start, saved.end);
+      if (saved.focused) node.focus();
+      if (role === 'notebook-search' || role === 'notebook-filter') node.dispatchEvent(new Event(role === 'notebook-filter' ? 'change' : 'input'));
+    }
   };
 
   const onKeydown = (event) => {
     if (tab !== 'today') return;
+    if (read().mutationPending) return;
     if (event.key === ' ') { event.preventDefault(); flipped = true; rerender(); }
     if (flipped && ['1', '2', '3', '4'].includes(event.key)) review(['Again', 'Hard', 'Good', 'Easy'][Number(event.key) - 1]);
   };

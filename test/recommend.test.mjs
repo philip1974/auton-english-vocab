@@ -118,6 +118,23 @@ describe('reading recommendations', () => {
     expect(app.knowledge.readDocument).toHaveBeenCalledTimes(1);
   });
 
+  it('should skip individual rejected and error documents without aborting recommendations', async () => {
+    const app = appFor([
+      { path: 'wiki/good.md', title: 'Good', hash: 'h-good', content: english('the') },
+      { path: 'wiki/reject.md', title: 'Reject', hash: 'h-r', content: english('the') },
+      { path: 'wiki/error.md', title: 'Error', hash: 'h-e', content: english('the') },
+    ]);
+    const original = app.knowledge.readDocument;
+    app.knowledge.readDocument = async (request) => {
+      if (request.path.endsWith('reject.md')) throw new Error('denied');
+      if (request.path.endsWith('error.md')) return { _tag: 'Err', error: 'unreadable' };
+      return original(request);
+    };
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    await expect(recommender.recommend()).resolves.toMatchObject({ skipped: { unreadable: 2 } });
+  });
+
   it('should batch cache writes by dirty shard instead of rewriting on every document set', async () => {
     const docs = Array.from({ length: 8 }, (_, index) => ({ path: `wiki/${index}.md`, title: String(index), hash: `h-${index}`, content: english('the') }));
     const app = appFor(docs);

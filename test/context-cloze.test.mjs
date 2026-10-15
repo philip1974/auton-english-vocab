@@ -9,6 +9,20 @@ describe('context cloze', () => {
     });
   });
 
+  it('should parse encoded markdown source paths containing spaces unicode and parentheses', () => {
+    expect(parseExampleLine('Source line. — [A source](../sources/资料%20a%29b.md)')).toEqual({
+      sentence: 'Source line.',
+      source: { title: 'A source', path: '../sources/资料 a)b.md' },
+    });
+  });
+
+  it('should preserve a malformed encoded source path when decoding is unsafe', () => {
+    expect(parseExampleLine('Source line. — [A source](../sources/a%ZZ.md)')).toEqual({
+      sentence: 'Source line.',
+      source: { title: 'A source', path: '../sources/a%ZZ.md' },
+    });
+  });
+
   it('should parse url source when example line has an angle url source', () => {
     expect(parseExampleLine('She ran home. — <https://example.com/run>')).toEqual({
       sentence: 'She ran home.',
@@ -38,6 +52,7 @@ describe('context cloze', () => {
     expect(resolveExampleSourcePath('wiki/vocab/run.md', '')).toBeNull();
     expect(resolveExampleSourcePath('wiki/vocab/run.md', 'wiki/../../secret.md')).toBeNull();
     expect(resolveExampleSourcePath('', '../secret.md')).toBeNull();
+    expect(resolveExampleSourcePath()).toBeNull();
   });
 
   it('should include comparative surfaces when entry has adjective pos', () => {
@@ -47,9 +62,15 @@ describe('context cloze', () => {
   });
 
   it('should cloze whole inflected word surfaces when sentence contains matching tokens', () => {
-    expect(clozeSentence('Run, she ran while running studies.', { word: 'run' }).text).toBe('_____, she _____ while _____ studies.');
-    expect(clozeSentence('She studies daily.', { word: 'study' }).text).toBe('She _____ daily.');
+    expect(clozeSentence('Run, she ran while running studies.', { word: 'run', pos: 'verb' }).text).toBe('_____, she _____ while _____ studies.');
+    expect(clozeSentence('She studies daily.', { word: 'study', pos: 'verb' }).text).toBe('She _____ daily.');
     expect(clozeSentence('A rerun is not run.', { word: 'run' }).text).toBe('A rerun is not _____.');
+  });
+
+  it('should not cloze verb forms for noun entries or ambiguous entries without pos', () => {
+    expect(clozeSentence('She booked it.', { word: 'book', pos: 'noun' }).text).toBe('She booked it.');
+    expect(clozeSentence('They sawed it.', { word: 'saw', pos: 'noun' }).text).toBe('They sawed it.');
+    expect(clozeSentence('She opened it.', { word: 'open' }).text).toBe('She opened it.');
   });
 
   it('should not cloze apostrophe tokens or unrelated words when they are not exact surfaces', () => {
@@ -57,9 +78,14 @@ describe('context cloze', () => {
     expect(clozeSentence('Nothing to see.', { word: 'run' }).hits).toEqual([]);
   });
 
+  it('should treat curly and straight apostrophes as the same collected token', () => {
+    expect(clozeSentence("I don’t know, but I don't mind.", { word: "don't" }).text).toBe('I _____ know, but I _____ mind.');
+  });
+
   it('should pick examples by review log count after filtering unusable examples', () => {
     const entry = {
       word: 'run',
+      pos: 'verb',
       examples: [
         'No target here.',
         'She was running late. — [Read](wiki/read.md)',
@@ -75,7 +101,7 @@ describe('context cloze', () => {
   it('should truncate long cloze sentences on token boundaries after clozing target tokens', () => {
     const before = 'alpha '.repeat(45);
     const after = ' omega'.repeat(45);
-    const result = clozeSentence(`${before}running${after}`, { word: 'run' }, { maxLength: 120 });
+    const result = clozeSentence(`${before}running${after}`, { word: 'run', pos: 'verb' }, { maxLength: 120 });
     expect(result.text).toContain('_____');
     expect(result.text).not.toContain('running');
     expect(result.text).not.toMatch(/\b(?:run|runni|runnin|running)\b/i);
@@ -84,13 +110,13 @@ describe('context cloze', () => {
 
   it('should keep the full cloze sentence when distant hits cannot fit one safe window', () => {
     const middle = ' middle'.repeat(80);
-    const result = clozeSentence(`Run${middle} while running.`, { word: 'run' }, { maxLength: 80 });
+    const result = clozeSentence(`Run${middle} while running.`, { word: 'run', pos: 'verb' }, { maxLength: 80 });
     expect(result.text).toBe(`_____${middle} while _____.`);
     expect(result.hits).toHaveLength(2);
   });
 
   it('should keep a cloze intact when a tiny window cannot end on token boundaries', () => {
-    expect(clozeSentence('running', { word: 'run' }, { maxLength: 1 }).text).toBe('_____');
+    expect(clozeSentence('running', { word: 'run', pos: 'verb' }, { maxLength: 1 }).text).toBe('_____');
     expect(clozeSentence(null, { word: 'run' }).text).toBe('');
   });
 

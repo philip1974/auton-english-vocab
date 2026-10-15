@@ -34,10 +34,19 @@ describe('offline dictionary data', () => {
     const c = (await import('../dict/c.mjs')).default;
     const s = (await import('../dict/s.mjs')).default;
     const a = (await import('../dict/a.mjs')).default;
+    const t = (await import('../dict/t.mjs')).default;
+    const u = (await import('../dict/u.mjs')).default;
     expect(r.run).toMatchObject({ p: expect.any(String), t: expect.stringContaining('跑'), r: expect.any(Number) });
     expect(r.run.d.split('\n').length).toBeLessThanOrEqual(2);
     expect(e.ephemeral).toMatchObject({ t: expect.stringContaining('短暂') });
     expect(c.candid).toMatchObject({ t: expect.stringContaining('坦白') });
+    expect(c.candid.d.split('\n').every((line) => line.startsWith('adj.'))).toBe(true);
+    expect(t.the.d).not.toMatch(/See Thee/iu);
+    expect(t.the.d).toContain('individualize their meaning.');
+    expect(t.the.d.split('\n').every((line) => !/\bor$/u.test(line))).toBe(true);
+    expect(u.unanimous.d).toMatch(/^adj\. /u);
+    expect(u.unity.d).toMatch(/^n\. /u);
+    expect(`${u.unanimous.d}\n${u.unity.d}`).not.toMatch(/^(?:n|v|a|s|r) /mu);
     expect(s.serendipity).toMatchObject({ t: expect.stringContaining('偶然') });
     expect(a['alpha-beta']).toBeUndefined();
     for (const [word, entry] of Object.entries({ ...r, ...e, ...c, ...s, ...a })) {

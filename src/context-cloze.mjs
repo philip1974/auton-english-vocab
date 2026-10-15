@@ -13,13 +13,19 @@ function unescapeTitle(title) {
   return String(title ?? '').replace(/\\([\[\]\\])/gu, '$1');
 }
 
+function decodeSourcePath(path) {
+  try { return decodeURIComponent(path); } catch { return path; }
+}
+
 export function parseExampleLine(text) {
   const line = stripBullet(text);
+  const noSource = line.match(/^(?<sentence>[\s\S]*?)\s+<!-- ev:no-source -->\s*$/u);
+  if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
     return {
       sentence: markdown.groups.sentence.trim(),
-      source: { title: unescapeTitle(markdown.groups.title), path: markdown.groups.path.trim() },
+      source: { title: unescapeTitle(markdown.groups.title), path: decodeSourcePath(markdown.groups.path.trim()) },
     };
   }
   const url = line.match(SOURCE_URL_RE);
@@ -72,7 +78,7 @@ function tokenMatches(sentence, surfaces) {
   const hits = [];
   for (const match of sentence.matchAll(TOKEN_RE)) {
     const surface = match[0];
-    if (!surfaces.has(surface.toLowerCase())) continue;
+    if (!surfaces.has(surface.toLowerCase().replaceAll('’', "'")) && !surfaces.has(surface.toLowerCase())) continue;
     hits.push({ start: match.index, end: match.index + surface.length, surface });
   }
   return hits;

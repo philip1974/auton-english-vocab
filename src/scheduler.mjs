@@ -43,6 +43,11 @@ export function rateCard(serialized, ratingName, now = new Date()) {
   return serializeCard(scheduler.repeat(card, now)[rating].card);
 }
 
+export function activeReviewLog(log = []) {
+  const undone = new Set(log.filter((entry) => entry?.undoOf).map((entry) => entry.undoOf));
+  return log.filter((entry) => !entry?.undoOf && (!entry?.id || !undone.has(entry.id)));
+}
+
 export function dueQueue(words, review, options = {}, now = new Date()) {
   const newLimit = options.newLimit ?? 50;
   const reviewLimit = options.reviewLimit ?? 200;
@@ -63,7 +68,7 @@ export function dueQueue(words, review, options = {}, now = new Date()) {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   };
   const today = localDay(now);
-  const introduced = new Set((options.log ?? [])
+  const introduced = new Set(activeReviewLog(options.log)
     .filter((entry) => entry?.word && entry.reviewedAt && localDay(entry.reviewedAt) === today && (entry.previousState === 'New' || entry.previousState === 0 || entry.previousState == null))
     .map((entry) => entry.word)).size;
   return [...dueReview.slice(0, reviewLimit), ...dueNew.slice(0, Math.max(0, newLimit - introduced))];

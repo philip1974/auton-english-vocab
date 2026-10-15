@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendSelectionRequest, renderPanel } from '../src/panel.mjs';
 import { buildNote } from '../src/note-format.mjs';
+import { newSerializedCard } from '../src/scheduler.mjs';
 
 class FakePlugin {
   constructor(app, manifest) {
@@ -18,8 +19,13 @@ class FakePlugin {
 }
 
 function fullApp() {
-  let storedReview = null;
   let rootGeneration = 'root';
+  let revisionSequence = 0;
+  const roots = new Map();
+  const rootFiles = (root) => {
+    if (!roots.has(root)) roots.set(root, new Map());
+    return roots.get(root);
+  };
   const assertRoot = (root) => {
     if (root !== rootGeneration) throw Object.assign(new Error('root changed'), { code: 'ROOT_CHANGED' });
   };
@@ -36,12 +42,26 @@ function fullApp() {
       async scope() { return { rootGeneration }; },
       async read(root, name) {
         assertRoot(root);
-        if (name === 'review.json' && storedReview) return { found: true, text: storedReview, revision: 'r' };
-        return { found: false };
+        const file = rootFiles(root).get(name);
+        return file ? { found: true, text: file.text, revision: file.revision } : { found: false };
       },
-      async write(root, name, text) { assertRoot(root); this.writes.push({ root, name, text }); if (name === 'review.json') storedReview = text; return { revision: `r${this.writes.length + 1}` }; },
-      async list(root) { assertRoot(root); return []; },
-      async remove(root) { assertRoot(root); },
+      async write(root, name, text, options = {}) {
+        assertRoot(root);
+        const files = rootFiles(root);
+        const current = files.get(name);
+        if ('expectedRevision' in options) {
+          const conflict = options.expectedRevision === null
+            ? Boolean(current)
+            : !current || current.revision !== options.expectedRevision;
+          if (conflict) throw Object.assign(new Error('revision conflict'), { code: 'REVISION_CONFLICT' });
+        }
+        const revision = `r${++revisionSequence}`;
+        this.writes.push({ root, name, text, options });
+        files.set(name, { text, revision });
+        return { revision };
+      },
+      async list(root) { assertRoot(root); return [...rootFiles(root)].map(([name, file]) => ({ name, revision: file.revision, bytes: file.text.length })); },
+      async remove(root, name) { assertRoot(root); rootFiles(root).delete(name); },
     },
     selectionActions: { items: [], register(spec) { this.items.push(spec); return { dispose() {} }; } },
     chat: { text: '', appendToComposer(text) { this.text += text; return Boolean(text); } },
@@ -51,16 +71,34 @@ function fullApp() {
         if (path?.startsWith('wiki/vocab/') && path !== 'wiki/vocab/alpha.md') return { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
         return {
           meta: { path, title: 'Alpha', revision: { contentHash: 'h', mtimeMs: 1 } },
-          content: buildNote({ word: 'alpha', definition: '字母', example: 'Alpha test.' }),
+          content: buildNote({ word: 'alpha', definition: '字母', pos: 'noun', example: 'Alpha test.' }),
           headings: [],
           links: [],
           citations: [],
         };
       },
-      propose() { return Promise.resolve({ outcome: 'applied', summary: 'applied', paths: ['wiki/vocab/alpha.md'] }); },
+      async propose(request) {
+        for (const change of request.changes) {
+          const current = await this.readDocument({ path: change.path });
+          if (current?._tag !== 'Err' && current.content === change.newContent) {
+            return { _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'change is identical to source' } };
+          }
+        }
+        return { outcome: 'applied', summary: 'applied', paths: request.changes.map((change) => change.path) };
+      },
     },
   };
   return result;
+}
+
+async function appliedProposal(app, proposal, summary = 'applied') {
+  for (const change of proposal.changes) {
+    const current = await app.knowledge.readDocument({ path: change.path });
+    if (current?._tag !== 'Err' && current.content === change.newContent) {
+      return { _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'change is identical to source' } };
+    }
+  }
+  return { outcome: 'applied', summary, paths: proposal.changes.map((change) => change.path) };
 }
 
 beforeEach(() => {
@@ -141,7 +179,7 @@ describe('panel', () => {
     const cancelSpeech = vi.fn();
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       openReadingDocument: opened,
@@ -166,7 +204,7 @@ describe('panel', () => {
     const container = document.createElement('div');
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       openReadingDocument: vi.fn(),
@@ -183,7 +221,7 @@ describe('panel', () => {
     const container = document.createElement('div');
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', path: 'wiki/vocab/run.md', examples: ['She was running late. — [Daily](../reading/daily.md)'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       canOpenReadingDocument: () => false,
@@ -213,7 +251,7 @@ describe('panel', () => {
     const speakSentence = vi.fn();
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', examples: ['Run today. — <https://example.com/run>'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', examples: ['Run today. — <https://example.com/run>'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       lookupDictionary: vi.fn(async () => ({ entry: { p: 'rʌn' } })),
@@ -233,7 +271,7 @@ describe('panel', () => {
     const container = document.createElement('div');
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', path: 'wiki/vocab/run.md', examples: ['Run today. — [Outside](../../secret.md)'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', path: 'wiki/vocab/run.md', examples: ['Run today. — [Outside](../../secret.md)'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       openReadingDocument: vi.fn(),
@@ -250,7 +288,7 @@ describe('panel', () => {
     const cancelSpeech = vi.fn();
     renderPanel(container, {
       app: fullApp(),
-      entries: [{ word: 'run', definition: '跑', examples: ['They ran home.'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', examples: ['They ran home.'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       reviewMode: 'flip',
@@ -267,7 +305,7 @@ describe('panel', () => {
     const container = document.createElement('div');
     let listener;
     let current = {
-      entries: [{ word: 'run', definition: '跑', examples: ['They ran home.'] }],
+      entries: [{ word: 'run', pos: 'verb', definition: '跑', examples: ['They ran home.'] }],
       review: { version: 1, cards: {}, flags: {} },
       log: [],
       reviewMode: null,
@@ -295,7 +333,7 @@ describe('panel', () => {
       const container = document.createElement('div');
       renderPanel(container, {
         app: fullApp(),
-        entries: [{ word: 'run', definition: '跑', examples: ['She was running and ran. — [Daily](wiki/daily.md)'] }],
+        entries: [{ word: 'run', pos: 'verb', definition: '跑', examples: ['She was running and ran. — [Daily](wiki/daily.md)'] }],
         review: { version: 1, cards: {}, flags: {} },
         log: [],
         reviewMode: 'flip',
@@ -311,9 +349,60 @@ describe('panel', () => {
   it('should show empty state and cleanup when there are no due cards', () => {
     const container = document.createElement('div');
     const cleanup = renderPanel(container, { app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true });
-    expect(container.textContent).toContain('没有到期生词');
+    expect(container.textContent).toContain('生词本还是空的');
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
     cleanup();
     expect(container.textContent).toBe('');
+  });
+
+  it('should keep the no due words message when the notebook contains vocabulary', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: 'alpha', definition: '字母' }],
+      review: { version: 1, cards: {}, flags: { alpha: 'ignored' } },
+      hasEnglishVoice: () => true,
+    });
+    expect(container.textContent).toContain('没有到期生词');
+    expect(container.textContent).not.toContain('生词本还是空的');
+  });
+
+  it('should clear a preserved spelling answer when the review word changes', () => {
+    const container = document.createElement('div');
+    let listener;
+    let current = { entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, reviewMode: 'reverse' };
+    renderPanel(container, {
+      app: fullApp(), getState: () => current,
+      subscribe: (next) => { listener = next; return () => undefined; },
+      hasEnglishVoice: () => true,
+    });
+    container.querySelector('[data-role="spelling-answer"]').value = 'alpha';
+    current = { ...current, entries: [{ word: 'beta', definition: '测试' }] };
+    listener();
+    expect(container.querySelector('[data-role="spelling-answer"]').value).toBe('');
+  });
+
+  it('should not restore an old dictionary result after the lookup text changes and state rerenders', async () => {
+    const container = document.createElement('div');
+    let listener;
+    const current = { entries: [], review: { version: 1, cards: {}, flags: {} } };
+    renderPanel(container, {
+      app: fullApp(), getState: () => current,
+      subscribe: (next) => { listener = next; return () => undefined; },
+      lookupDictionary: async (word) => ({ surface: word, lemma: word, entry: { t: `${word} definition` } }),
+      suggestDictionary: async () => [], hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'saw';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-result').textContent).toContain('saw');
+    input.value = 'le';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+    listener();
+    expect(container.querySelector('.ev-dict-result').textContent).not.toContain('saw');
   });
 
   it('should submit reverse spelling as again when the typed word is wrong', () => {
@@ -409,7 +498,7 @@ describe('panel', () => {
       entries: [],
       review: { version: 1, cards: {}, flags: {} },
       levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
-      recommendations: { items: [{ title: 'Readable', path: 'wiki/read.md', bandLabel: '适合', rate: 4, topWords: ['rare'] }], skipped: { 'not-english': 1, 'too-short': 2 } },
+      recommendations: { items: [{ title: 'Readable', path: 'wiki/read.md', bandLabel: '适合', rate: 4, topWords: ['rare'] }], skipped: { 'not-english': 1, 'too-short': 2, unreadable: 3 } },
       onLevelSettingsChange: (settings) => saved.push(settings),
       openReadingDocument: (path) => { opened.push(path); return true; },
       canOpenReadingDocument: () => true,
@@ -417,7 +506,8 @@ describe('panel', () => {
     });
     [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
     expect(container.textContent).toContain('Readable');
-    expect(container.textContent).toContain('生词率: rare');
+    expect(container.textContent).toContain('生词: rare');
+    expect(container.textContent).toContain('不可读 3');
     [...container.querySelectorAll('button')].find((node) => node.textContent === 'Readable').click();
     expect(opened).toEqual(['wiki/read.md']);
     const select = container.querySelector('select');
@@ -462,7 +552,7 @@ describe('panel', () => {
     [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
     const title = [...container.querySelectorAll('button')].find((node) => node.textContent === 'No Open');
     expect(title.disabled).toBe(true);
-    expect(container.textContent).toContain('生词率: -');
+    expect(container.textContent).toContain('生词: -');
     expect(container.textContent).toContain('已跳过：中文为主 0 / 太短 0');
   });
 
@@ -488,13 +578,14 @@ describe('panel', () => {
 
   it('should render compact notebook rows and show only contextually valid flag actions', () => {
     const container = document.createElement('div');
-    const review = { version: 1, cards: {}, flags: { mastered: 'mastered', ignored: 'ignored' } };
+    const review = { version: 1, cards: { inferred: { state: 'Review', stability: 30 } }, flags: { mastered: 'mastered', ignored: 'ignored' } };
     renderPanel(container, {
       app: fullApp(),
       entries: [
         { word: 'plain', definition: 'no manual flag' },
         { word: 'mastered', definition: 'manually mastered' },
         { word: 'ignored', definition: 'manually ignored' },
+        { word: 'inferred', definition: 'fsrs mastered' },
       ],
       review,
       hasEnglishVoice: () => true,
@@ -505,8 +596,40 @@ describe('panel', () => {
     expect(rows.every((row) => row.querySelector('.ev-badge'))).toBe(true);
     const labels = (row) => [...row.querySelectorAll('button')].map((node) => node.textContent);
     expect(labels(rows[0])).toEqual(['已掌握', '忽略']);
-    expect(labels(rows[1])).toEqual(['忽略', '恢复']);
-    expect(labels(rows[2])).toEqual(['已掌握', '恢复']);
+    expect(labels(rows[1])).toEqual(['忽略', '恢复复习']);
+    expect(labels(rows[2])).toEqual(['恢复']);
+    expect(labels(rows[3])).toEqual(['忽略']);
+  });
+
+  it('should show invalid vocabulary notes with localized categories and raw details', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(), entries: [], invalid: [{ path: 'wiki/vocab/broken.md', error: 'unsupported YAML block scalar' }],
+      review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    expect(container.textContent).toContain('无效笔记（1）');
+    expect(container.textContent).toContain('wiki/vocab/broken.md');
+    expect(container.textContent).toContain('笔记格式无效');
+    expect(container.querySelector('[data-raw-error]')?.dataset.rawError).toBe('unsupported YAML block scalar');
+  });
+
+  it('should localize parse and document read failure categories without labeling every error as yaml', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: fullApp(), entries: [], invalid: [
+        { path: 'wiki/vocab/parse.md', kind: 'parse', error: 'missing frontmatter' },
+        { path: 'wiki/vocab/large.md', kind: 'read', code: 'DOCUMENT_TOO_LARGE', error: 'large' },
+        { path: 'wiki/vocab/binary.md', kind: 'read', code: 'DOCUMENT_NOT_TEXT', error: 'binary' },
+        { path: 'wiki/vocab/offline.md', kind: 'read', code: 'READ_FAILED', error: 'offline' },
+      ],
+      review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    expect(container.textContent).toContain('笔记格式无效');
+    expect(container.textContent).toContain('文件过大');
+    expect(container.textContent).toContain('不是文本文件');
+    expect(container.textContent).toContain('文件读取失败');
   });
 
   it('should append a manual add request and reject empty or non English words', () => {
@@ -610,6 +733,23 @@ describe('panel', () => {
     expect([...container.querySelectorAll('.ev-dict-result .ev-dict-lines')].map((node) => node.className)).toEqual(['ev-dict-lines ev-dict-lines-en', 'ev-dict-lines ev-dict-lines-zh']);
   });
 
+  it('should open a semantic dictionary inflection relation from the notebook', async () => {
+    const container = document.createElement('div');
+    const lookupDictionary = vi.fn(async (word) => word === 'saw'
+      ? { surface: 'saw', lemma: 'saw', inflection: { lemma: 'see', kind: 'past' }, entry: { t: 'n. 锯', d: 'a cutting tool' } }
+      : { surface: 'see', lemma: 'see', entry: { t: 'v. 看见', d: 'perceive with the eyes' } });
+    renderPanel(container, { app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, lookupDictionary, hasEnglishVoice: () => true });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'saw';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    container.querySelector('.ev-dict-lemma-link').click();
+    await Promise.resolve();
+    expect(lookupDictionary).toHaveBeenLastCalledWith('see');
+    expect(container.querySelector('.ev-dict-head .ev-row-word')?.textContent).toBe('see');
+  });
+
   it('should redraw from subscribed live state and unsubscribe during cleanup', () => {
     const container = document.createElement('div');
     let current = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [], loading: { done: 0, total: 1 } };
@@ -622,6 +762,92 @@ describe('panel', () => {
     expect(container.textContent).toContain('alpha');
     cleanup();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('should preserve notebook input values selection and focus when state emits', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    let listener;
+    const state = { entries: [], review: { version: 1, cards: {}, flags: {} }, log: [] };
+    renderPanel(container, { app: fullApp(), getState: () => state, subscribe: (next) => { listener = next; return () => undefined; }, hasEnglishVoice: () => true });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'deliv';
+    input.focus();
+    input.setSelectionRange(2, 4);
+    listener();
+    const restored = container.querySelector('[data-role="dictionary-search"]');
+    expect(restored.value).toBe('deliv');
+    expect(document.activeElement).toBe(restored);
+    expect([restored.selectionStart, restored.selectionEnd]).toEqual([2, 4]);
+  });
+
+  it('should discard stale dictionary suggestions when a newer query finishes first', async () => {
+    const container = document.createElement('div');
+    const resolvers = new Map();
+    renderPanel(container, {
+      app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
+      suggestDictionary: (query) => new Promise((resolve) => resolvers.set(query, resolve)),
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'de'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.value = 'deli'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    resolvers.get('deli')([{ word: 'deliver', entry: {} }]);
+    await Promise.resolve();
+    resolvers.get('de')([{ word: 'delay', entry: {} }]);
+    await Promise.resolve();
+    expect([...container.querySelectorAll('.ev-dict-chip')].map((node) => node.textContent)).toEqual(['deliver']);
+  });
+
+  it('should discard a stale enter lookup when a newer query finishes first', async () => {
+    const container = document.createElement('div');
+    const resolvers = new Map();
+    renderPanel(container, {
+      app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
+      lookupDictionary: (query) => new Promise((resolve) => resolvers.set(query, resolve)),
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'saw'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.value = 'left'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    resolvers.get('left')({ surface: 'left', lemma: 'left', entry: { t: 'adj. 左边的' } });
+    await Promise.resolve();
+    resolvers.get('saw')({ surface: 'saw', lemma: 'saw', entry: { t: 'n. 锯' } });
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-head .ev-row-word')?.textContent).toBe('left');
+  });
+
+  it('should discard a stale inflection link lookup when a newer query finishes first', async () => {
+    const container = document.createElement('div');
+    const resolvers = new Map();
+    renderPanel(container, {
+      app: fullApp(), entries: [], review: { version: 1, cards: {}, flags: {} }, hasEnglishVoice: () => true,
+      lookupDictionary: (query) => query === 'saw'
+        ? Promise.resolve({ surface: 'saw', lemma: 'saw', entry: { t: 'n. 锯' }, inflection: { lemma: 'see', kind: 'past' } })
+        : new Promise((resolve) => resolvers.set(query, resolve)),
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'saw'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await Promise.resolve();
+    container.querySelector('.ev-dict-lemma-link').click();
+    input.value = 'left'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    resolvers.get('left')({ surface: 'left', lemma: 'left', entry: { t: 'adj. 左边的' } });
+    await Promise.resolve();
+    resolvers.get('see')({ surface: 'see', lemma: 'see', entry: { t: 'v. 看见' } });
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-head .ev-row-word')?.textContent).toBe('left');
+  });
+
+  it('should disable panel rating buttons and shortcuts while a mutation is pending', () => {
+    const container = document.createElement('div');
+    const onReview = vi.fn();
+    renderPanel(container, { app: fullApp(), entries: [{ word: 'alpha', definition: '字母' }], review: { version: 1, cards: {}, flags: {} }, log: [], reviewMode: 'flip', mutationPending: true, onReview, hasEnglishVoice: () => true });
+    container.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect([...container.querySelectorAll('.ev-rating button')].every((node) => node.disabled)).toBe(true);
+    container.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true }));
+    expect(onReview).not.toHaveBeenCalled();
   });
 
   it('should show a reading highlight switch only when the host supports decorations', () => {
@@ -669,6 +895,48 @@ describe('panel', () => {
 });
 
 describe('main plugin', () => {
+  it('should register the selection action disposable for plugin unload', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const disposable = { dispose: vi.fn() };
+    app.selectionActions.register = vi.fn(() => disposable);
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(plugin.registered).toContain(disposable);
+  });
+  it('should serialize two rapid ratings and log both applied operations', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    let active = 0;
+    let maximum = 0;
+    let reps = 0;
+    const log = [];
+    plugin.reviewStore.mutateReview = vi.fn(async (operation) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await Promise.resolve();
+      reps += 1;
+      active -= 1;
+      plugin.reviewStore.review = { version: 1, cards: { alpha: { state: 'Learning', reps } }, flags: {} };
+      log.push(operation.logEntry);
+      return { review: plugin.reviewStore.review, previousCard: reps === 1 ? null : { state: 'Learning', reps: reps - 1 }, rootChanged: false };
+    });
+    plugin.reviewStore.flushPendingLogs = vi.fn(async () => [...log]);
+    const first = plugin.rateWord('alpha', 'Good', 'flip');
+    const second = plugin.rateWord('alpha', 'Again', 'flip');
+    expect(plugin.state.mutationPending).toBe(true);
+    await Promise.all([first, second]);
+    expect(maximum).toBe(1);
+    expect(plugin.state.review.cards.alpha.reps).toBe(2);
+    expect(log).toHaveLength(2);
+    expect(new Set(log.map((entry) => entry.id)).size).toBe(2);
+    expect(plugin.state.mutationPending).toBe(false);
+  });
+
   it('should load and merge review mode preferences without erasing unrelated data', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -726,7 +994,7 @@ describe('main plugin', () => {
     const proposals = [];
     app.knowledge.propose = vi.fn(async (proposal) => {
       proposals.push(proposal);
-      return { outcome: 'applied', summary: 'added', paths: ['wiki/vocab/alpha.md'] };
+      return appliedProposal(app, proposal, 'added');
     });
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
@@ -791,7 +1059,7 @@ describe('main plugin', () => {
     expect(app.commands[0].id).toBe('start-review');
     expect(app.selectionActions.items[0].surfaces).toEqual(['reading', 'web']);
     expect([...app.tools.keys()]).toEqual(['vocab_lookup', 'vocab_add']);
-    expect(app.events.map((event) => event.name)).toEqual(['knowledge.index-changed', 'knowledge.root-changed']);
+    expect(app.events.map((event) => event.name)).toEqual(['knowledge.index-changed', 'knowledge.root-changed', 'appearance.locale-changed']);
     const rendered = document.createElement('div');
     app.panels[0].render(rendered);
     expect(rendered.textContent).toContain('今日复习');
@@ -844,6 +1112,57 @@ describe('main plugin', () => {
     expect(registrations[0].terms.some((term) => term.surface === 'alpha')).toBe(true);
     await app.events.find((event) => event.name === 'knowledge.root-changed').listener();
     expect(registrations[0].terms.some((term) => term.surface === 'alpha')).toBe(true);
+  });
+
+  it('should fall back to lemma-only reading terms and notify once when the host rejects a large term set', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const handle = { setTerms: vi.fn((terms) => terms.every((term) => term.surface === term.key)), dispose: vi.fn() };
+    app.readingDecorations = { register: () => handle };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    expect(handle.setTerms.mock.calls.some(([terms]) => terms.some((term) => term.surface !== term.key))).toBe(true);
+    expect(handle.setTerms.mock.calls.some(([terms]) => terms.length > 0 && terms.every((term) => term.surface === term.key))).toBe(true);
+    plugin.updateReadingTerms();
+    expect(app.notices.filter((item) => item.message.includes('生词本过大'))).toHaveLength(1);
+  });
+
+  it('should notify once when reading terms are truncated before the host accepts them', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const handle = { setTerms: vi.fn(() => true), dispose: vi.fn() };
+    app.readingDecorations = { register: () => handle };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const wordAt = (number) => {
+      let value = number;
+      let word = '';
+      do { word = String.fromCharCode(97 + (value % 26)) + word; value = Math.floor(value / 26); } while (value > 0);
+      return `term-${word}`;
+    };
+    plugin.state.entries = Array.from({ length: 100001 }, (_, index) => ({ word: wordAt(index), definition: 'n. term' }));
+    plugin.updateReadingTerms();
+    expect(handle.setTerms.mock.calls.at(-1)[0]).toHaveLength(100000);
+    expect(app.notices.filter((item) => item.message.includes('生词本过大'))).toHaveLength(1);
+  });
+
+  it('should keep activation successful when initial recommendations reject', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'e1' }) };
+    const listDocuments = app.knowledge.listDocuments;
+    let calls = 0;
+    app.knowledge.listDocuments = async () => {
+      calls += 1;
+      if (calls > 1) throw new Error('offline');
+      return listDocuments();
+    };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await expect(plugin.onload()).resolves.toBeUndefined();
+    expect(app.panels).toHaveLength(1);
   });
 
   it('should wire registered reading cards to plugin rating undo terms and speech callbacks', async () => {
@@ -1056,10 +1375,57 @@ describe('main plugin', () => {
     expect(await plugin.undoReadingRating('alpha')).toBe(false);
     await plugin.rateWord('alpha', 'Good', 'reading-card');
     expect(plugin.state.review.cards.alpha).toBeTruthy();
+    const mutate = plugin.reviewStore.mutateReview.bind(plugin.reviewStore);
+    plugin.reviewStore.mutateReview = vi.fn(mutate);
     expect(await plugin.undoReadingRating('alpha')).toBe(true);
+    expect(plugin.reviewStore.mutateReview).toHaveBeenCalledWith(expect.objectContaining({ type: 'restoreCardIfFingerprint', expectedFingerprint: expect.any(String) }));
     expect(plugin.state.review.cards.alpha).toBeUndefined();
     const log = JSON.parse(app.storage.writes.filter((item) => item.name === 'log.json').at(-1).text);
-    expect(log.at(-1)).toMatchObject({ word: 'alpha', undo: true, mode: 'reading-card' });
+    expect(log.at(-1)).toMatchObject({ word: 'alpha', undoOf: log[0].id, mode: 'reading-card' });
+  });
+
+  it('should rebuild localized panel command selection and reading registrations when locale changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'locale-epoch' }) };
+    const suggestionHandles = [];
+    app.learningSuggestions = { register: vi.fn(() => {
+      const handle = { set: vi.fn(), dispose: vi.fn() };
+      suggestionHandles.push(handle);
+      return handle;
+    }) };
+    const readingHandles = [];
+    const readingSpecs = [];
+    app.readingDecorations = { register: vi.fn((spec) => {
+      readingSpecs.push(spec);
+      const handle = { setTerms: vi.fn(() => true), dispose: vi.fn() };
+      readingHandles.push(handle);
+      return handle;
+    }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const rendered = document.createElement('div');
+    app.panels.at(-1).render(rendered);
+    expect(rendered.textContent).toContain('今日复习');
+    await app.events.find((event) => event.name === 'appearance.locale-changed').listener({ locale: 'en' });
+    expect(plugin.locale).toBe('en');
+    expect(app.commands.at(-1).title).toContain('start review');
+    expect(app.selectionActions.items.at(-1).title).toBe('Add to vocabulary');
+    expect(readingHandles[0].dispose).toHaveBeenCalledOnce();
+    expect(readingHandles).toHaveLength(2);
+    expect(suggestionHandles[0].dispose).toHaveBeenCalledOnce();
+    expect(suggestionHandles).toHaveLength(2);
+    expect(rendered.textContent).toContain('Today');
+    const card = document.createElement('div');
+    readingSpecs.at(-1).renderCard(card, { word: 'alpha', key: 'alpha', tone: 'learning' });
+    expect(card.textContent).toContain('I know it');
+    await app.tools.get('vocab_add').run({ entries: [{ word: 'beta', definition: 'test' }] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(app.notices.some((item) => item.message.includes('Vocabulary proposal'))).toBe(true);
+    await app.events.find((event) => event.name === 'appearance.locale-changed').listener('unsupported');
+    expect(plugin.locale).toBe('en');
   });
 
   it('should restore the previous card when undoing a reading-card rating on a reviewed word', async () => {
@@ -1069,11 +1435,40 @@ describe('main plugin', () => {
     app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
-    const previous = { state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' };
+    const previous = { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' };
     plugin.state.review = { version: 1, cards: { alpha: previous }, flags: {} };
+    plugin.reviewStore.review = plugin.state.review;
     await plugin.rateWord('alpha', 'Again', 'reading-card');
     await plugin.undoReadingRating('alpha');
     expect(plugin.state.review.cards.alpha).toEqual(previous);
+  });
+
+  it('should reject reading undo snapshots after root changes or successor card changes', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.readingDecorations = { register: () => ({ setTerms: vi.fn(() => true), dispose: vi.fn() }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await plugin.rateWord('alpha', 'Good', 'reading-card');
+    plugin.reviewStore.review.cards.alpha = { ...plugin.reviewStore.review.cards.alpha, due: '2035-01-01T00:00:00.000Z' };
+    plugin.state.review = plugin.reviewStore.review;
+    expect(await plugin.undoReadingRating('alpha')).toBe(false);
+    await plugin.rateWord('alpha', 'Good', 'reading-card');
+    app.storage.setRoot('root-b');
+    await plugin.handleRootChanged();
+    expect(plugin.readingUndoSnapshots.size).toBe(0);
+    expect(await plugin.undoReadingRating('alpha')).toBe(false);
+  });
+
+  it('should avoid keeping an undo snapshot when a rating reports a root change', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.reviewStore.mutateReview = vi.fn(async () => ({ review: { version: 1, cards: {}, flags: {} }, previousCard: null, rootChanged: true }));
+    expect(await plugin.rateWord('alpha', 'Good', 'reading-card')).toBe(false);
+    expect(plugin.readingUndoSnapshots.size).toBe(0);
   });
 
   it('should notify when undoing a reading-card rating fails or races a root change', async () => {
@@ -1084,11 +1479,11 @@ describe('main plugin', () => {
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
     await plugin.rateWord('alpha', 'Good', 'reading-card');
-    plugin.reviewStore.saveReview = async () => { throw new Error('bad'); };
+    plugin.reviewStore.mutateReview = async () => { throw new Error('bad'); };
     expect(await plugin.undoReadingRating('alpha')).toBe(false);
     expect(app.notices.some((item) => item.message.includes('保存失败'))).toBe(true);
 
-    plugin.reviewStore.saveReview = async () => ({ review: { version: 1, cards: {}, flags: {} }, rootChanged: true });
+    plugin.reviewStore.mutateReview = async () => ({ review: { version: 1, cards: {}, flags: {} }, rootChanged: true });
     expect(await plugin.undoReadingRating('alpha')).toBe(false);
     expect(app.notices.some((item) => item.message.includes('知识库已切换'))).toBe(true);
   });
@@ -1110,7 +1505,7 @@ describe('main plugin', () => {
     const app = fullApp();
     app.knowledge.propose = async (proposal) => {
       proposals.push(proposal);
-      return { outcome: 'applied', summary: 'accepted', paths: proposal.changes.map((change) => change.path) };
+      return appliedProposal(app, proposal, 'accepted');
     };
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
@@ -1136,7 +1531,7 @@ describe('main plugin', () => {
     const proposals = [];
     app.knowledge.propose = vi.fn(async (proposal) => {
       proposals.push(proposal);
-      return { outcome: 'applied', summary: 'accepted', paths: proposal.changes.map((change) => change.path) };
+      return appliedProposal(app, proposal, 'accepted');
     });
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
@@ -1162,7 +1557,7 @@ describe('main plugin', () => {
     const proposals = [];
     app.knowledge.propose = vi.fn(async (proposal) => {
       proposals.push(proposal);
-      return { outcome: 'applied', summary: 'added', paths: ['wiki/vocab/alpha.md'] };
+      return appliedProposal(app, proposal, 'added');
     });
     const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
     await plugin.onload();
@@ -1218,6 +1613,18 @@ describe('main plugin', () => {
     expect(app.chat.text).toContain('void');
   });
 
+  it('should abort dictionary collection when path probing returns a non not-found error', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'READ_FAILED', message: 'cannot inspect path' } });
+    app.knowledge.propose = vi.fn();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    await expect(plugin.collectDictionaryWord({ surface: 'beta', lemma: 'beta', entry: { t: 'n. 测试' } })).resolves.toMatchObject({ outcome: 'aborted', summary: 'cannot inspect path' });
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
+  });
+
   it('should persist ratings and flags, append rating logs, and notify without losing a saved card when log writing fails', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -1231,10 +1638,13 @@ describe('main plugin', () => {
     await plugin.onload();
     await plugin.rateWord('alpha', 'Good', 'flip');
     expect(plugin.state.review.cards.alpha).toBeTruthy();
+    expect(plugin.state.log).toEqual([expect.objectContaining({ word: 'alpha', rating: 'Good' })]);
     expect(app.storage.writes.some((item) => item.name === 'review.json')).toBe(true);
+    expect(JSON.parse(app.storage.writes.filter((item) => item.name === 'review.json').at(-1).text).pendingLogs).toHaveLength(1);
     expect(app.notices.some((item) => item.message.includes('日志'))).toBe(true);
     await plugin.setFlag('alpha', 'ignored');
     expect(plugin.state.review.flags.alpha).toBe('ignored');
+    expect(plugin.state.log).toEqual([expect.objectContaining({ word: 'alpha', rating: 'Good' })]);
     expect(JSON.parse(app.storage.writes.filter((item) => item.name === 'review.json').at(-1).text).flags.alpha).toBe('ignored');
   });
 
@@ -1309,7 +1719,7 @@ describe('main plugin', () => {
     const module = await import('../src/main.mjs');
     const app = fullApp();
     let generation = 'root-a';
-    const byRoot = { 'root-a': JSON.stringify({ version: 1, cards: { alpha: { state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' } }, flags: {} }) };
+    const byRoot = { 'root-a': JSON.stringify({ version: 1, cards: { alpha: { ...newSerializedCard(new Date('2026-10-01T00:00:00Z')), state: 'Review', stability: 2, due: '2031-01-01T00:00:00.000Z', last_review: '2026-10-01T00:00:00.000Z' } }, flags: {} }) };
     app.storage.scope = async () => ({ rootGeneration: generation });
     app.storage.read = async (root, name) => {
       if (root !== generation) throw Object.assign(new Error('changed'), { code: 'ROOT_CHANGED' });
@@ -1492,6 +1902,44 @@ describe('main plugin', () => {
     expect(controls.canOpenReadingDocument()).toBe(true);
     expect(app.notices.some((item) => item.message === 'hello')).toBe(true);
     expect(plugin.state.highlight).toBe(false);
+  });
+
+  it('should clear recommendation loading preserve prior results and notify when manual refresh fails', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const previous = { stale: false, items: [{ title: 'Previous' }], skipped: {} };
+    plugin.state.recommendations = previous;
+    plugin.recommender.recommend = async () => { throw new Error('offline'); };
+    await expect(plugin.refreshRecommendations()).resolves.toBeNull();
+    expect(plugin.state.recommendationLoading).toBeNull();
+    expect(plugin.state.recommendations).toBe(previous);
+    expect(app.notices.some((item) => item.message.includes('推荐阅读刷新失败'))).toBe(true);
+  });
+
+  it('should keep the newest same-epoch recommendation result when requests finish out of order', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const resolvers = [];
+    plugin.recommender.recommend = () => new Promise((resolve) => resolvers.push(resolve));
+    const suggestions = [];
+    plugin.learningSuggestionsHandle = { set: (...args) => suggestions.push(args) };
+    const older = plugin.refreshRecommendations();
+    const newer = plugin.refreshRecommendations();
+    resolvers[1]({ stale: false, items: [{ title: 'new', path: 'wiki/new.md', band: 'good', bandLabel: '适合', rate: 3 }], skipped: {} });
+    await newer;
+    resolvers[0]({ stale: false, items: [{ title: 'old', path: 'wiki/old.md', band: 'good', bandLabel: '适合', rate: 3 }], skipped: {} });
+    await older;
+    expect(plugin.state.recommendations.items[0].title).toBe('new');
+    expect(suggestions).toHaveLength(1);
+    expect(plugin.state.recommendationLoading).toBeNull();
   });
 
   it('should not register dependent capabilities when host APIs are missing', async () => {

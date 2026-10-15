@@ -4,7 +4,7 @@ Source: https://github.com/skywind3000/ECDICT
 
 Commit: `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`
 
-Changes: filtered to English word keys matching `^[a-z]+(?:'[a-z]+)*$`, removed `[网络]` translation lines, trimmed translations/definitions, split entries into deterministic letter chunks, and added wordfreq ranks for the top 30,000 words.
+Changes: filtered to English word keys matching `^[a-z]+(?:'[a-z]+)*$`, removed `[网络]` translation lines, joined indented Webster continuation lines, removed pure `See …` cross-references, normalized WordNet `s.` labels, trimmed translations/definitions, split entries into deterministic letter chunks, and added wordfreq ranks for the top 30,000 words.
 
 ## MIT License
 

@@ -4,16 +4,20 @@ import { buildNote } from '../src/note-format.mjs';
 
 function app(proposalReceipt = { outcome: 'applied' }) {
   const proposals = [];
+  const oldContent = buildNote({ word: 'old', definition: '旧', example: 'Old one.' });
   return {
     proposals,
     knowledge: {
       async readDocument({ path }) {
         if (path === 'wiki/sources/missing.md') throw new Error('missing');
-        if (path === 'wiki/vocab/old.md') return { content: buildNote({ word: 'old', definition: '旧', example: 'Old one.' }), meta: { title: 'Old' } };
-        if (path.startsWith('wiki/vocab/')) return { _tag: 'Err', error: 'not found' };
+        if (path === 'wiki/vocab/old.md') return { content: oldContent, meta: { title: 'Old' } };
+        if (path.startsWith('wiki/vocab/')) return { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
         return { content: 'source', meta: { title: 'Source title' } };
       },
       propose(request) {
+        if (request.changes.some((change) => change.path === 'wiki/vocab/old.md' && change.newContent === oldContent)) {
+          return Promise.resolve({ _tag: 'Err', error: { code: 'CHANGESET_INVALID', message: 'change is identical to source' } });
+        }
         proposals.push(request);
         return Promise.resolve(proposalReceipt);
       },
@@ -56,6 +60,14 @@ describe('tools', () => {
     vi.useRealTimers();
   });
 
+  it('should normalize a curly apostrophe before proposing an agent vocabulary entry', async () => {
+    const fake = app();
+    const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 8, notify: () => undefined });
+    await add({ entries: [{ word: 'don’t', definition: '不要' }] });
+    expect(fake.proposals[0].changes[0]).toMatchObject({ path: 'wiki/vocab/don-t.md' });
+    expect(fake.proposals[0].changes[0].newContent).toContain('word: "don\'t"');
+  });
+
   it('should append to an existing note when word is already indexed', async () => {
     const fake = app();
     const add = makeVocabAdd({
@@ -66,6 +78,22 @@ describe('tools', () => {
     });
     await add({ entries: [{ word: 'old', definition: '旧', example: 'Old again.' }] });
     expect(fake.proposals[0].changes[0].newContent).toContain('Old again.');
+  });
+
+  it('should skip unchanged notes and still submit changed entries without identical changes', async () => {
+    const fake = app();
+    const add = makeVocabAdd({
+      app: fake,
+      index: { get: (word) => word === 'old' ? { word: 'old', path: 'wiki/vocab/old.md' } : null },
+      nextNumber: () => 13,
+      notify: () => undefined,
+    });
+    const mixed = await add({ entries: [{ word: 'old', definition: '旧' }, { word: 'beta', definition: '测试' }] });
+    expect(mixed).toContain('1 word');
+    expect(fake.proposals[0].changes).toEqual([expect.objectContaining({ path: 'wiki/vocab/beta.md' })]);
+    const proposalCount = fake.proposals.length;
+    await expect(add({ entries: [{ word: 'old', definition: '旧' }] })).resolves.toMatch(/No vocabulary entries changed/u);
+    expect(fake.proposals).toHaveLength(proposalCount);
   });
 
   it('should remove a missing wiki source link and explain when source verification fails', async () => {
@@ -154,7 +182,7 @@ describe('tools', () => {
     const fake = app();
     fake.knowledge.readDocument = async ({ path }) => path === 'wiki/vocab/source.md'
       ? { content: buildNote({ word: 'source', definition: '来源' }), meta: { title: 'Source note' } }
-      : { _tag: 'Err', error: 'not found' };
+      : { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 5, notify: () => undefined });
     await add({ entries: [
       { word: 'epsilon', definition: '测试', example: 'Epsilon.', source: { url: 'https://example.com/e' } },
@@ -166,7 +194,7 @@ describe('tools', () => {
 
   it('should use source path as title fallback when document title is missing', async () => {
     const fake = app();
-    fake.knowledge.readDocument = async ({ path }) => path === 'wiki/sources/k.md' ? { content: 'source', meta: {} } : { _tag: 'Err', error: 'not found' };
+    fake.knowledge.readDocument = async ({ path }) => path === 'wiki/sources/k.md' ? { content: 'source', meta: {} } : { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 8, notify: () => undefined });
     await add({ entries: [{ word: 'kappa', definition: '测试', example: 'Kappa.', source: { path: 'wiki/sources/k.md' } }] });
     expect(fake.proposals[0].changes[0].newContent).toContain('[wiki/sources/k.md]');
@@ -181,7 +209,7 @@ describe('tools', () => {
 
   it('should merge duplicate words into one change and deduplicate their examples', async () => {
     const fake = app();
-    fake.knowledge.readDocument = async ({ path }) => path.startsWith('wiki/vocab/') ? { _tag: 'Err', error: 'not found' } : { content: 'source', meta: { title: 'Source' } };
+    fake.knowledge.readDocument = async ({ path }) => path.startsWith('wiki/vocab/') ? { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } } : { content: 'source', meta: { title: 'Source' } };
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 9, notify: () => undefined });
     await add({ entries: [
       { word: 'Echo', definition: '回声', example: 'First echo.' },
@@ -193,21 +221,30 @@ describe('tools', () => {
     expect(fake.proposals[0].changes[0].newContent).toContain('Second echo.');
   });
 
-  it('should append an unindexed existing note and reject a slug collision without overwriting it', async () => {
+  it('should append an unindexed existing note and use a unique suffix for a slug collision', async () => {
     const fake = app();
     fake.knowledge.readDocument = async ({ path }) => {
       if (path === 'wiki/vocab/don-t.md') return { content: buildNote({ word: 'don-t', definition: 'dash' }), meta: { title: 'Dash' } };
       if (path === 'wiki/vocab/orphan.md') return { content: buildNote({ word: 'orphan', definition: '孤儿' }), meta: { title: 'Orphan' } };
-      return { _tag: 'Err', error: 'not found' };
+      return { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
     };
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 10, notify: () => undefined });
     const result = await add({ entries: [
       { word: 'orphan', definition: '孤儿', example: 'Orphan example.' },
       { word: "don't", definition: '不要', example: "Don't overwrite." },
     ] });
-    expect(fake.proposals[0].changes).toHaveLength(1);
+    expect(fake.proposals[0].changes).toHaveLength(2);
     expect(fake.proposals[0].changes[0].newContent).toContain('Orphan example.');
-    expect(result).toMatch(/slug collision/i);
+    expect(fake.proposals[0].changes[1].path).toBe('wiki/vocab/don-t-2.md');
+    expect(result).not.toMatch(/slug collision/i);
+  });
+
+  it('should abort path probing on read errors other than not found', async () => {
+    const fake = app();
+    fake.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'READ_FAILED', message: 'disk unavailable' } });
+    const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 1, notify: () => undefined });
+    await expect(add({ entries: [{ word: "don't", definition: '不要' }] })).rejects.toThrow(/disk unavailable/);
+    expect(fake.proposals).toEqual([]);
   });
 
   it('should verify wiki sources with no more than four concurrent reads', async () => {
@@ -215,7 +252,7 @@ describe('tools', () => {
     let maximum = 0;
     const fake = app();
     fake.knowledge.readDocument = async ({ path }) => {
-      if (path.startsWith('wiki/vocab/')) return { _tag: 'Err', error: 'not found' };
+      if (path.startsWith('wiki/vocab/')) return { _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } };
       active += 1;
       maximum = Math.max(maximum, active);
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -237,7 +274,7 @@ describe('tools', () => {
   it('should return English model text while localizing proposal notices', async () => {
     const notices = [];
     const fake = app({ outcome: 'applied' });
-    fake.knowledge.readDocument = async () => ({ _tag: 'Err', error: 'not found' });
+    fake.knowledge.readDocument = async () => ({ _tag: 'Err', error: { code: 'NOT_FOUND', message: 'not found' } });
     const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 12, notify: (message) => notices.push(message), locale: 'ja' });
     const result = await add({ entries: [{ word: 'alpha', definition: 'x' }] });
     await Promise.resolve();

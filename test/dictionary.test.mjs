@@ -7,6 +7,21 @@ const chunks = {
     ran: { t: 'v. run的过去式', d: 'past tense of run', x: '0:run', r: 900 },
     runner: { t: 'n. 跑步者', d: 'one who runs' },
   },
+  d: {
+    do: { t: 'v. 做', d: 'perform an action', r: 20 },
+    does: { t: 'n. 母鹿（复数）\nv. do 的第三人称单数', d: 'female deer\nthird-person singular of do', x: '0:do', r: 100 },
+    "don't": { t: '不要', d: 'do not', r: 10 },
+    deliver: { t: 'v. 递送', d: 'bring goods', r: 200 },
+    delivered: { t: 'deliver 的过去式', d: 'past tense of deliver', x: '0:deliver', r: 1 },
+  },
+  s: {
+    see: { t: 'v. 看见', d: 'perceive with the eyes' },
+    saw: { t: 'n. 锯\nv. see 的过去式', d: 'a cutting tool\npast tense of see', x: '0:see' },
+  },
+  l: {
+    leave: { t: 'v. 离开', d: 'go away' },
+    left: { t: 'adj. 左边的\nleave 的过去式', d: 'on the left side\npast tense of leave', x: '0:leave' },
+  },
   g: {
     go: { t: 'v. 去', d: 'move from one place to another', x: '', r: 50 },
   },
@@ -28,6 +43,48 @@ describe('dictionary', () => {
   it('should look up direct entries and exchange lemmas when entries exist', async () => {
     await expect(lookup('Run', { importer })).resolves.toMatchObject({ surface: 'run', lemma: 'run', entry: chunks.r.run });
     await expect(lookup('ran', { importer })).resolves.toMatchObject({ surface: 'ran', lemma: 'run', entry: chunks.r.run, surfaceEntry: chunks.r.ran });
+  });
+
+  it('should keep semantic surface entries and expose their inflection relation when exchange metadata also exists', async () => {
+    await expect(lookup('does', { importer })).resolves.toMatchObject({ surface: 'does', lemma: 'does', entry: chunks.d.does, inflection: { lemma: 'do', kind: 'thirdPerson' } });
+    await expect(lookup('saw', { importer })).resolves.toMatchObject({ surface: 'saw', lemma: 'saw', entry: chunks.s.saw, inflection: { lemma: 'see' } });
+    await expect(lookup('left', { importer })).resolves.toMatchObject({ surface: 'left', lemma: 'left', entry: chunks.l.left, inflection: { lemma: 'leave' } });
+    await expect(lookup('ran', { importer })).resolves.toMatchObject({ lemma: 'run', entry: chunks.r.run });
+  });
+
+  it('should resolve does to do with the committed dictionary instead of trusting the doe exchange', async () => {
+    await expect(lookup('does')).resolves.toMatchObject({ surface: 'does', lemma: 'does', inflection: { lemma: 'do', kind: 'thirdPerson' } });
+  });
+
+  it('should prefer confirmed exchange lemmas and suppress untyped heuristic relations', async () => {
+    await expect(lookup('better')).resolves.toMatchObject({ surface: 'better', lemma: 'better', inflection: { lemma: 'good', kind: 'comparative' } });
+    const hers = await lookup('hers');
+    expect(hers?.inflection).toBeUndefined();
+  });
+
+  it('should classify every supported semantic surface inflection relation', async () => {
+    const kinds = {
+      baked: ['过去式', 'past'],
+      broken: ['过去分词', 'pastParticiple'],
+      baking: ['现在分词', 'presentParticiple'],
+      bases: ['复数', 'plural'],
+      bakes: ['第三人称单数', 'thirdPerson'],
+      bigger: ['比较级', 'comparative'],
+      biggest: ['最高级', 'superlative'],
+    };
+    const local = { b: { base: { t: 'n. 基础' } } };
+    for (const [surface, [label]] of Object.entries(kinds)) {
+      local.b[surface] = { t: `n. 独立义项\nbase的${label}`, x: '0:base' };
+    }
+    const localImporter = async () => ({ default: local.b });
+    for (const [surface, [, kind]] of Object.entries(kinds)) {
+      await expect(lookup(surface, { importer: localImporter })).resolves.toMatchObject({ lemma: surface, inflection: { lemma: 'base', kind } });
+    }
+  });
+
+  it('should normalize curly apostrophes for lookup while preserving the displayed surface', async () => {
+    await expect(lookup('Don’t', { importer })).resolves.toMatchObject({ surface: 'don’t', lemma: "don't", entry: chunks.d["don't"] });
+    await expect(suggest('don’', 8, { importer })).resolves.toMatchObject([{ word: "don't" }]);
   });
 
   it('should look up irregular and generated inflection candidates across chunks', async () => {
@@ -60,6 +117,8 @@ describe('dictionary', () => {
     await expect(lookup('zzzz', { importer })).rejects.toThrow('missing chunk');
     resetDictionaryCache();
     await expect(lookup('qzxv', { importer })).resolves.toBeNull();
+    await expect(lookup(undefined, { importer })).resolves.toBeNull();
+    await expect(suggest(undefined, 8, { importer })).resolves.toEqual([]);
   });
 
   it('should sort suggestions by rank, missing rank, and word when prefix matches', async () => {
@@ -81,6 +140,30 @@ describe('dictionary', () => {
     await expect(lookup('run', { importer: spy })).resolves.toMatchObject({ lemma: 'run' });
   });
 
+  it('should evict a rejected chunk promise so a later lookup retries automatically', async () => {
+    let attempts = 0;
+    const flaky = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary');
+      return { default: { zoo: { t: 'n. 动物园' } } };
+    };
+    await expect(lookup('zoo', { importer: flaky })).rejects.toThrow('temporary');
+    await expect(lookup('zoo', { importer: flaky })).resolves.toMatchObject({ lemma: 'zoo' });
+  });
+
+  it('should rank base suggestions before pure inflection entries', async () => {
+    await expect(suggest('deli', 8, { importer })).resolves.toEqual([
+      { word: 'deliver', entry: chunks.d.deliver },
+      { word: 'delivered', entry: chunks.d.delivered },
+    ]);
+  });
+
+  it('should rank the real deliver lemma before delivered for the deli prefix', async () => {
+    const items = await suggest('deli', 8);
+    expect(items[0]?.word).toBe('deliver');
+    expect(items.findIndex((item) => item.word === 'deliver')).toBeLessThan(items.findIndex((item) => item.word === 'delivered'));
+  });
+
   it('should format definition order by locale and infer part of speech from translation prefixes', () => {
     expect(dictionaryDefinition(chunks.e.ephemeral, 'zh')).toBe('adj. 短暂的\nlasting for a short time');
     expect(dictionaryDefinition(chunks.e.ephemeral, 'en')).toBe('lasting for a short time\nadj. 短暂的');
@@ -94,5 +177,6 @@ describe('dictionary', () => {
     expect(inferPos({ t: 'pron. 你' })).toBe('pronoun');
     expect(inferPos({ t: '无前缀' })).toBeUndefined();
     expect(dictionaryDefinition(null, 'zh')).toBe('');
+    expect(dictionaryDefinition({ d: 'n an undivided whole\ns in complete agreement\na unanimous vote\nv join together\nr completely' }, 'en')).toBe('n. an undivided whole\nadj. in complete agreement\nadj. unanimous vote\nv. join together\nadv. completely');
   });
 });

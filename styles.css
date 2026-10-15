@@ -469,7 +469,8 @@
   color: var(--agent-color-accent, currentColor);
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source,
+.ev-reading-card .ev-context-source {
   display: flex;
   min-width: 0;
   align-items: baseline;
@@ -477,12 +478,14 @@
   font-size: var(--agent-typography-size-sm, 13px);
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-label {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-label,
+.ev-reading-card .ev-context-source-label {
   flex: none;
   color: var(--agent-color-text-muted, currentColor);
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link,
+.ev-reading-card .ev-context-source-link {
   min-width: 0;
   overflow: hidden;
   border: none;
@@ -496,21 +499,26 @@
   cursor: pointer;
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link::after {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link::after,
+.ev-reading-card .ev-context-source-link::after {
   content: " \2197";
 }
 
 [data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link:hover,
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link:focus-visible {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link:focus-visible,
+.ev-reading-card .ev-context-source-link:hover,
+.ev-reading-card .ev-context-source-link:focus-visible {
   text-decoration: underline;
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link:focus-visible {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-link:focus-visible,
+.ev-reading-card .ev-context-source-link:focus-visible {
   outline: var(--agent-state-focus-ring, 2px solid currentColor);
   outline-offset: 2px;
 }
 
-[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-text {
+[data-plugin-panel="dev.auton.english-vocab:english-vocab"] .ev-context-source-text,
+.ev-reading-card .ev-context-source-text {
   min-width: 0;
   overflow: hidden;
   color: var(--agent-color-text-secondary, currentColor);

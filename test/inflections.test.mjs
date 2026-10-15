@@ -4,7 +4,8 @@ import { buildSurfaceMap } from '../src/inflections.mjs';
 describe('inflections', () => {
   it('should generate regular noun verb participle and adjective surfaces when lemma is collected', () => {
     const map = buildSurfaceMap([
-      'cat', 'box', 'city', 'stop', 'make', 'die', 'run',
+      { word: 'cat', pos: 'noun' }, { word: 'box', pos: 'noun' }, { word: 'city', pos: 'noun' },
+      { word: 'stop', pos: 'verb' }, { word: 'make', pos: 'verb' }, { word: 'die', pos: 'verb' }, { word: 'run', pos: 'verb' },
       { word: 'big', pos: 'adjective' },
       { word: 'happy', pos: '形容词' },
     ]);
@@ -34,17 +35,24 @@ describe('inflections', () => {
   });
 
   it('should include common irregular forms and map collected irregular forms back to their lemma', () => {
-    const map = buildSurfaceMap(['go', 'child', 'good']);
+    const map = buildSurfaceMap([{ word: 'go', pos: 'verb' }, { word: 'child', pos: 'noun' }, { word: 'good', pos: 'adjective' }]);
     expect(map.get('went')).toBe('go');
     expect(map.get('gone')).toBe('go');
     expect(map.get('children')).toBe('child');
     expect(map.get('better')).toBe('good');
     expect(map.get('best')).toBe('good');
-    expect(buildSurfaceMap(['went']).get('go')).toBe('went');
+    expect(buildSurfaceMap(['went']).has('go')).toBe(false);
+    expect(buildSurfaceMap(['ran']).get('ran')).toBe('ran');
+  });
+
+  it('should generate third person es forms for verbs ending in o', () => {
+    const map = buildSurfaceMap([{ word: 'do', pos: 'verb' }, { word: 'go', pos: 'verb' }]);
+    expect(map.get('does')).toBe('do');
+    expect(map.get('goes')).toBe('go');
   });
 
   it('should include expanded common irregular verb forms without duplicate-form conflicts', () => {
-    const map = buildSurfaceMap(['arise', 'bear', 'cling', 'forbid', 'lie', 'seek', 'stride', 'undertake', 'weave', 'withdraw', 'read', 'put']);
+    const map = buildSurfaceMap(['arise', 'bear', 'cling', 'forbid', 'lie', 'seek', 'stride', 'undertake', 'weave', 'withdraw', 'read', 'put'].map((word) => ({ word, pos: 'verb' })));
     expect(map.get('arose')).toBe('arise');
     expect(map.get('borne')).toBe('bear');
     expect(map.get('clung')).toBe('cling');
@@ -60,14 +68,14 @@ describe('inflections', () => {
   });
 
   it('should prefer an exact collected word and otherwise choose the alphabetically first lemma for conflicts', () => {
-    const exact = buildSurfaceMap(['axis', 'axi']);
+    const exact = buildSurfaceMap([{ word: 'axis', pos: 'noun' }, { word: 'axi', pos: 'noun' }]);
     expect(exact.get('axis')).toBe('axis');
-    const generated = buildSurfaceMap(['try', 'trie']);
+    const generated = buildSurfaceMap([{ word: 'try', pos: 'verb' }, { word: 'trie', pos: 'verb' }]);
     expect(generated.get('tries')).toBe('trie');
   });
 
   it('should ignore non English surfaces short generated forms and denylisted false friends', () => {
-    const map = buildSurfaceMap(['你好', 'be', 'use', 'bu', 'new']);
+    const map = buildSurfaceMap(['你好', { word: 'be', pos: 'verb' }, { word: 'use', pos: 'verb' }, 'bu', { word: 'new', pos: 'noun' }]);
     expect(map.has('你好')).toBe(false);
     expect(map.get('be')).toBe('be');
     expect(map.has('bes')).toBe(false);
@@ -77,11 +85,67 @@ describe('inflections', () => {
   });
 
   it('should avoid cvc doubling for w x y endings and keep apostrophe words valid', () => {
-    const map = buildSurfaceMap([null, "can't", 'mix', 'play', 'snow']);
+    const map = buildSurfaceMap([null, "can't", ...['mix', 'play', 'snow'].map((word) => ({ word, pos: 'verb' }))]);
     expect(map.get("can't")).toBe("can't");
     expect(map.has('mixxed')).toBe(false);
     expect(map.has('playyed')).toBe(false);
     expect(map.has('snowwed')).toBe(false);
     expect(map.get('mixing')).toBe('mix');
+  });
+
+  it('should constrain generated forms by normalized part of speech and avoid open doubling', () => {
+    const nouns = buildSurfaceMap([{ word: 'saw', pos: 'noun' }, { word: 'book', pos: 'noun' }]);
+    expect(nouns.get('saws')).toBe('saw');
+    expect(nouns.has('sawed')).toBe(false);
+    expect(nouns.has('sawn')).toBe(false);
+    expect(nouns.has('booked')).toBe(false);
+    const adjectives = buildSurfaceMap([{ word: 'good', pos: 'adjective' }]);
+    expect(adjectives.get('better')).toBe('good');
+    expect(adjectives.has('goods')).toBe(false);
+    expect(adjectives.has('gooded')).toBe(false);
+    const verbs = buildSurfaceMap([{ word: 'open', pos: 'verb' }]);
+    expect(verbs.get('opened')).toBe('open');
+    expect(verbs.get('opening')).toBe('open');
+    expect(verbs.has('openned')).toBe(false);
+    expect(verbs.has('openning')).toBe(false);
+    expect([...buildSurfaceMap([{ word: 'plain' }]).keys()]).toEqual(['plain']);
+  });
+
+  it('should generate only valid conservative forms for irregular words contractions and long adjectives', () => {
+    const map = buildSurfaceMap([
+      { word: 'see', pos: 'verb' }, { word: 'run', pos: 'verb' }, { word: 'write', pos: 'verb' },
+      { word: 'child', pos: 'noun' }, { word: 'beautiful', pos: 'adjective' },
+      { word: "can't", pos: 'verb' }, { word: 'does', pos: 'verb' },
+    ]);
+    expect([...map.keys()]).toEqual(expect.arrayContaining(['see', 'sees', 'seeing', 'saw', 'seen', 'run', 'runs', 'running', 'ran', 'write', 'writes', 'writing', 'wrote', 'written', 'child', 'children', 'beautiful', "can't", 'does']));
+    for (const fake of ['seed', 'seing', 'runed', 'runing', 'runned', 'writed', 'childs', 'beautifuler', 'beautifulest', "can'ted", "can'ting", 'doeses', 'doesed']) expect(map.has(fake)).toBe(false);
+  });
+
+  it('should infer missing parts of speech from definition prefixes before generating forms', () => {
+    const map = buildSurfaceMap([
+      { word: 'deliberate', definition: 'v. 仔细考虑；a. 故意的' },
+      { word: 'book', definition: 'n. 书' },
+    ]);
+    expect(map.get('deliberated')).toBe('deliberate');
+    expect(map.get('deliberating')).toBe('deliberate');
+    expect(map.get('books')).toBe('book');
+    expect(map.has('booked')).toBe(false);
+  });
+
+  it('should publish straight and curly apostrophe surfaces without generating contraction inflections', () => {
+    const map = buildSurfaceMap([{ word: "don't", pos: 'verb' }]);
+    expect(map.get("don't")).toBe("don't");
+    expect(map.get('don’t')).toBe("don't");
+    expect(map.has("don'ted")).toBe(false);
+  });
+
+  it('should keep already inflected nouns conservative and handle short irregular verb rules', () => {
+    const map = buildSurfaceMap([
+      { word: 'children', pos: 'noun' },
+      { word: 'have', pos: 'verb' },
+      { word: 'go', pos: 'verb' },
+    ]);
+    expect([...map.keys()]).toEqual(expect.arrayContaining(['children', 'have', 'having', 'had', 'go', 'goes', 'going', 'went', 'gone']));
+    expect(map.has('childrens')).toBe(false);
   });
 });

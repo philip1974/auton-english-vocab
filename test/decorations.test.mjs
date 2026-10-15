@@ -4,6 +4,7 @@ import { buildReadingTerms, createReadingDecorationSpec } from '../src/decoratio
 const review = (cards = {}, flags = {}) => ({ version: 1, cards, flags });
 const entry = (word, extra = {}) => ({
   word,
+  pos: 'verb',
   definition: `${word} definition`,
   examples: [`${word} example one`, `${word} example two`, `${word} example three`],
   path: `wiki/vocab/${word}.md`,
@@ -34,6 +35,26 @@ describe('reading decorations', () => {
     expect(bySurface.has('missing')).toBe(false);
   });
 
+  it('should cap reading terms while keeping lemmas before generated forms', () => {
+    const terms = buildReadingTerms({ entries: [entry('run'), entry('walk')] }, 3);
+    expect(terms).toHaveLength(3);
+    expect(new Set(terms.map((item) => item.surface))).toEqual(new Set(['run', 'walk', 'ran']));
+    expect(terms.limited).toBe(true);
+  });
+
+  it('should render a complete collected card when lookup context has no decoration tone', async () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run')], review: review() }),
+      lookupDictionary: async () => ({ surface: 'run', lemma: 'run', entry: { t: '跑' } }),
+      onReview: vi.fn(),
+    }).renderCard(container, { word: 'run', key: 'run', tone: null, sentence: 'Run home.' });
+    await Promise.resolve();
+    expect(container.textContent).toContain('run definition');
+    expect(container.querySelectorAll('[data-rating]')).toHaveLength(2);
+  });
+
   it('should pass entry pos through when building comparative reading terms', () => {
     const terms = buildReadingTerms({
       entries: [
@@ -49,10 +70,21 @@ describe('reading decorations', () => {
     expect(surfaces.has('happier')).toBe(false);
   });
 
+  it('should infer verb and noun forms from definition when note pos is missing', () => {
+    const terms = buildReadingTerms({ entries: [
+      { word: 'deliberate', definition: 'v. 仔细考虑；a. 故意的' },
+      { word: 'book', definition: 'n. 书' },
+    ], review: review() });
+    const surfaces = new Set(terms.map((term) => term.surface));
+    expect(surfaces.has('deliberated')).toBe(true);
+    expect(surfaces.has('deliberating')).toBe(true);
+    expect(surfaces.has('booked')).toBe(false);
+  });
+
   it('should render a card with definition examples badge inflection hint rating undo speech and cleanup', async () => {
     const container = document.createElement('div');
     const state = { entries: [entry('run')], review: review() };
-    const onReview = vi.fn(async () => true);
+    const onReview = vi.fn(async () => ({ ok: true, undoId: 'rating-1' }));
     const onUndo = vi.fn(async () => true);
     const onTermsChanged = vi.fn();
     const speak = vi.fn();
@@ -86,10 +118,108 @@ describe('reading decorations', () => {
     expect(container.textContent).toContain('已记为认识');
     container.querySelector('[data-role="undo"]').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(onUndo).toHaveBeenCalledWith('run');
+    expect(onUndo).toHaveBeenCalledWith('run', 'rating-1');
     expect(container.textContent).toContain('Running → run');
     cleanup();
     expect(container.textContent).toBe('');
+  });
+
+  it('should disable reading-card rating buttons while a mutation is pending', () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run')], review: review(), mutationPending: true }),
+      onReview: vi.fn(),
+    }).renderCard(container, { word: 'run', key: 'run', tone: 'learning' });
+    expect([...container.querySelectorAll('[data-rating]')].every((node) => node.disabled)).toBe(true);
+  });
+
+  it('should not render late rating undo dictionary or collection callbacks after card cleanup', async () => {
+    const deferred = () => {
+      let resolve;
+      const promise = new Promise((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+
+    const rating = deferred();
+    const ratingContainer = document.createElement('div');
+    const ratingCleanup = createReadingDecorationSpec({
+      locale: 'en', getState: () => ({ entries: [entry('run')], review: review() }), onReview: () => rating.promise,
+    }).renderCard(ratingContainer, { word: 'run', key: 'run', tone: 'learning' });
+    ratingContainer.querySelector('[data-rating="Good"]').click();
+    ratingCleanup();
+    rating.resolve(true);
+    await Promise.resolve();
+    expect(ratingContainer.textContent).toBe('');
+
+    const undo = deferred();
+    const undoContainer = document.createElement('div');
+    const undoCleanup = createReadingDecorationSpec({
+      locale: 'en', getState: () => ({ entries: [entry('run')], review: review() }),
+      onReview: async () => true, onUndo: () => undo.promise,
+    }).renderCard(undoContainer, { word: 'run', key: 'run', tone: 'learning' });
+    undoContainer.querySelector('[data-rating="Good"]').click();
+    await Promise.resolve();
+    undoContainer.querySelector('[data-role="undo"]').click();
+    undoCleanup();
+    undo.resolve(true);
+    await Promise.resolve();
+    expect(undoContainer.textContent).toBe('');
+
+    const collection = deferred();
+    const collectContainer = document.createElement('div');
+    const collectCleanup = createReadingDecorationSpec({
+      locale: 'en', getState: () => ({ entries: [], review: review() }),
+      lookupDictionary: async () => ({ surface: 'rare', lemma: 'rare', entry: { t: 'adj. 稀有' } }),
+      onCollectWord: () => collection.promise,
+    }).renderCard(collectContainer, { word: 'rare', key: 'rare', tone: null });
+    await Promise.resolve();
+    collectContainer.querySelector('.ev-reading-button').click();
+    collectCleanup();
+    collection.resolve({ outcome: 'applied' });
+    await Promise.resolve();
+    expect(collectContainer.textContent).toBe('');
+  });
+
+  it('should render collected examples as sentence and navigable source title without markdown', () => {
+    const container = document.createElement('div');
+    const openReadingDocument = vi.fn();
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run', { examples: ['Run early. — [Morning notes](../sources/morning.md)'] })], review: review() }),
+      canOpenReadingDocument: () => true,
+      openReadingDocument,
+    }).renderCard(container, { word: 'run', key: 'run', tone: 'learning' });
+    expect(container.querySelector('.ev-reading-example')?.textContent).toBe('Run early.');
+    expect(container.textContent).not.toContain('[Morning notes]');
+    container.querySelector('.ev-context-source-link').click();
+    expect(openReadingDocument).toHaveBeenCalledWith('wiki/sources/morning.md');
+  });
+
+  it('should render collected path and url sources as plain secondary text when opening is unavailable', () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [entry('run', { examples: [
+        'Run there. — [../sources/path.md](../sources/path.md)',
+        'Run online. — <https://example.com/run>',
+      ] })], review: review() }),
+    }).renderCard(container, { word: 'run', key: 'run', tone: 'learning' });
+    expect([...container.querySelectorAll('.ev-context-source-text')].map((node) => node.textContent)).toEqual(['../sources/path.md', 'https://example.com/run']);
+    expect(container.querySelector('.ev-context-source-link')).toBeNull();
+  });
+
+  it('should keep collected dictionary details compact and show inflection relation only once', async () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry('run')], review: review() }),
+      lookupDictionary: async () => ({ surface: 'ran', lemma: 'run', entry: { p: 'rʌn', t: 'v. 跑\nn. 路程\nv. 运行', d: 'move fast' } }),
+    }).renderCard(container, { word: 'ran', key: 'run', tone: 'learning' });
+    await Promise.resolve();
+    expect(container.textContent.match(/ran → run/gu)).toHaveLength(1);
+    expect(container.querySelectorAll('.ev-dict > .ev-dict-definition > .ev-dict-line')).toHaveLength(2);
+    expect(container.querySelector('details summary')?.textContent).toBe('更多释义');
   });
 
   it('should add a new reading sentence through review and show applied status when the word is collected', async () => {
@@ -387,6 +517,21 @@ describe('reading decorations', () => {
     expect(container.querySelector('.ev-reading-phonetic')?.textContent).toBe('/rʌn/');
     expect([...container.querySelectorAll('.ev-dict-lines-zh .ev-dict-line')].map((node) => node.textContent)).toEqual(['v. 跑', 'n. 路程']);
     expect([...container.querySelectorAll('.ev-dict-lines-en .ev-dict-line')].map((node) => node.textContent)).toEqual(['move fast', 'operate']);
+  });
+
+  it('should open a semantic surface inflection relation as its lemma dictionary entry', async () => {
+    const container = document.createElement('div');
+    const lookupDictionary = vi.fn(async (word) => word === 'saw'
+      ? { surface: 'saw', lemma: 'saw', inflection: { lemma: 'see', kind: 'past' }, entry: { t: 'n. 锯', d: 'a cutting tool' } }
+      : { surface: 'see', lemma: 'see', entry: { t: 'v. 看见', d: 'perceive with the eyes' } });
+    createReadingDecorationSpec({ locale: 'zh', getState: () => ({ entries: [], review: review() }), lookupDictionary })
+      .renderCard(container, { word: 'saw', key: 'saw', tone: null });
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-lemma-link')?.textContent).toBe('也是 see 的过去式');
+    container.querySelector('.ev-dict-lemma-link').click();
+    await Promise.resolve();
+    expect(lookupDictionary).toHaveBeenLastCalledWith('see');
+    expect(container.querySelector('.ev-dict-head .ev-reading-word')?.textContent).toBe('see');
   });
 
   it('should render English dictionary definitions before Chinese definitions outside zh locale', async () => {

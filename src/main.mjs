@@ -1,7 +1,6 @@
 import { uiText, currentLocale } from './ui-text.mjs';
 import { ReviewStore } from './review-store.mjs';
 import { VocabIndex } from './vocab-index.mjs';
-import { rateCard, newSerializedCard } from './scheduler.mjs';
 import { renderPanel, hasRequiredHost, appendSelectionRequest } from './panel.mjs';
 import { makeVocabAdd, makeVocabLookup, ADD_SCHEMA, LOOKUP_SCHEMA } from './tools.mjs';
 import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mjs';
@@ -17,6 +16,10 @@ const REVIEW_MODES = new Set(['context', 'flip', 'reverse', 'listening']);
 
 function normalizedSentence(value) {
   return String(value ?? '').trim().replace(/\s+/gu, ' ');
+}
+
+function cardFingerprint(card) {
+  return card ? JSON.stringify(card) : 'missing';
 }
 
 function proposalError(error) {
@@ -49,6 +52,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
       levelSettings: DEFAULT_LEVEL_SETTINGS,
       recommendations: null,
       recommendationLoading: null,
+      mutationPending: false,
+      locale: this.locale,
     };
     this.listeners = new Set();
     this.submission = 0;
@@ -58,21 +63,16 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.readingStatusHandle = null;
     this.learningSuggestionsHandle = null;
     this.recommender = null;
+    this.mutationTail = Promise.resolve();
+    this.pendingMutations = 0;
+    this.mutationSequence = 0;
+    this.recommendationRequest = 0;
     this.latestReadingEvent = null;
     this.readingUndoSnapshots = new Map();
-    this.addPanel({
-      id: 'english-vocab',
-      title: this.t.panelTitle,
-      location: 'right',
-      icon: '📖',
-      render: (container) => renderPanel(container, this.panelState()),
-    });
-    this.addCommand({
-      id: 'start-review',
-      title: this.t.commandTitle,
-      description: this.t.commandDescription,
-      callback: () => this.openPanel('english-vocab'),
-    });
+    this.localizedPanelHandle = null;
+    this.localizedCommandHandle = null;
+    this.selectionActionHandle = null;
+    this.registerLocalizedShell();
     if (!hasRequiredHost(this.app)) return;
     await this.loadPreferences();
     await this.initializeState();
@@ -81,15 +81,53 @@ export default class EnglishVocabPlugin extends BasePlugin {
     await this.registerTools();
     this.onEvent?.('knowledge.index-changed', () => this.refreshIndex());
     this.onEvent?.('knowledge.root-changed', () => this.handleRootChanged());
+    this.onEvent?.('appearance.locale-changed', (event) => this.handleLocaleChanged(event));
+  }
+
+  registerLocalizedShell() {
+    this.localizedPanelHandle?.dispose?.();
+    this.localizedCommandHandle?.dispose?.();
+    this.localizedPanelHandle = this.addPanel({
+      id: 'english-vocab',
+      title: this.t.panelTitle,
+      location: 'right',
+      icon: '📖',
+      render: (container) => renderPanel(container, this.panelState()),
+    });
+    this.localizedCommandHandle = this.addCommand({
+      id: 'start-review',
+      title: this.t.commandTitle,
+      description: this.t.commandDescription,
+      callback: () => this.openPanel('english-vocab'),
+    });
   }
 
   emitState() {
     for (const listener of this.listeners ?? []) listener();
   }
 
+  enqueueMutation(task) {
+    this.pendingMutations += 1;
+    this.state.mutationPending = true;
+    this.emitState();
+    const run = this.mutationTail.then(task, task);
+    this.mutationTail = run.catch(() => undefined);
+    return run.finally(() => {
+      this.pendingMutations -= 1;
+      this.state.mutationPending = this.pendingMutations > 0;
+      this.emitState();
+    });
+  }
+
+  nextLogId() {
+    this.mutationSequence += 1;
+    return `review-${Date.now().toString(36)}-${this.mutationSequence}`;
+  }
+
   panelState() {
     return {
       app: this.app,
+      locale: this.locale,
       getState: () => this.state,
       subscribe: (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); },
       onReview: (word, rating, mode) => this.rateWord(word, rating, mode),
@@ -147,7 +185,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
   async initializeState() {
     this.reviewStore = new ReviewStore(this.app, { locale: this.locale, notify: (message) => this.notice(message) });
     this.state.review = await this.reviewStore.load();
-    this.state.log = this.reviewStore.log;
+    this.state.log = this.reviewStore.effectiveLog();
     this.index = new VocabIndex(this.app.knowledge, {
       onProgress: (done, total) => { this.state.loading = { done, total }; this.emitState(); },
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
@@ -190,7 +228,8 @@ export default class EnglishVocabPlugin extends BasePlugin {
     // root-changed event cannot leave the old root's progress on screen.
     if (this.reviewStore !== null && await this.rootMoved()) {
       this.state.review = await this.reviewStore.reloadForRootChange();
-      this.state.log = this.reviewStore.log;
+      this.state.log = this.reviewStore.effectiveLog();
+      this.readingUndoSnapshots.clear();
     }
     try {
       const result = await this.index.refresh();
@@ -216,8 +255,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   async handleRootChanged() {
     if (!this.reviewStore) return;
+    this.readingUndoSnapshots.clear();
     this.state.review = await this.reviewStore.reloadForRootChange();
-    this.state.log = this.reviewStore.log;
+    this.state.log = this.reviewStore.effectiveLog();
     this.updateReadingTerms();
     this.emitState();
     await this.recommender?.reload();
@@ -225,93 +265,135 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async rateWord(word, rating, mode) {
-    const previous = this.state.review.cards[word];
-    const next = {
-      version: 1,
-      cards: { ...this.state.review.cards, [word]: rateCard(previous ?? newSerializedCard(), rating) },
-      flags: { ...this.state.review.flags },
-    };
-    let result;
-    try {
-      result = await this.reviewStore.saveReview(next);
-    } catch {
-      this.notice(this.t.reviewSaveFailed);
-      return false;
-    }
-    this.state.review = result.review;
-    this.state.log = this.reviewStore.log;
-    if (mode === 'reading-card') this.readingUndoSnapshots.set(word, previous ?? null);
-    this.updateReadingTerms();
-    this.emitState();
-    if (result.rootChanged) {
-      this.notice(this.t.rootChangedDuringReview);
-      return false;
-    }
-    const entry = { word, rating, reviewedAt: new Date().toISOString(), previousState: previous?.state ?? 'New', mode };
-    try {
-      this.state.log = await this.reviewStore.appendLog(entry);
-      this.emitState();
-    } catch {
-      this.notice(this.t.logSaveFailed);
-    }
-    await this.refreshReadingLevelSurfaces();
-    return true;
-  }
-
-  async undoReadingRating(word) {
-    if (!this.reviewStore || !this.readingUndoSnapshots.has(word)) return false;
-    const previous = this.readingUndoSnapshots.get(word);
-    const cards = { ...this.state.review.cards };
-    if (previous) cards[word] = previous;
-    else delete cards[word];
-    try {
-      const result = await this.reviewStore.saveReview({ ...this.state.review, cards });
+    return this.enqueueMutation(async () => {
+      const id = this.nextLogId();
+      const entry = { id, word, rating, reviewedAt: new Date().toISOString(), mode };
+      let result;
+      try {
+        result = await this.reviewStore.mutateReview({ type: 'rateCard', word, rating, logEntry: entry });
+      } catch {
+        this.notice(this.t.reviewSaveFailed);
+        return false;
+      }
       this.state.review = result.review;
-      this.state.log = this.reviewStore.log;
+      this.state.log = this.reviewStore.effectiveLog();
+      const previous = result.previousCard ?? null;
+      this.updateReadingTerms();
+      this.emitState();
       if (result.rootChanged) {
+        this.readingUndoSnapshots.delete(word);
         this.notice(this.t.rootChangedDuringReview);
         return false;
       }
-      this.state.log = await this.reviewStore.appendLog({ word, undo: true, reviewedAt: new Date().toISOString(), mode: 'reading-card' });
-      this.readingUndoSnapshots.delete(word);
-      this.updateReadingTerms();
-      this.emitState();
+      if (mode === 'reading-card') {
+        this.readingUndoSnapshots.set(word, {
+          card: previous,
+          logId: id,
+          rootGeneration: this.reviewStore.rootGeneration,
+          resultingCard: cardFingerprint(result.review.cards[word]),
+        });
+      }
+      try {
+        this.state.log = await this.reviewStore.flushPendingLogs();
+        this.state.review = this.reviewStore.review;
+        this.emitState();
+      } catch {
+        this.notice(this.t.logSaveFailed);
+      }
       await this.refreshReadingLevelSurfaces();
-      return true;
+      return mode === 'reading-card' ? { ok: true, undoId: id } : true;
+    });
+  }
+
+  async undoReadingRating(word, expectedId) {
+    if (!this.reviewStore || !this.readingUndoSnapshots.has(word)) return false;
+    const initial = this.readingUndoSnapshots.get(word);
+    if ((expectedId && initial.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, initial)) {
+      if (this.readingUndoSnapshots.get(word) === initial) this.readingUndoSnapshots.delete(word);
+      return false;
+    }
+    return this.enqueueMutation(async () => {
+      const snapshot = this.readingUndoSnapshots.get(word);
+      if (!snapshot || (expectedId && snapshot.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, snapshot)) {
+        if (this.readingUndoSnapshots.get(word) === snapshot) this.readingUndoSnapshots.delete(word);
+        return false;
+      }
+      try {
+        const operation = {
+          type: 'restoreCardIfFingerprint',
+          word,
+          card: snapshot.card,
+          expectedFingerprint: snapshot.resultingCard,
+        };
+        const logEntry = { id: this.nextLogId(), word, undoOf: snapshot.logId, reviewedAt: new Date().toISOString(), mode: 'reading-card' };
+        const result = await this.reviewStore.mutateReview({ ...operation, logEntry });
+        this.state.review = result.review;
+        this.state.log = this.reviewStore.effectiveLog();
+        if (result.rootChanged) {
+          this.readingUndoSnapshots.delete(word);
+          this.notice(this.t.rootChangedDuringReview);
+          return false;
+        }
+        if (!result.applied) {
+          this.readingUndoSnapshots.delete(word);
+          return false;
+        }
+        this.state.log = await this.reviewStore.flushPendingLogs();
+        this.state.review = this.reviewStore.review;
+        this.readingUndoSnapshots.delete(word);
+        this.updateReadingTerms();
+        this.emitState();
+        await this.refreshReadingLevelSurfaces();
+        return true;
+      } catch {
+        this.notice(this.t.reviewSaveFailed);
+        return false;
+      }
+    });
+  }
+
+  async readingUndoSnapshotValid(word, snapshot) {
+    try {
+      const { rootGeneration } = await this.app.storage.scope();
+      return rootGeneration === snapshot.rootGeneration
+        && this.reviewStore.rootGeneration === snapshot.rootGeneration
+        && cardFingerprint(this.reviewStore.review.cards[word]) === snapshot.resultingCard;
     } catch {
-      this.notice(this.t.reviewSaveFailed);
       return false;
     }
   }
 
   async setFlag(word, flag) {
-    const flags = { ...this.state.review.flags };
-    if (flag) flags[word] = flag;
-    else delete flags[word];
-    try {
-      const result = await this.reviewStore.saveReview({ ...this.state.review, flags });
-      this.state.review = result.review;
-      this.state.log = this.reviewStore.log;
-      this.updateReadingTerms();
-      this.emitState();
-      await this.refreshReadingLevelSurfaces();
-      if (result.rootChanged) this.notice(this.t.rootChangedDuringReview);
-      return !result.rootChanged;
-    } catch {
-      this.notice(this.t.flagSaveFailed);
-      return false;
-    }
+    return this.enqueueMutation(async () => {
+      try {
+        const result = await this.reviewStore.mutateReview(flag ? { type: 'setFlag', word, flag } : { type: 'removeFlag', word });
+        this.state.review = result.review;
+        this.state.log = this.reviewStore.effectiveLog();
+        this.updateReadingTerms();
+        this.emitState();
+        await this.refreshReadingLevelSurfaces();
+        if (result.rootChanged) {
+          this.readingUndoSnapshots.clear();
+          this.notice(this.t.rootChangedDuringReview);
+        }
+        return !result.rootChanged;
+      } catch {
+        this.notice(this.t.flagSaveFailed);
+        return false;
+      }
+    });
   }
 
   registerSelectionAction() {
-    this.app.selectionActions.register({
+    this.selectionActionHandle?.dispose?.();
+    this.selectionActionHandle = this.register(this.app.selectionActions.register({
       id: 'collect-vocab',
       title: this.t.collectTitle,
       icon: '📖',
       priority: 10,
       surfaces: ['reading', 'web'],
       onSelect: (context) => appendSelectionRequest(this.app, context, (message) => this.notice(message), this.locale),
-    });
+    }));
   }
 
   readingSupported() {
@@ -328,13 +410,15 @@ export default class EnglishVocabPlugin extends BasePlugin {
         locale: this.locale,
         getState: () => this.state,
         onReview: (word, rating, mode) => this.rateWord(word, rating, mode),
-        onUndo: (word) => this.undoReadingRating(word),
+        onUndo: (word, ratingId) => this.undoReadingRating(word, ratingId),
         onTermsChanged: () => this.updateReadingTerms(),
         speak: (word) => this.panelState().speak(word),
         lookupDictionary: (word) => this.lookupDictionary(word),
         onCollectWord: (result, context) => this.collectDictionaryWord(result, context),
         onExplainWord: (word, context) => this.explainDictionaryWord(word, context),
         onAddExample: (word, context) => this.addExampleSentence(word, context),
+        openReadingDocument: (path) => this.app.workspace?.openDocument?.(path) ?? false,
+        canOpenReadingDocument: () => Boolean(this.app.workspace?.openDocument),
       });
       this.readingHandle = this.addReadingDecoration
         ? this.addReadingDecoration(spec)
@@ -361,7 +445,23 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   updateReadingTerms() {
     if (!this.readingHandle) return false;
-    return this.readingHandle.setTerms(this.state.highlight === false ? [] : buildReadingTerms(this.state));
+    const terms = this.state.highlight === false ? [] : buildReadingTerms(this.state);
+    const accepted = this.readingHandle.setTerms(terms);
+    if (accepted && !terms.limited) return true;
+    if (accepted && terms.limited) {
+      if (!this.termsLimitNoticeShown) {
+        this.termsLimitNoticeShown = true;
+        this.notice(this.t.termsLimited);
+      }
+      return true;
+    }
+    const lemmas = terms.filter((term) => term.surface === term.key);
+    const fallback = this.readingHandle.setTerms(lemmas);
+    if (!this.termsLimitNoticeShown) {
+      this.termsLimitNoticeShown = true;
+      this.notice(this.t.termsLimited);
+    }
+    return fallback;
   }
 
   async setHighlight(value) {
@@ -395,10 +495,6 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.recommender = new ReadingRecommender(this.app, {
       settings: this.state.levelSettings,
       locale: this.locale,
-      onProgress: (done, total) => {
-        this.state.recommendationLoading = { done, total };
-        this.emitState();
-      },
     });
     if (this.app.readingStatus?.register) {
       this.readingStatusHandle = this.register(this.app.readingStatus.register({ id: 'reading-level' }));
@@ -407,9 +503,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
     if (this.app.learningSuggestions?.register) {
       this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: 'reading-recommendations', heading: this.t.recommendations }));
     }
-    await this.recommender.reload();
-    await this.refreshRecommendations({ silent: true });
-    await this.refreshLatestReadingStatus();
+    try {
+      await this.recommender.reload();
+      await this.refreshRecommendations({ silent: true });
+      await this.refreshLatestReadingStatus();
+    } catch {
+      this.state.recommendationLoading = null;
+    }
   }
 
   async setLevelSettings(settings) {
@@ -438,18 +538,35 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   async refreshRecommendations({ silent = false } = {}) {
     if (!this.recommender) return null;
+    const request = ++this.recommendationRequest;
     const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
     if (!silent) {
       this.state.recommendationLoading = { done: 0, total: 0 };
       this.emitState();
     }
-    const result = await this.recommender.recommend({ review: this.state.review, entries: this.state.entries });
-    if (result.stale || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return null;
-    this.state.recommendations = result;
-    this.state.recommendationLoading = null;
-    this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items));
-    this.emitState();
-    return result;
+    try {
+      const result = await this.recommender.recommend({
+        review: this.state.review,
+        entries: this.state.entries,
+        onProgress: (done, total) => {
+          if (request !== this.recommendationRequest) return;
+          this.state.recommendationLoading = { done, total };
+          this.emitState();
+        },
+      });
+      if (request !== this.recommendationRequest || result.stale || (this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return null;
+      this.state.recommendations = result;
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(result.items));
+      return result;
+    } catch {
+      if (request === this.recommendationRequest && !silent) this.notice(this.t.recommendationFailed);
+      return null;
+    } finally {
+      if (request === this.recommendationRequest) {
+        this.state.recommendationLoading = null;
+        this.emitState();
+      }
+    }
   }
 
   async updateReadingStatus(event) {
@@ -495,9 +612,33 @@ export default class EnglishVocabPlugin extends BasePlugin {
         nextNumber: () => ++this.submission,
         notify: (message) => this.notice(message),
         refresh: () => this.refreshIndex(),
-        locale: this.locale,
+        locale: () => this.locale,
       }),
     });
+  }
+
+  async handleLocaleChanged(event) {
+    const locale = typeof event === 'string' ? event : event?.locale;
+    this.locale = ['en', 'zh', 'ja', 'ko'].includes(locale) ? locale : 'en';
+    this.t = uiText(this.locale);
+    this.state.locale = this.locale;
+    if (this.reviewStore) this.reviewStore.t = this.t;
+    if (this.recommender) {
+      this.recommender.locale = this.locale;
+      this.recommender.t = this.t;
+    }
+    this.registerLocalizedShell();
+    if (hasRequiredHost(this.app)) this.registerSelectionAction();
+    this.disposeReadingDecorations();
+    this.syncReadingDecorations();
+    if (this.app.learningSuggestions?.register) {
+      this.learningSuggestionsHandle?.dispose?.();
+      this.learningSuggestionsHandle = this.register(this.app.learningSuggestions.register({ id: 'reading-recommendations', heading: this.t.recommendations }));
+      const epoch = this.app.workspace?.scope?.().epoch ?? 'legacy';
+      this.learningSuggestionsHandle?.set?.(epoch, learningSuggestionsFromRecommendations(this.state.recommendations?.items ?? []));
+    }
+    this.emitState();
+    await this.refreshLatestReadingStatus();
   }
 
   notice(message) {
@@ -543,9 +684,25 @@ export default class EnglishVocabPlugin extends BasePlugin {
     const entry = result?.entry;
     if (!lemma || !entry) return { outcome: 'aborted', summary: 'missing dictionary entry' };
     if (this.index?.get(lemma)) return { outcome: 'aborted', summary: this.t.collectedWord };
-    const path = `wiki/vocab/${slugFor(lemma)}.md`;
-    const existing = await this.app.knowledge.readDocument({ path }).catch(() => null);
-    if (existing && existing._tag !== 'Err') return { outcome: 'aborted', summary: this.t.collectedWord };
+    const slug = slugFor(lemma);
+    let path;
+    for (let number = 1; number < 1000; number += 1) {
+      const candidate = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
+      let existing;
+      try {
+        existing = await this.app.knowledge.readDocument({ path: candidate });
+      } catch (error) {
+        if (error?.code === 'NOT_FOUND') { path = candidate; break; }
+        return { outcome: 'aborted', summary: proposalError(error) };
+      }
+      if (existing?._tag === 'Err') {
+        if (existing.error?.code === 'NOT_FOUND') { path = candidate; break; }
+        return { outcome: 'aborted', summary: proposalError(existing.error) };
+      }
+      const parsed = parseNote(existing.content);
+      if (parsed.ok && parsed.entry.word === lemma) return { outcome: 'aborted', summary: this.t.collectedWord };
+    }
+    if (!path) return { outcome: 'aborted', summary: this.t.collectFailed };
     const chinese = String(entry.t ?? '').split('\n').filter(Boolean).slice(0, 2);
     const english = String(entry.d ?? '').split('\n').filter(Boolean).slice(0, 1);
     const definition = [...chinese, ...english].join('\n') || dictionaryDefinition(entry, this.locale);

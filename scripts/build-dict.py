@@ -35,6 +35,20 @@ def compact_lines(value: str, limit: int | None = None) -> str:
     return "\n".join(lines)
 
 
+def compact_definition(value: str, limit: int = 2) -> str:
+    logical: list[str] = []
+    for raw in str(value or "").replace("\\n", "\n").replace("\r\n", "\n").split("\n"):
+        if raw[:1].isspace() and logical:
+            logical[-1] = f"{logical[-1]} {raw.strip()}"
+            continue
+        text = raw.strip()
+        if not text or re.match(r"^(?:(?:[a-z]+\.)\s*)*See\s+\S+\.?$", text, re.IGNORECASE):
+            continue
+        labels = {"n": "n.", "v": "v.", "a": "adj.", "s": "adj.", "r": "adv."}
+        logical.append(re.sub(r"^([nvasr])\.?\s+", lambda match: f"{labels[match.group(1)]} ", text))
+    return "\n".join(logical[:limit])
+
+
 def is_wanted(row: dict[str, str], word: str, ranks: dict[str, int]) -> bool:
     if not WORD_RE.match(word):
         return False
@@ -55,7 +69,7 @@ def row_entry(row: dict[str, str], rank: int | None) -> dict[str, object]:
     if row.get("phonetic"):
         entry["p"] = row["phonetic"].strip()
     entry["t"] = compact_lines(row.get("translation", ""), 4)
-    definition = compact_lines(row.get("definition", ""), 2)
+    definition = compact_definition(row.get("definition", ""), 2)
     if definition:
         entry["d"] = definition
     if row.get("exchange"):
@@ -81,6 +95,7 @@ def write_module(path: Path, data: dict[str, dict[str, object]]) -> None:
 
 def build(ecdict: Path, outdir: Path, license_path: Path | None) -> dict[str, object]:
     ranks = {word: index + 1 for index, word in enumerate(top_n_list("en", 30000))}
+    existing_license = (outdir / "LICENSE-ECDICT.md").read_text(encoding="utf-8") if (outdir / "LICENSE-ECDICT.md").exists() else None
     chosen: dict[str, tuple[str, dict[str, object]]] = {}
     with ecdict.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -127,11 +142,14 @@ def build(ecdict: Path, outdir: Path, license_path: Path | None) -> dict[str, ob
             f"Source: {SOURCE_URL}\n\n"
             f"Commit: `{SOURCE_COMMIT}`\n\n"
             "Changes: filtered to English word keys matching `^[a-z]+(?:'[a-z]+)*$`, removed `[网络]` translation lines, "
+            "joined indented Webster continuation lines, removed pure See cross-references, normalized WordNet s. labels, "
             "trimmed translations/definitions, split entries into deterministic letter chunks, and added wordfreq ranks for the top 30,000 words.\n\n"
             "## MIT License\n\n"
             f"{mit}",
             encoding="utf-8",
         )
+    elif existing_license is not None:
+        (outdir / "LICENSE-ECDICT.md").write_text(existing_license, encoding="utf-8")
     return manifest
 
 

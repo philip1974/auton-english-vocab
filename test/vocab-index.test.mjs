@@ -80,6 +80,41 @@ describe('vocab index', () => {
     expect(result.invalid[0]).toMatchObject({ path: 'wiki/vocab/a.md', error: expect.stringContaining('read bad') });
   });
 
+  it('should classify parse failures separately from structured document read failures', async () => {
+    const index = new VocabIndex({
+      async listDocuments() { return [
+        { path: 'wiki/vocab/parse.md', revision: { contentHash: 'p' } },
+        { path: 'wiki/vocab/large.md', revision: { contentHash: 'l' } },
+        { path: 'wiki/vocab/binary.md', revision: { contentHash: 'b' } },
+      ]; },
+      async readDocument({ path }) {
+        if (path.endsWith('large.md')) return { _tag: 'Err', error: { code: 'DOCUMENT_TOO_LARGE', message: 'large' } };
+        if (path.endsWith('binary.md')) return { _tag: 'Err', error: { code: 'DOCUMENT_NOT_TEXT', message: 'binary' } };
+        return { content: 'not frontmatter' };
+      },
+    });
+    expect((await index.refresh()).invalid).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'wiki/vocab/parse.md', kind: 'parse' }),
+      expect.objectContaining({ path: 'wiki/vocab/large.md', kind: 'read', code: 'DOCUMENT_TOO_LARGE' }),
+      expect.objectContaining({ path: 'wiki/vocab/binary.md', kind: 'read', code: 'DOCUMENT_NOT_TEXT' }),
+    ]));
+  });
+
+  it('should retry a transient document read failure on the next refresh with the same content hash', async () => {
+    let reads = 0;
+    const index = new VocabIndex({
+      async listDocuments() { return [{ path: 'wiki/vocab/run.md', title: 'Run', revision: { contentHash: 'same' } }]; },
+      async readDocument() {
+        reads += 1;
+        if (reads === 1) throw new Error('temporary');
+        return { content: buildNote({ word: 'run', definition: '跑' }) };
+      },
+    });
+    expect((await index.refresh()).entries).toEqual([]);
+    expect((await index.refresh()).entries).toEqual([expect.objectContaining({ word: 'run' })]);
+    expect(reads).toBe(2);
+  });
+
   it('should publish partial entries and serialize a coalesced refresh requested while busy', async () => {
     let version = 1;
     let release;

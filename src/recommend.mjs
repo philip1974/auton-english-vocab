@@ -99,7 +99,7 @@ export class ReadingRecommender {
     return this.scoreCached(meta, cached, review, entries);
   }
 
-  async recommend({ review = { cards: {}, flags: {} }, entries = [] } = {}) {
+  async recommend({ review = { cards: {}, flags: {} }, entries = [], onProgress = this.onProgress } = {}) {
     const started = this.scopeEpoch();
     this.epoch = started;
     const metas = unwrap(await this.app.knowledge.listDocuments()).filter((meta) => isNavigableReadingPath(meta.path));
@@ -112,7 +112,7 @@ export class ReadingRecommender {
         if (meta.unreadable || hash === '') {
           skipped.unreadable += 1;
           done += 1;
-          this.onProgress(done, metas.length);
+          onProgress(done, metas.length);
           continue;
         }
         const cached = this.cache.get(meta.path, hash);
@@ -120,11 +120,19 @@ export class ReadingRecommender {
           if (cached.english) items.push(this.scoreCached(meta, cached, review, entries));
           else skipped[cached.reason] = (skipped[cached.reason] ?? 0) + 1;
           done += 1;
-          this.onProgress(done, metas.length);
+          onProgress(done, metas.length);
           if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
           continue;
         }
-        const doc = unwrap(await this.app.knowledge.readDocument({ path: meta.path }));
+        let doc;
+        try {
+          doc = unwrap(await this.app.knowledge.readDocument({ path: meta.path }));
+        } catch {
+          skipped.unreadable += 1;
+          done += 1;
+          onProgress(done, metas.length);
+          continue;
+        }
         const detected = detectEnglish(doc.content);
         if (!detected.english) {
           skipped[detected.reason] += 1;
@@ -136,7 +144,7 @@ export class ReadingRecommender {
           items.push(this.scoreCached(meta, this.cache.get(meta.path, hash), review, entries));
         }
         done += 1;
-        this.onProgress(done, metas.length);
+        onProgress(done, metas.length);
         if (this.scopeEpoch() !== started) return { stale: true, items: [], skipped };
       }
       await this.cache.flush();

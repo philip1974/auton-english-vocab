@@ -16,4 +16,10 @@ describe('styles.css', () => {
   it('should avoid literal color fallbacks in plugin styles', () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}|rgba\(|\bgray\b/u);
   });
+
+  it('should apply context source text and link styling inside reading cards', () => {
+    expect(css).toMatch(/\.ev-reading-card \.ev-context-source\s*\{/u);
+    expect(css).toMatch(/\.ev-reading-card \.ev-context-source-link::after/u);
+    expect(css).toMatch(/\.ev-reading-card \.ev-context-source-text/u);
+  });
 });

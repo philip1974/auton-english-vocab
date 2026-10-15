@@ -4,7 +4,12 @@ const VOCAB_PATH = /^wiki\/vocab\/[^/]+\.md$/;
 const sleep = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function unwrap(result) {
-  if (result && result._tag === 'Err') throw new Error(String(result.error ?? 'knowledge error'));
+  if (result && result._tag === 'Err') {
+    const detail = result.error;
+    const error = new Error(String(detail?.message ?? detail?.code ?? detail ?? 'knowledge error'));
+    if (typeof detail?.code === 'string') error.code = detail.code;
+    throw error;
+  }
   return result;
 }
 
@@ -44,6 +49,7 @@ export class VocabIndex {
   async refreshOnce() {
     const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
     this.invalid = [];
+    const readFailures = [];
     const live = new Set(metas.map((meta) => meta.path));
     for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
     let done = 0;
@@ -57,30 +63,37 @@ export class VocabIndex {
             const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
             this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
           } catch (error) {
-            this.cache.set(meta.path, { hash, meta, parsed: { ok: false, error: error instanceof Error ? error.message : String(error) } });
+            this.cache.delete(meta.path);
+            readFailures.push({
+              path: meta.path,
+              kind: 'read',
+              code: typeof error?.code === 'string' ? error.code : 'READ_FAILED',
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
         done += 1;
         this.onProgress(done, metas.length);
-        const partial = this.rebuild();
+        const partial = this.rebuild(readFailures);
         this.onUpdate(partial);
       }
       if (i + this.batchSize < metas.length) await sleep();
     }
-    return this.rebuild();
+    return this.rebuild(readFailures);
   }
 
-  rebuild() {
+  rebuild(readFailures = []) {
     this.entries = new Map();
     this.invalid = [];
     for (const [path, item] of this.cache.entries()) {
       if (!item.parsed.ok) {
-        this.invalid.push({ path, error: item.parsed.error });
+        this.invalid.push({ path, kind: 'parse', error: item.parsed.error });
         continue;
       }
       const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
       if (!this.entries.has(entry.word)) this.entries.set(entry.word, entry);
     }
+    this.invalid.push(...readFailures);
     return { entries: [...this.entries.values()], invalid: this.invalid };
   }
 

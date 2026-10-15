@@ -76,10 +76,25 @@ async function mapConcurrent(values, limit, mapper) {
 async function readOptional(app, path) {
   try {
     const result = await app.knowledge.readDocument({ path });
-    return result?._tag === 'Err' ? null : result;
-  } catch {
-    return null;
+    if (result?._tag !== 'Err') return result;
+    if (result.error?.code === 'NOT_FOUND') return null;
+    throw new Error(String(result.error?.message ?? result.error?.code ?? result.error ?? 'knowledge error'));
+  } catch (error) {
+    if (error?.code === 'NOT_FOUND') return null;
+    throw error;
   }
+}
+
+async function availablePath(app, word) {
+  const slug = slugFor(word);
+  for (let number = 1; number < 1000; number += 1) {
+    const path = `wiki/vocab/${slug}${number === 1 ? '' : `-${number}`}.md`;
+    const doc = await readOptional(app, path);
+    if (!doc) return { path, doc: null };
+    const parsed = parseNote(doc.content);
+    if (parsed.ok && parsed.entry.word === word) return { path, doc };
+  }
+  throw new Error(`no available note path for ${word}`);
 }
 
 export function makeVocabLookup({ index, review, getReview = () => review }) {
@@ -105,7 +120,7 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_ENTRIES) {
       throw new Error('entries must contain 1-20 items');
     }
-    const t = uiText(locale);
+    const t = uiText(typeof locale === 'function' ? locale() : locale);
     const notes = [];
     const validated = entries.map(validateEntry);
     const normalized = await mapConcurrent(validated, 4, async (entry) => ({ ...entry, source: await resolveSource(app, entry.source, notes) }));
@@ -121,25 +136,29 @@ export function makeVocabAdd({ app, index, nextNumber, notify, refresh, locale =
     const accepted = [];
     for (const entry of groups.values()) {
       const existing = index.get(entry.word);
-      const path = existing?.path ?? `wiki/vocab/${slugFor(entry.word)}.md`;
-      const doc = existing ? unwrap(await app.knowledge.readDocument({ path })) : await readOptional(app, path);
+      let path;
+      let doc;
+      if (existing) {
+        path = existing.path;
+        doc = unwrap(await app.knowledge.readDocument({ path }));
+      } else {
+        ({ path, doc } = await availablePath(app, entry.word));
+      }
       let content;
       if (doc) {
         const parsed = parseNote(doc.content);
         if (!parsed.ok) throw new Error(`frontmatter invalid for ${entry.word}: ${parsed.error}`);
-        if (parsed.entry.word !== entry.word) {
-          notes.push(`Skipped ${entry.word}: slug collision at ${path} with ${parsed.entry.word}.`);
-          continue;
-        }
+        if (parsed.entry.word !== entry.word) throw new Error(`frontmatter word mismatch for ${entry.word}`);
         content = doc.content;
       } else {
         content = buildNote({ ...entry, example: undefined, source: undefined });
       }
       for (const item of entry.examples) content = appendExample(content, item.example, item.source);
+      if (doc && content === doc.content) continue;
       changes.push({ path, newContent: content });
       accepted.push(entry.word);
     }
-    if (!changes.length) return ['No vocabulary entries were submitted.', ...notes].join('\n');
+    if (!changes.length) return ['No vocabulary entries changed.', ...notes].join('\n');
     const number = nextNumber();
     const words = accepted;
     const proposal = app.knowledge.propose({

@@ -14,6 +14,7 @@ describe('scheduler and familiarity', () => {
     expect(familiarityFor(null)).toBe('new');
     expect(familiarityFor({ state: 'Learning' })).toBe('learning');
     expect(familiarityFor({ state: 'Review', stability: 10 })).toBe('familiar');
+    expect(familiarityFor({ state: 'Review' })).toBe('familiar');
     expect(familiarityFor({ state: 'Review', stability: 21 })).toBe('mastered');
     expect(familiarityFor({}, 'ignored')).toBe('ignored');
     expect(familiarityFor({}, 'mastered')).toBe('mastered');
@@ -48,6 +49,15 @@ describe('scheduler and familiarity', () => {
     ];
     const queue = dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'));
     expect(queue.map((item) => item.word)).toEqual(['a']);
+  });
+
+  it('should ignore undone ratings for daily allowance and review counts', () => {
+    const words = ['a', 'b'].map((word) => ({ word, definition: word }));
+    const log = [
+      { id: 'rated-1', word: 'old', reviewedAt: '2026-10-14T01:00:00.000Z', previousState: 'New' },
+      { id: 'undo-1', word: 'old', reviewedAt: '2026-10-14T02:00:00.000Z', undoOf: 'rated-1' },
+    ];
+    expect(dueQueue(words, { version: 1, cards: {}, flags: {} }, { newLimit: 2, log }, new Date('2026-10-14T12:00:00'))).toHaveLength(2);
   });
 
   it('should default to good when rating name is unknown', () => {
