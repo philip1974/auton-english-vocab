@@ -66,6 +66,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.pendingMutations = 0;
     this.mutationSequence = 0;
+    this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
     this.readingUndoSnapshots = new Map();
@@ -80,7 +81,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.registerSelectionAction();
     await this.registerTools();
     this.onEvent?.('knowledge.index-changed', () => this.refreshIndex());
-    this.onEvent?.('knowledge.root-changed', () => this.handleRootChanged());
+    this.onEvent?.('knowledge.root-changed', () => {
+      const generation = this.invalidateRoot();
+      return this.handleRootChanged(generation);
+    });
     this.onEvent?.('appearance.locale-changed', (event) => this.handleLocaleChanged(event));
   }
 
@@ -106,17 +110,37 @@ export default class EnglishVocabPlugin extends BasePlugin {
     for (const listener of this.listeners ?? []) listener();
   }
 
-  enqueueMutation(task) {
+  enqueueMutation(task, generation = this.rootGeneration) {
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
-    const run = this.mutationTail.then(task, task);
+    const execute = () => generation === this.rootGeneration
+      ? task(() => generation === this.rootGeneration)
+      : false;
+    const run = this.mutationTail.then(execute, execute);
     this.mutationTail = run.catch(() => undefined);
     return run.finally(() => {
       this.pendingMutations -= 1;
       this.state.mutationPending = this.pendingMutations > 0;
       this.emitState();
     });
+  }
+
+  invalidateRoot() {
+    this.rootGeneration += 1;
+    this.recommendationRequest += 1;
+    this.index?.reset?.();
+    this.state.entries = [];
+    this.state.invalid = [];
+    this.state.review = emptyReview();
+    this.state.log = [];
+    this.state.recommendations = null;
+    this.state.recommendationLoading = null;
+    this.latestReadingEvent = null;
+    this.readingUndoSnapshots.clear();
+    this.readingHandle?.setTerms?.([]);
+    this.emitState();
+    return this.rootGeneration;
   }
 
   nextLogId() {
@@ -222,25 +246,33 @@ export default class EnglishVocabPlugin extends BasePlugin {
     return true;
   }
 
-  async refreshIndex() {
+  async refreshIndex(generation = this.rootGeneration) {
     if (!this.index) return;
     // A root switch always rebuilds the index; re-check the root here too, so a missed
     // root-changed event cannot leave the old root's progress on screen.
-    if (this.reviewStore !== null && await this.rootMoved()) {
-      this.state.review = await this.reviewStore.reloadForRootChange();
+    const moved = this.reviewStore !== null && await this.rootMoved();
+    if (generation !== this.rootGeneration) return;
+    if (moved) {
+      generation = this.invalidateRoot();
+      const review = await this.reviewStore.reloadForRootChange();
+      if (generation !== this.rootGeneration) return;
+      this.state.review = review;
       this.state.log = this.reviewStore.effectiveLog();
-      this.readingUndoSnapshots.clear();
     }
     try {
       const result = await this.index.refresh();
+      if (generation !== this.rootGeneration) return;
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
       await this.refreshRecommendations({ silent: true });
+      if (generation !== this.rootGeneration) return;
       await this.refreshLatestReadingStatus();
     } finally {
-      this.state.loading = null;
-      this.emitState();
+      if (generation === this.rootGeneration) {
+        this.state.loading = null;
+        this.emitState();
+      }
     }
   }
 
@@ -253,26 +285,34 @@ export default class EnglishVocabPlugin extends BasePlugin {
     }
   }
 
-  async handleRootChanged() {
+  async handleRootChanged(generation = this.invalidateRoot()) {
     if (!this.reviewStore) return;
-    this.readingUndoSnapshots.clear();
-    this.state.review = await this.reviewStore.reloadForRootChange();
+    const review = await this.reviewStore.reloadForRootChange();
+    if (generation !== this.rootGeneration) return;
+    this.state.review = review;
     this.state.log = this.reviewStore.effectiveLog();
-    this.updateReadingTerms();
     this.emitState();
     await this.recommender?.reload();
-    await this.refreshIndex();
+    if (generation !== this.rootGeneration) return;
+    await this.refreshIndex(generation);
   }
 
   async rateWord(word, rating, mode) {
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       const id = this.nextLogId();
       const entry = { id, word, rating, reviewedAt: new Date().toISOString(), mode };
       let result;
       try {
         result = await this.reviewStore.mutateReview({ type: 'rateCard', word, rating, logEntry: entry });
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.reviewSaveFailed);
+        return false;
+      }
+      if (!isCurrent()) return false;
+      if (result.rootChanged) {
+        this.invalidateRoot();
+        this.notice(this.t.rootChangedDuringReview);
         return false;
       }
       this.state.review = result.review;
@@ -280,11 +320,6 @@ export default class EnglishVocabPlugin extends BasePlugin {
       const previous = result.previousCard ?? null;
       this.updateReadingTerms();
       this.emitState();
-      if (result.rootChanged) {
-        this.readingUndoSnapshots.delete(word);
-        this.notice(this.t.rootChangedDuringReview);
-        return false;
-      }
       if (mode === 'reading-card') {
         this.readingUndoSnapshots.set(word, {
           card: previous,
@@ -294,27 +329,32 @@ export default class EnglishVocabPlugin extends BasePlugin {
         });
       }
       try {
-        this.state.log = await this.reviewStore.flushPendingLogs();
+        const log = await this.reviewStore.flushPendingLogs();
+        if (!isCurrent()) return false;
+        this.state.log = log;
         this.state.review = this.reviewStore.review;
         this.emitState();
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.logSaveFailed);
       }
       await this.refreshReadingLevelSurfaces();
+      if (!isCurrent()) return false;
       return mode === 'reading-card' ? { ok: true, undoId: id } : true;
     });
   }
 
   async undoReadingRating(word, expectedId) {
+    const generation = this.rootGeneration;
     if (!this.reviewStore || !this.readingUndoSnapshots.has(word)) return false;
     const initial = this.readingUndoSnapshots.get(word);
-    if ((expectedId && initial.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, initial)) {
+    if ((expectedId && initial.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, initial) || generation !== this.rootGeneration) {
       if (this.readingUndoSnapshots.get(word) === initial) this.readingUndoSnapshots.delete(word);
       return false;
     }
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       const snapshot = this.readingUndoSnapshots.get(word);
-      if (!snapshot || (expectedId && snapshot.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, snapshot)) {
+      if (!snapshot || (expectedId && snapshot.logId !== expectedId) || !await this.readingUndoSnapshotValid(word, snapshot) || !isCurrent()) {
         if (this.readingUndoSnapshots.get(word) === snapshot) this.readingUndoSnapshots.delete(word);
         return false;
       }
@@ -327,6 +367,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         };
         const logEntry = { id: this.nextLogId(), word, undoOf: snapshot.logId, reviewedAt: new Date().toISOString(), mode: 'reading-card' };
         const result = await this.reviewStore.mutateReview({ ...operation, logEntry });
+        if (!isCurrent()) return false;
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();
         if (result.rootChanged) {
@@ -338,18 +379,22 @@ export default class EnglishVocabPlugin extends BasePlugin {
           this.readingUndoSnapshots.delete(word);
           return false;
         }
-        this.state.log = await this.reviewStore.flushPendingLogs();
+        const log = await this.reviewStore.flushPendingLogs();
+        if (!isCurrent()) return false;
+        this.state.log = log;
         this.state.review = this.reviewStore.review;
         this.readingUndoSnapshots.delete(word);
         this.updateReadingTerms();
         this.emitState();
         await this.refreshReadingLevelSurfaces();
+        if (!isCurrent()) return false;
         return true;
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.reviewSaveFailed);
         return false;
       }
-    });
+    }, generation);
   }
 
   async readingUndoSnapshotValid(word, snapshot) {
@@ -364,20 +409,24 @@ export default class EnglishVocabPlugin extends BasePlugin {
   }
 
   async setFlag(word, flag) {
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       try {
         const result = await this.reviewStore.mutateReview(flag ? { type: 'setFlag', word, flag } : { type: 'removeFlag', word });
+        if (!isCurrent()) return false;
+        if (result.rootChanged) {
+          this.invalidateRoot();
+          this.notice(this.t.rootChangedDuringReview);
+          return false;
+        }
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();
         this.updateReadingTerms();
         this.emitState();
         await this.refreshReadingLevelSurfaces();
-        if (result.rootChanged) {
-          this.readingUndoSnapshots.clear();
-          this.notice(this.t.rootChangedDuringReview);
-        }
-        return !result.rootChanged;
+        if (!isCurrent()) return false;
+        return true;
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.flagSaveFailed);
         return false;
       }

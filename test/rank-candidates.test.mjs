@@ -32,4 +32,22 @@ describe('rank candidates', () => {
     expect(rankOf('happiest', table)).toBe(3);
     expect(rankOf('unknowns', table)).toBeNull();
   });
+
+  it('should map short irregular forms before returning and keep ambiguous er words on their surface rank', () => {
+    const table = new Map([['run', 302], ['ran', 1426], ['letter', 1185], ['let', 223]]);
+    expect(rankCandidates('ran')).toContain('run');
+    expect(rankOf('ran', table)).toBe(302);
+    expect(rankCandidates('letter')).not.toContain('let');
+    expect(rankOf('letter', table)).toBe(1185);
+  });
+
+  it('should cover confirmed suffix spellings without promoting unconfirmed comparative bases', () => {
+    expect(rankCandidates('studied')).toContain('study');
+    expect(rankCandidates('larger')).toContain('large');
+    expect(rankCandidates('biggest')).toContain('big');
+    expect(rankCandidates('quietest')).toContain('quiet');
+    expect(rankCandidates('go-es')).toEqual(['go-es']);
+    expect(rankCandidates(null)).toEqual(['']);
+    expect(rankOf('ran', ['run', 'ran'])).toBe(1);
+  });
 });

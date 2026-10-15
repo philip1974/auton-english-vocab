@@ -55,6 +55,19 @@ describe('reading decorations', () => {
     expect(container.querySelectorAll('[data-rating]')).toHaveLength(2);
   });
 
+  it('should render a straight apostrophe entry as collected when lookup context uses a curly apostrophe', async () => {
+    const container = document.createElement('div');
+    createReadingDecorationSpec({
+      locale: 'zh',
+      getState: () => ({ entries: [entry("don't")], review: review() }),
+      lookupDictionary: async () => ({ surface: 'don’t', lemma: "don't", entry: { t: '不要' } }),
+      onReview: vi.fn(),
+    }).renderCard(container, { word: 'don’t', key: 'don’t', tone: null, sentence: 'Don’t stop.' });
+    await Promise.resolve();
+    expect(container.textContent).toContain("don't definition");
+    expect(container.querySelectorAll('[data-rating]')).toHaveLength(2);
+  });
+
   it('should pass entry pos through when building comparative reading terms', () => {
     const terms = buildReadingTerms({
       entries: [
@@ -293,6 +306,27 @@ describe('reading decorations', () => {
     expect(container.textContent).toContain('Not reviewed');
   });
 
+  it('should reenable add example after rejection or failure so the action can be retried', async () => {
+    const container = document.createElement('div');
+    const onAddExample = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'rejected' })
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ outcome: 'applied' });
+    createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [entry('run')], review: review() }),
+      onAddExample,
+    }).renderCard(container, { word: 'run', key: 'run', tone: 'learning', sentence: 'Run today.' });
+    const action = container.querySelector('[data-role="add-example"]');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      action.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (attempt < 2) expect(action.disabled).toBe(false);
+    }
+    expect(action.disabled).toBe(true);
+    expect(onAddExample).toHaveBeenCalledTimes(3);
+  });
+
   it('should keep rating and speech actions interactive after undo', async () => {
     const container = document.createElement('div');
     const onReview = vi.fn(async () => true);
@@ -445,6 +479,29 @@ describe('reading decorations', () => {
     await Promise.resolve();
     expect(onCollectWord).toHaveBeenCalledWith(expect.objectContaining({ lemma: 'run' }), expect.objectContaining({ sentence: 'I ran home.' }));
     expect(container.textContent).toContain('已收进生词本');
+  });
+
+  it('should reenable dictionary collection after rejection or exception so it can be retried', async () => {
+    const container = document.createElement('div');
+    const onCollectWord = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ outcome: 'rejected' })
+      .mockResolvedValueOnce({ outcome: 'applied' });
+    createReadingDecorationSpec({
+      locale: 'en',
+      getState: () => ({ entries: [], review: review() }),
+      lookupDictionary: async () => ({ surface: 'rare', lemma: 'rare', entry: { d: 'uncommon' } }),
+      onCollectWord,
+    }).renderCard(container, { word: 'rare', key: 'rare', tone: null });
+    await Promise.resolve();
+    const action = container.querySelector('[data-role="collect-dictionary-word"]');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      action.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (attempt < 2) expect(action.disabled).toBe(false);
+    }
+    expect(action.disabled).toBe(true);
+    expect(onCollectWord).toHaveBeenCalledTimes(3);
   });
 
   it('should pass only url and title when collecting from a web lookup card', async () => {

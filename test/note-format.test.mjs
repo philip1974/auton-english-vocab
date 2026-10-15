@@ -60,6 +60,14 @@ describe('note format', () => {
     expect(buildNote({ word: 'nosource', definition: '无', example: 'No source.', source: {} })).toContain('- No source.');
   });
 
+  it('should round trip a titled web source without losing its title', () => {
+    const note = buildNote({ word: 'web', definition: '网络', example: 'Read it.', source: { url: 'https://example.com/article', title: 'Article title' } });
+    expect(parseExampleLine(parseNote(note).entry.examples[0])).toEqual({
+      sentence: 'Read it.',
+      source: { url: 'https://example.com/article', title: 'Article title' },
+    });
+  });
+
   it('should parse unquoted and single quoted scalars when frontmatter is hand edited', () => {
     const parsed = parseNote("---\ntype: vocab\nword: plain\ndefinition: '单独'\nignored-line\n---\n# plain\n\n## Examples\n- one\n");
     expect(parsed).toMatchObject({ ok: true, entry: { word: 'plain', definition: '单独', examples: ['one'] } });

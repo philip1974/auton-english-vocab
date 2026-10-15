@@ -13,10 +13,12 @@ var TEXT = {
     collectFailed: "Could not append the vocabulary request to chat.",
     corruptReview: "review.json is damaged. It was backed up and review progress was reset.",
     invalidReviewCards: (count) => `${count} damaged review card(s) were skipped; other progress was kept.`,
+    invalidReviewItems: (count) => `${count} damaged review flag or pending log item(s) were skipped.`,
     unsupportedReviewVersion: "review.json uses an unsupported version. It was backed up and will not be overwritten.",
     corruptLog: "log.json is damaged. It was backed up and the review log was reset.",
     pendingLogRecoveryFailed: "Pending review logs could not be recovered yet. They remain saved and will be retried later.",
     termsLimited: "The vocabulary notebook is too large. Highlighting was limited to collected words.",
+    hyphenHighlightLimited: "Hyphenated words work in context review, but the host splits them for document highlighting.",
     rootChangedDuringReview: "The knowledge base changed. This rating was not saved.",
     reviewSaveFailed: "Could not save review progress.",
     logSaveFailed: "The card was saved, but the review log could not be saved.",
@@ -130,10 +132,12 @@ var TEXT = {
     collectFailed: "无法把生词请求追加到对话框。",
     corruptReview: "review.json 已损坏，已备份并从空进度开始。",
     invalidReviewCards: (count) => `已跳过 ${count} 张损坏的复习卡，其余进度已保留。`,
+    invalidReviewItems: (count) => `已跳过 ${count} 条损坏的复习标记或待补写日志。`,
     unsupportedReviewVersion: "review.json 版本不受支持，已备份且不会覆盖原文件。",
     corruptLog: "log.json 已损坏，已备份并从空日志恢复。",
     pendingLogRecoveryFailed: "待补写的复习日志暂时无法恢复，记录仍已保存，稍后会重试。",
     termsLimited: "生词本过大，正文标记已退化为仅匹配原词。",
+    hyphenHighlightLimited: "连字符词可用于语境复习，但宿主正文标记会按单词拆分。",
     rootChangedDuringReview: "知识库已切换，这次评分未保存。",
     reviewSaveFailed: "复习进度保存失败。",
     logSaveFailed: "卡片已保存，但复习日志保存失败。",
@@ -247,10 +251,12 @@ var TEXT = {
     collectFailed: "チャットへ単語リクエストを追加できませんでした。",
     corruptReview: "review.json が破損しています。バックアップして復習進捗を初期化しました。",
     invalidReviewCards: (count) => `破損した復習カード ${count} 件をスキップし、その他の進捗は保持しました。`,
+    invalidReviewItems: (count) => `破損した復習フラグまたは保留ログ ${count} 件をスキップしました。`,
     unsupportedReviewVersion: "review.json のバージョンは未対応です。バックアップし、元ファイルは上書きしません。",
     corruptLog: "log.json が破損しています。バックアップして復習ログを初期化しました。",
     pendingLogRecoveryFailed: "保留中の復習ログをまだ復元できません。記録は保存されており、後で再試行します。",
     termsLimited: "単語帳が大きすぎるため、本文表示を登録語だけに制限しました。",
+    hyphenHighlightLimited: "ハイフン付き単語は文脈復習で使えますが、本文表示ではホストにより単語ごとに分割されます。",
     rootChangedDuringReview: "ナレッジベースが切り替わったため、この評価は保存されませんでした。",
     reviewSaveFailed: "復習進捗を保存できませんでした。",
     logSaveFailed: "カードは保存されましたが、復習ログを保存できませんでした。",
@@ -364,10 +370,12 @@ var TEXT = {
     collectFailed: "채팅에 단어 요청을 추가할 수 없습니다.",
     corruptReview: "review.json이 손상되었습니다. 백업 후 복습 진도를 초기화했습니다.",
     invalidReviewCards: (count) => `손상된 복습 카드 ${count}개를 건너뛰고 나머지 진도는 유지했습니다.`,
+    invalidReviewItems: (count) => `손상된 복습 표시 또는 대기 로그 ${count}개를 건너뛰었습니다.`,
     unsupportedReviewVersion: "review.json 버전이 지원되지 않습니다. 백업했으며 원본을 덮어쓰지 않습니다.",
     corruptLog: "log.json이 손상되었습니다. 백업 후 복습 로그를 초기화했습니다.",
     pendingLogRecoveryFailed: "대기 중인 복습 로그를 아직 복구하지 못했습니다. 기록은 보존되며 나중에 다시 시도합니다.",
     termsLimited: "단어장이 너무 커서 본문 표시는 수집한 원형으로 제한했습니다.",
+    hyphenHighlightLimited: "하이픈 단어는 문맥 복습에서 사용할 수 있지만 본문 표시는 호스트가 단어별로 분리합니다.",
     rootChangedDuringReview: "지식베이스가 전환되어 이번 평가는 저장되지 않았습니다.",
     reviewSaveFailed: "복습 진도를 저장할 수 없습니다.",
     logSaveFailed: "카드는 저장되었지만 복습 로그를 저장할 수 없습니다.",
@@ -1203,10 +1211,17 @@ var ReviewStore = class {
     this.reviewRevision = result.revision;
     try {
       let invalidCards = 0;
-      this.review = normalizeReview(JSON.parse(result.text), { onInvalidCard: () => {
-        invalidCards += 1;
-      } });
+      let invalidItems = 0;
+      this.review = normalizeReview(JSON.parse(result.text), {
+        onInvalidCard: () => {
+          invalidCards += 1;
+        },
+        onInvalidItem: () => {
+          invalidItems += 1;
+        }
+      });
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
+      if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
     } catch (error) {
       await this.#backupCorrupt("review", result.text, rootGeneration, generation);
       if (this.#stale(generation, rootGeneration)) return;
@@ -1384,12 +1399,12 @@ function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()
   }
   return { review, previousCard, applied: true };
 }
-function normalizeReview(value, { onInvalidCard = () => void 0 } = {}) {
+function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = () => void 0 } = {}) {
   if (value?.version !== void 0 && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: "UNSUPPORTED_REVIEW_VERSION" });
   }
   const isObject = (item) => item !== null && typeof item === "object" && !Array.isArray(item);
-  if (!isObject(value) || value.version !== 1 || !isObject(value.cards) || !isObject(value.flags)) throw new Error("invalid review schema");
+  if (!isObject(value) || value.version !== 1 || !isObject(value.cards) || !isObject(value.flags) || "pendingLogs" in value && !Array.isArray(value.pendingLogs)) throw new Error("invalid review schema");
   const review = EMPTY();
   for (const [word, card] of Object.entries(value.cards)) {
     try {
@@ -1397,7 +1412,12 @@ function normalizeReview(value, { onInvalidCard = () => void 0 } = {}) {
       for (const key of ["stability", "difficulty", "elapsed_days", "scheduled_days", "reps", "lapses"]) {
         if (!Number.isFinite(card[key]) || card[key] < 0) throw new Error("invalid card");
       }
+      for (const key of ["elapsed_days", "scheduled_days", "reps", "lapses"]) {
+        if (!Number.isInteger(card[key])) throw new Error("invalid card");
+      }
+      if (card.difficulty > 10) throw new Error("invalid card");
       if (!["New", "Learning", "Review", "Relearning"].includes(card.state)) throw new Error("invalid card");
+      if (card.state !== "New" && !card.last_review) throw new Error("invalid card");
       const normalized = deserializeCard(card);
       if (!normalized || Number.isNaN(normalized.due?.getTime?.()) || normalized.last_review && Number.isNaN(normalized.last_review.getTime()) || ![0, 1, 2, 3].includes(normalized.state)) throw new Error("invalid card");
       review.cards[word] = serializeCard(normalized);
@@ -1407,9 +1427,15 @@ function normalizeReview(value, { onInvalidCard = () => void 0 } = {}) {
   }
   for (const [word, flag] of Object.entries(value.flags)) {
     if (flag === "mastered" || flag === "ignored") review.flags[word] = flag;
+    else onInvalidItem(`flag:${word}`);
   }
-  if (Array.isArray(value?.pendingLogs)) {
-    review.pendingLogs = value.pendingLogs.filter((entry) => entry && typeof entry === "object" && typeof entry.id === "string").slice(-2e3);
+  if (Array.isArray(value.pendingLogs)) {
+    review.pendingLogs = [];
+    for (const entry of value.pendingLogs) {
+      if (entry && typeof entry === "object" && !Array.isArray(entry) && typeof entry.id === "string") review.pendingLogs.push(entry);
+      else onInvalidItem("pendingLog");
+    }
+    review.pendingLogs = review.pendingLogs.slice(-2e3);
   }
   return review;
 }
@@ -1449,7 +1475,10 @@ function today() {
 }
 function sourceLink(source) {
   if (!source) return "";
-  if (source.url) return `<${source.url}>`;
+  if (source.url) {
+    if (!source.title) return `<${source.url}>`;
+    return `[${String(source.title).replace(/[\[\]]/g, "\\$&")}](${source.url})`;
+  }
   if (source.path) {
     const path = String(source.path).replaceAll("%", "%25").replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
     return `[${String(source.title || source.path).replace(/[\[\]]/g, "\\$&")}](${path})`;
@@ -1593,6 +1622,14 @@ var VocabIndex = class {
     this.invalid = [];
     this.refreshing = null;
     this.pending = false;
+    this.generation = 0;
+  }
+  reset() {
+    this.generation += 1;
+    this.cache.clear();
+    this.entries.clear();
+    this.invalid = [];
+    if (this.refreshing) this.pending = true;
   }
   async refresh() {
     if (this.refreshing) {
@@ -1603,7 +1640,17 @@ var VocabIndex = class {
       let result;
       do {
         this.pending = false;
-        result = await this.refreshOnce();
+        const generation = this.generation;
+        try {
+          result = await this.refreshOnce(generation);
+        } catch (error) {
+          if (error?.code !== "ROOT_CHANGED" && generation === this.generation) throw error;
+          this.cache.clear();
+          this.entries.clear();
+          this.invalid = [];
+          if (!this.pending && generation === this.generation) throw error;
+          this.pending = true;
+        }
       } while (this.pending);
       return result;
     })();
@@ -1613,8 +1660,9 @@ var VocabIndex = class {
       this.refreshing = null;
     }
   }
-  async refreshOnce() {
+  async refreshOnce(generation = this.generation) {
     const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
+    if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
     this.invalid = [];
     const readFailures = [];
     const live = new Set(metas.map((meta) => meta.path));
@@ -1630,6 +1678,7 @@ var VocabIndex = class {
             const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
             this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
           } catch (error) {
+            if (error?.code === "ROOT_CHANGED" || generation !== this.generation) throw error;
             this.cache.delete(meta.path);
             readFailures.push({
               path: meta.path,
@@ -1640,6 +1689,7 @@ var VocabIndex = class {
           }
         }
         done += 1;
+        if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
         this.onProgress(done, metas.length);
         const partial = this.rebuild(readFailures);
         this.onUpdate(partial);
@@ -2039,8 +2089,8 @@ function addCandidate(set, surface) {
 function normalizePos(value) {
   const pos = normalize(value).replace(/\.$/u, "");
   if (["n", "noun", "名词"].includes(pos)) return "noun";
-  if (["v", "verb", "动词"].includes(pos)) return "verb";
-  if (["adj", "adjective", "adv", "adverb", "形容词", "副词"].includes(pos)) return "comparative";
+  if (["v", "vt", "vi", "verb", "动词"].includes(pos)) return "verb";
+  if (["a", "adj", "adjective", "adv", "adverb", "形容词", "副词"].includes(pos)) return "comparative";
   return "";
 }
 function partsOf(value) {
@@ -2162,7 +2212,7 @@ function inflectionPriority(lemma, surface) {
 }
 
 // src/context-cloze.mjs
-var TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+var TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*)*/g;
 var SOURCE_MARKDOWN_RE = /^(?<sentence>.+?)\s+—\s+\[(?<title>(?:\\.|[^\]])+)\]\((?<path>[^)]+)\)\s*$/u;
 var SOURCE_URL_RE = /^(?<sentence>.+?)\s+—\s+<(?<url>https?:\/\/[^>]+)>\s*$/u;
 var DEFAULT_MAX_LENGTH = 300;
@@ -2185,9 +2235,10 @@ function parseExampleLine(text) {
   if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
+    const target = decodeSourcePath(markdown.groups.path.trim());
     return {
       sentence: markdown.groups.sentence.trim(),
-      source: { title: unescapeTitle(markdown.groups.title), path: decodeSourcePath(markdown.groups.path.trim()) }
+      source: /^https?:\/\//u.test(target) ? { title: unescapeTitle(markdown.groups.title), url: target } : { title: unescapeTitle(markdown.groups.title), path: target }
     };
   }
   const url = line.match(SOURCE_URL_RE);
@@ -2594,13 +2645,14 @@ function renderPanel(container, controls) {
   const body = el("div", "ev-body");
   const toolbar = el("div", "ev-toolbar");
   let mode = null;
-  let modeSelected = false;
-  let modeWord = null;
+  let explicitMode = null;
   let renderedWord = null;
   let tab = "today";
   let flipped = false;
   let lastSpokenWord = null;
   let dictionaryResult = null;
+  let dictionaryQuery = "";
+  let dictionarySuggestions = [];
   let suggestionRequest = 0;
   let lookupRequest = 0;
   const phonetics = /* @__PURE__ */ new Map();
@@ -2631,21 +2683,15 @@ function renderPanel(container, controls) {
     if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
     renderedWord = item?.word ?? null;
     if (validModes.includes(state.reviewMode)) {
-      mode = state.reviewMode;
-      modeSelected = true;
-    } else if (item && !modeSelected && (modeWord !== item.word || !validModes.includes(mode))) {
-      mode = defaultModeFor(state, item);
-      modeWord = item.word;
-    } else if (!item && !validModes.includes(mode)) {
-      mode = "context";
+      explicitMode = state.reviewMode;
     }
+    mode = explicitMode ?? (item ? defaultModeFor(state, item) : "context");
     const modeRow = el("div", "ev-mode");
     for (const [id, label] of [["context", t.context], ["flip", t.flip], ["reverse", t.reverse], ["listening", t.listening]]) {
       const modeButton = button(label, () => {
         controls.cancelSpeech?.();
         mode = id;
-        modeSelected = true;
-        modeWord = item?.word ?? null;
+        explicitMode = id;
         flipped = false;
         controls.onReviewModeChange?.(id);
         rerender();
@@ -2724,7 +2770,7 @@ function renderPanel(container, controls) {
       const input = el("input", "ev-input");
       input.placeholder = t.spellingPlaceholder;
       input.dataset.role = "spelling-answer";
-      const submit = () => review(input.value.trim().toLowerCase() === item.word ? "Good" : "Again");
+      const submit = () => review(normalizeWord(input.value) === normalizeWord(item.word) ? "Good" : "Again");
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter") submit();
       });
@@ -2742,7 +2788,6 @@ function renderPanel(container, controls) {
     const suggestions = el("div", "ev-dict-suggestions");
     const resultBox = el("div", "ev-dict-result");
     const showResult = (result) => {
-      dictionaryResult = result;
       resultBox.textContent = "";
       if (!result) {
         resultBox.append(el("p", "ev-empty", t.dictionaryNoEntry));
@@ -2763,19 +2808,16 @@ function renderPanel(container, controls) {
     const runLookup = async (word) => {
       const request = ++lookupRequest;
       const query = String(word ?? "").trim().toLowerCase();
+      dictionaryQuery = query;
       const result = await controls.lookupDictionary?.(query);
-      if (request !== lookupRequest || lookupInput.value.trim().toLowerCase() !== query) return;
-      showResult(result);
+      if (request !== lookupRequest || dictionaryQuery !== query) return;
+      dictionaryResult = result;
+      dictionarySuggestions = [];
+      rerender();
     };
-    const runSuggest = async () => {
-      const request = ++suggestionRequest;
-      const q2 = lookupInput.value.trim().toLowerCase();
+    const showSuggestions = (items) => {
       suggestions.textContent = "";
-      resultBox.textContent = "";
-      if (q2.length < 2) return;
-      const items = await controls.suggestDictionary?.(q2, 8) ?? [];
-      if (request !== suggestionRequest || lookupInput.value.trim().toLowerCase() !== q2) return;
-      if (!items.length) {
+      if (!items.length && dictionaryQuery.length >= 2) {
         suggestions.append(el("p", "ev-empty", t.dictionaryNoEntry));
         return;
       }
@@ -2786,10 +2828,22 @@ function renderPanel(container, controls) {
         }, "ev-dict-chip"));
       }
     };
-    lookupInput.addEventListener("input", () => {
+    const runSuggest = async () => {
+      const request = ++suggestionRequest;
+      const q2 = lookupInput.value.trim().toLowerCase();
+      dictionaryQuery = q2;
+      lookupRequest += 1;
       dictionaryResult = null;
-      runSuggest();
-    });
+      dictionarySuggestions = [];
+      suggestions.textContent = "";
+      resultBox.textContent = "";
+      if (q2.length < 2) return;
+      const items = await controls.suggestDictionary?.(q2, 8) ?? [];
+      if (request !== suggestionRequest || dictionaryQuery !== q2) return;
+      dictionarySuggestions = items;
+      rerender();
+    };
+    lookupInput.addEventListener("input", runSuggest);
     lookupInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
@@ -2798,6 +2852,7 @@ function renderPanel(container, controls) {
     lookupBox.append(lookupInput, suggestions, resultBox);
     body.append(lookupBox);
     if (dictionaryResult) showResult(dictionaryResult);
+    else if (dictionarySuggestions.length || dictionaryQuery.length >= 2) showSuggestions(dictionarySuggestions);
     const addRow = el("div", "ev-add");
     const addInput = el("input", "ev-input");
     addInput.placeholder = t.addWord;
@@ -2960,6 +3015,9 @@ function renderPanel(container, controls) {
         lookupInput.addEventListener("click", () => controls.onLookupAnyWordChange?.(lookupInput.checked));
         lookupLabel.append(lookupInput, el("span", "", t.lookupAnyWord));
         toolbar.append(lookupLabel);
+      }
+      if (state.highlight !== false && state.entries.some((entry) => normalizeWord(entry.word).includes("-"))) {
+        toolbar.append(el("p", "ev-note", t.hyphenHighlightLimited));
       }
     }
     tabs.textContent = "";
@@ -3247,7 +3305,7 @@ function ratingButton(text, rating, onClick, className = "") {
   return node;
 }
 function entryMap(entries) {
-  return new Map((entries ?? []).map((entry) => [entry.word, entry]));
+  return new Map((entries ?? []).map((entry) => [normalizeWord(entry.word), entry]));
 }
 function normalizedSentence(value) {
   return String(value ?? "").trim().replace(/\s+/gu, " ");
@@ -3340,6 +3398,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
   return {
     id: "english-vocab",
     renderCard(container, context) {
+      context = { ...context, key: normalizeWord(context.key) };
       let cleaned = false;
       let ratedUndoId;
       const current = () => getState?.() ?? {};
@@ -3404,6 +3463,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
             else if (receipt?.outcome === "exists") status.textContent = t.exampleExists;
             else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.exampleCancelled;
             else status.textContent = t.exampleNotReviewed(receipt?.reason);
+            if (!["applied", "exists"].includes(receipt?.outcome)) addExample.disabled = false;
           });
           addExample.dataset.role = "add-example";
           actions.append(addExample);
@@ -3449,7 +3509,7 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
               draw();
             } });
             const state = current();
-            const collected = entryMap(state.entries).has(result.lemma);
+            const collected = entryMap(state.entries).has(normalizeWord(result.lemma));
             if (collected) {
               body.append(el2("p", "ev-reading-note", t.collectedWord));
               return;
@@ -3457,12 +3517,17 @@ function createReadingDecorationSpec({ locale = "en", getState, onReview, onUndo
             const status = el2("p", "ev-reading-note");
             const collect = button2(t.collectWord, async () => {
               collect.disabled = true;
-              const receipt = await onCollectWord?.(result, noteActionContext(context));
+              let receipt = null;
+              try {
+                receipt = await onCollectWord?.(result, noteActionContext(context));
+              } catch {
+              }
               if (cleaned) return;
               if (receipt?.outcome === "applied") status.textContent = t.dictionaryAdded;
               else if (receipt?.outcome === "rejected" || receipt?.outcome === "aborted") status.textContent = t.dictionaryCancelled;
               else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);
               else status.textContent = t.dictionaryLoadFailed;
+              if (receipt?.outcome !== "applied") collect.disabled = false;
             });
             collect.dataset.role = "collect-dictionary-word";
             body.append(collect, status);
@@ -33570,6 +33635,27 @@ var IRREGULAR_SURFACE = /* @__PURE__ */ new Map();
 for (const [base, forms] of Object.entries(IRREGULAR_BASE)) {
   for (const form of forms) IRREGULAR_SURFACE.set(form, base);
 }
+var COMPARATIVE_BASES = /* @__PURE__ */ new Set([
+  "big",
+  "fast",
+  "small",
+  "tall",
+  "short",
+  "long",
+  "high",
+  "low",
+  "young",
+  "old",
+  "large",
+  "late",
+  "nice",
+  "wide",
+  "close",
+  "safe",
+  "simple",
+  "clever",
+  "quiet"
+]);
 function normalize2(value) {
   return String(value ?? "").normalize("NFC").toLowerCase().replaceAll("’", "'");
 }
@@ -33585,8 +33671,8 @@ function rankMapFromWords(words) {
 function rankCandidates(surface) {
   const word = normalize2(surface);
   const candidates = /* @__PURE__ */ new Set([word]);
-  if (word.length < 5 || RANK_DENYLIST.has(word)) return [...candidates];
   if (IRREGULAR_SURFACE.has(word)) addCandidate2(candidates, IRREGULAR_SURFACE.get(word));
+  if (word.length < 5 || RANK_DENYLIST.has(word)) return [...candidates];
   if (word.endsWith("ies")) addCandidate2(candidates, `${word.slice(0, -3)}y`);
   if (word.endsWith("ied")) addCandidate2(candidates, `${word.slice(0, -3)}y`);
   if (word.endsWith("es")) addCandidate2(candidates, word.slice(0, -2));
@@ -33612,10 +33698,11 @@ function rankCandidates(surface) {
   for (const suffix of ["er", "est"]) {
     if (!word.endsWith(suffix)) continue;
     const stem = word.slice(0, -suffix.length);
-    addCandidate2(candidates, stem);
-    addCandidate2(candidates, `${stem}e`);
+    if (COMPARATIVE_BASES.has(stem)) addCandidate2(candidates, stem);
+    if (COMPARATIVE_BASES.has(`${stem}e`)) addCandidate2(candidates, `${stem}e`);
     if (stem.length >= 2 && stem.at(-1) === stem.at(-2) && isConsonant2(stem.at(-1))) {
-      addCandidate2(candidates, stem.slice(0, -1));
+      const undoubled = stem.slice(0, -1);
+      if (COMPARATIVE_BASES.has(undoubled)) addCandidate2(candidates, undoubled);
     }
   }
   return [...candidates];
@@ -33964,6 +34051,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.mutationTail = Promise.resolve();
     this.pendingMutations = 0;
     this.mutationSequence = 0;
+    this.rootGeneration = 0;
     this.recommendationRequest = 0;
     this.latestReadingEvent = null;
     this.readingUndoSnapshots = /* @__PURE__ */ new Map();
@@ -33978,7 +34066,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.registerSelectionAction();
     await this.registerTools();
     this.onEvent?.("knowledge.index-changed", () => this.refreshIndex());
-    this.onEvent?.("knowledge.root-changed", () => this.handleRootChanged());
+    this.onEvent?.("knowledge.root-changed", () => {
+      const generation = this.invalidateRoot();
+      return this.handleRootChanged(generation);
+    });
     this.onEvent?.("appearance.locale-changed", (event) => this.handleLocaleChanged(event));
   }
   registerLocalizedShell() {
@@ -34001,17 +34092,34 @@ var EnglishVocabPlugin = class extends BasePlugin {
   emitState() {
     for (const listener of this.listeners ?? []) listener();
   }
-  enqueueMutation(task) {
+  enqueueMutation(task, generation = this.rootGeneration) {
     this.pendingMutations += 1;
     this.state.mutationPending = true;
     this.emitState();
-    const run = this.mutationTail.then(task, task);
+    const execute = () => generation === this.rootGeneration ? task(() => generation === this.rootGeneration) : false;
+    const run = this.mutationTail.then(execute, execute);
     this.mutationTail = run.catch(() => void 0);
     return run.finally(() => {
       this.pendingMutations -= 1;
       this.state.mutationPending = this.pendingMutations > 0;
       this.emitState();
     });
+  }
+  invalidateRoot() {
+    this.rootGeneration += 1;
+    this.recommendationRequest += 1;
+    this.index?.reset?.();
+    this.state.entries = [];
+    this.state.invalid = [];
+    this.state.review = emptyReview();
+    this.state.log = [];
+    this.state.recommendations = null;
+    this.state.recommendationLoading = null;
+    this.latestReadingEvent = null;
+    this.readingUndoSnapshots.clear();
+    this.readingHandle?.setTerms?.([]);
+    this.emitState();
+    return this.rootGeneration;
   }
   nextLogId() {
     this.mutationSequence += 1;
@@ -34118,23 +34226,31 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.emitState();
     return true;
   }
-  async refreshIndex() {
+  async refreshIndex(generation = this.rootGeneration) {
     if (!this.index) return;
-    if (this.reviewStore !== null && await this.rootMoved()) {
-      this.state.review = await this.reviewStore.reloadForRootChange();
+    const moved = this.reviewStore !== null && await this.rootMoved();
+    if (generation !== this.rootGeneration) return;
+    if (moved) {
+      generation = this.invalidateRoot();
+      const review = await this.reviewStore.reloadForRootChange();
+      if (generation !== this.rootGeneration) return;
+      this.state.review = review;
       this.state.log = this.reviewStore.effectiveLog();
-      this.readingUndoSnapshots.clear();
     }
     try {
       const result = await this.index.refresh();
+      if (generation !== this.rootGeneration) return;
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
       await this.refreshRecommendations({ silent: true });
+      if (generation !== this.rootGeneration) return;
       await this.refreshLatestReadingStatus();
     } finally {
-      this.state.loading = null;
-      this.emitState();
+      if (generation === this.rootGeneration) {
+        this.state.loading = null;
+        this.emitState();
+      }
     }
   }
   async rootMoved() {
@@ -34145,25 +34261,33 @@ var EnglishVocabPlugin = class extends BasePlugin {
       return false;
     }
   }
-  async handleRootChanged() {
+  async handleRootChanged(generation = this.invalidateRoot()) {
     if (!this.reviewStore) return;
-    this.readingUndoSnapshots.clear();
-    this.state.review = await this.reviewStore.reloadForRootChange();
+    const review = await this.reviewStore.reloadForRootChange();
+    if (generation !== this.rootGeneration) return;
+    this.state.review = review;
     this.state.log = this.reviewStore.effectiveLog();
-    this.updateReadingTerms();
     this.emitState();
     await this.recommender?.reload();
-    await this.refreshIndex();
+    if (generation !== this.rootGeneration) return;
+    await this.refreshIndex(generation);
   }
   async rateWord(word, rating, mode) {
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       const id = this.nextLogId();
       const entry = { id, word, rating, reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), mode };
       let result;
       try {
         result = await this.reviewStore.mutateReview({ type: "rateCard", word, rating, logEntry: entry });
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.reviewSaveFailed);
+        return false;
+      }
+      if (!isCurrent()) return false;
+      if (result.rootChanged) {
+        this.invalidateRoot();
+        this.notice(this.t.rootChangedDuringReview);
         return false;
       }
       this.state.review = result.review;
@@ -34171,11 +34295,6 @@ var EnglishVocabPlugin = class extends BasePlugin {
       const previous = result.previousCard ?? null;
       this.updateReadingTerms();
       this.emitState();
-      if (result.rootChanged) {
-        this.readingUndoSnapshots.delete(word);
-        this.notice(this.t.rootChangedDuringReview);
-        return false;
-      }
       if (mode === "reading-card") {
         this.readingUndoSnapshots.set(word, {
           card: previous,
@@ -34185,26 +34304,31 @@ var EnglishVocabPlugin = class extends BasePlugin {
         });
       }
       try {
-        this.state.log = await this.reviewStore.flushPendingLogs();
+        const log = await this.reviewStore.flushPendingLogs();
+        if (!isCurrent()) return false;
+        this.state.log = log;
         this.state.review = this.reviewStore.review;
         this.emitState();
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.logSaveFailed);
       }
       await this.refreshReadingLevelSurfaces();
+      if (!isCurrent()) return false;
       return mode === "reading-card" ? { ok: true, undoId: id } : true;
     });
   }
   async undoReadingRating(word, expectedId) {
+    const generation = this.rootGeneration;
     if (!this.reviewStore || !this.readingUndoSnapshots.has(word)) return false;
     const initial = this.readingUndoSnapshots.get(word);
-    if (expectedId && initial.logId !== expectedId || !await this.readingUndoSnapshotValid(word, initial)) {
+    if (expectedId && initial.logId !== expectedId || !await this.readingUndoSnapshotValid(word, initial) || generation !== this.rootGeneration) {
       if (this.readingUndoSnapshots.get(word) === initial) this.readingUndoSnapshots.delete(word);
       return false;
     }
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       const snapshot = this.readingUndoSnapshots.get(word);
-      if (!snapshot || expectedId && snapshot.logId !== expectedId || !await this.readingUndoSnapshotValid(word, snapshot)) {
+      if (!snapshot || expectedId && snapshot.logId !== expectedId || !await this.readingUndoSnapshotValid(word, snapshot) || !isCurrent()) {
         if (this.readingUndoSnapshots.get(word) === snapshot) this.readingUndoSnapshots.delete(word);
         return false;
       }
@@ -34217,6 +34341,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         };
         const logEntry = { id: this.nextLogId(), word, undoOf: snapshot.logId, reviewedAt: (/* @__PURE__ */ new Date()).toISOString(), mode: "reading-card" };
         const result = await this.reviewStore.mutateReview({ ...operation, logEntry });
+        if (!isCurrent()) return false;
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();
         if (result.rootChanged) {
@@ -34228,18 +34353,22 @@ var EnglishVocabPlugin = class extends BasePlugin {
           this.readingUndoSnapshots.delete(word);
           return false;
         }
-        this.state.log = await this.reviewStore.flushPendingLogs();
+        const log = await this.reviewStore.flushPendingLogs();
+        if (!isCurrent()) return false;
+        this.state.log = log;
         this.state.review = this.reviewStore.review;
         this.readingUndoSnapshots.delete(word);
         this.updateReadingTerms();
         this.emitState();
         await this.refreshReadingLevelSurfaces();
+        if (!isCurrent()) return false;
         return true;
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.reviewSaveFailed);
         return false;
       }
-    });
+    }, generation);
   }
   async readingUndoSnapshotValid(word, snapshot) {
     try {
@@ -34250,20 +34379,24 @@ var EnglishVocabPlugin = class extends BasePlugin {
     }
   }
   async setFlag(word, flag) {
-    return this.enqueueMutation(async () => {
+    return this.enqueueMutation(async (isCurrent) => {
       try {
         const result = await this.reviewStore.mutateReview(flag ? { type: "setFlag", word, flag } : { type: "removeFlag", word });
+        if (!isCurrent()) return false;
+        if (result.rootChanged) {
+          this.invalidateRoot();
+          this.notice(this.t.rootChangedDuringReview);
+          return false;
+        }
         this.state.review = result.review;
         this.state.log = this.reviewStore.effectiveLog();
         this.updateReadingTerms();
         this.emitState();
         await this.refreshReadingLevelSurfaces();
-        if (result.rootChanged) {
-          this.readingUndoSnapshots.clear();
-          this.notice(this.t.rootChangedDuringReview);
-        }
-        return !result.rootChanged;
+        if (!isCurrent()) return false;
+        return true;
       } catch {
+        if (!isCurrent()) return false;
         this.notice(this.t.flagSaveFailed);
         return false;
       }

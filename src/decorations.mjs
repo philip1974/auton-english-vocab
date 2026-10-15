@@ -3,6 +3,7 @@ import { buildSurfaceMap, inflectionPriority } from './inflections.mjs';
 import { uiText } from './ui-text.mjs';
 import { parseExampleLine, resolveExampleSourcePath } from './context-cloze.mjs';
 import { normalizeDefinitionLine } from './dictionary.mjs';
+import { normalizeWord } from './note-format.mjs';
 
 const TONE_BY_FAMILIARITY = {
   new: 'learning',
@@ -32,7 +33,7 @@ function ratingButton(text, rating, onClick, className = '') {
 }
 
 function entryMap(entries) {
-  return new Map((entries ?? []).map((entry) => [entry.word, entry]));
+  return new Map((entries ?? []).map((entry) => [normalizeWord(entry.word), entry]));
 }
 
 function normalizedSentence(value) {
@@ -138,6 +139,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
   return {
     id: 'english-vocab',
     renderCard(container, context) {
+      context = { ...context, key: normalizeWord(context.key) };
       let cleaned = false;
       let ratedUndoId;
       const current = () => getState?.() ?? {};
@@ -202,6 +204,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
             else if (receipt?.outcome === 'exists') status.textContent = t.exampleExists;
             else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.exampleCancelled;
             else status.textContent = t.exampleNotReviewed(receipt?.reason);
+            if (!['applied', 'exists'].includes(receipt?.outcome)) addExample.disabled = false;
           });
           addExample.dataset.role = 'add-example';
           actions.append(addExample);
@@ -247,7 +250,7 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
               draw();
             } });
             const state = current();
-            const collected = entryMap(state.entries).has(result.lemma);
+            const collected = entryMap(state.entries).has(normalizeWord(result.lemma));
             if (collected) {
               body.append(el('p', 'ev-reading-note', t.collectedWord));
               return;
@@ -255,12 +258,14 @@ export function createReadingDecorationSpec({ locale = 'en', getState, onReview,
             const status = el('p', 'ev-reading-note');
             const collect = button(t.collectWord, async () => {
               collect.disabled = true;
-              const receipt = await onCollectWord?.(result, noteActionContext(context));
+              let receipt = null;
+              try { receipt = await onCollectWord?.(result, noteActionContext(context)); } catch { /* retry stays available */ }
               if (cleaned) return;
               if (receipt?.outcome === 'applied') status.textContent = t.dictionaryAdded;
               else if (receipt?.outcome === 'rejected' || receipt?.outcome === 'aborted') status.textContent = t.dictionaryCancelled;
               else if (receipt) status.textContent = t.dictionaryNotReviewed(receipt.reason);
               else status.textContent = t.dictionaryLoadFailed;
+              if (receipt?.outcome !== 'applied') collect.disabled = false;
             });
             collect.dataset.role = 'collect-dictionary-word';
             body.append(collect, status);

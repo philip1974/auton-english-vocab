@@ -135,4 +135,45 @@ describe('vocab index', () => {
     expect(updates).toContainEqual(['alpha']);
     expect(index.get('beta')).toBeTruthy();
   });
+
+  it('should rerun the current root refresh when a coalesced old root scan fails', async () => {
+    let rejectFirst;
+    let calls = 0;
+    const firstList = new Promise((resolve, reject) => { rejectFirst = reject; });
+    const index = new VocabIndex({
+      async listDocuments() {
+        calls += 1;
+        if (calls === 1) return firstList;
+        return [{ path: 'wiki/vocab/beta.md', revision: { contentHash: 'b' } }];
+      },
+      async readDocument() { return { content: buildNote({ word: 'beta', definition: 'b' }) }; },
+    });
+    const first = index.refresh();
+    const second = index.refresh();
+    index.reset();
+    rejectFirst(Object.assign(new Error('root changed'), { code: 'ROOT_CHANGED' }));
+    await expect(Promise.all([first, second])).resolves.toEqual(expect.any(Array));
+    expect(calls).toBe(2);
+    expect(index.get('beta')).toBeTruthy();
+    expect(index.pending).toBe(false);
+  });
+
+  it('should reject a root changed scan when no current root refresh is pending', async () => {
+    const index = new VocabIndex({
+      async listDocuments() { throw Object.assign(new Error('root changed'), { code: 'ROOT_CHANGED' }); },
+    });
+    await expect(index.refresh()).rejects.toMatchObject({ code: 'ROOT_CHANGED' });
+  });
+
+  it('should reject stale list and document results instead of publishing them', async () => {
+    const staleList = new VocabIndex({ async listDocuments() { return []; } });
+    staleList.reset();
+    await expect(staleList.refreshOnce(0)).rejects.toMatchObject({ code: 'ROOT_CHANGED' });
+
+    const staleDocument = new VocabIndex({
+      async listDocuments() { return [{ path: 'wiki/vocab/a.md', revision: { contentHash: 'a' } }]; },
+      async readDocument() { throw Object.assign(new Error('root changed'), { code: 'ROOT_CHANGED' }); },
+    });
+    await expect(staleDocument.refresh()).rejects.toMatchObject({ code: 'ROOT_CHANGED' });
+  });
 });

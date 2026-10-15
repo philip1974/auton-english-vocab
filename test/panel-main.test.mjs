@@ -108,6 +108,38 @@ beforeEach(() => {
 });
 
 describe('panel', () => {
+  it('should choose each card automatic mode without persisting it until the user selects a mode', () => {
+    const container = document.createElement('div');
+    let listener;
+    let state = {
+      entries: [
+        { word: 'candid', definition: '坦率的', examples: [] },
+        { word: 'run', pos: 'verb', definition: '跑', examples: ['I run daily.'] },
+      ],
+      review: { version: 1, cards: {}, flags: {} },
+      log: [],
+    };
+    const persistMode = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      getState: () => state,
+      subscribe: (next) => { listener = next; return () => undefined; },
+      onReviewModeChange: persistMode,
+      hasEnglishVoice: () => true,
+    });
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('翻卡');
+    state = { ...state, review: { ...state.review, flags: { candid: 'ignored' } } };
+    listener();
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
+    expect(persistMode).not.toHaveBeenCalled();
+
+    [...container.querySelectorAll('.ev-mode button')].find((node) => node.textContent === '翻卡').click();
+    expect(persistMode).toHaveBeenCalledWith('flip');
+    state = { ...state, review: { ...state.review, flags: {} } };
+    listener();
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('翻卡');
+  });
+
   it('should show host version warning when required APIs are missing', () => {
     const container = document.createElement('div');
     const cleanup = renderPanel(container, { app: {}, entries: [], review: { version: 1, cards: {}, flags: {} } });
@@ -681,6 +713,58 @@ describe('panel', () => {
     expect(collected).toEqual(['ephemeral']);
   });
 
+  it('should render the latest pending dictionary result into the current dom after a state rerender', async () => {
+    const container = document.createElement('div');
+    let listener;
+    let resolveLookup;
+    const pending = new Promise((resolve) => { resolveLookup = resolve; });
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [],
+      review: { version: 1, cards: {}, flags: {} },
+      subscribe: (next) => { listener = next; return () => undefined; },
+      lookupDictionary: () => pending,
+      hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '生词本').click();
+    const input = container.querySelector('[data-role="dictionary-search"]');
+    input.value = 'run';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    listener();
+    resolveLookup({ surface: 'run', lemma: 'run', entry: { t: 'v. 跑', d: 'move' } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(container.querySelector('.ev-dict-result .ev-row-word')?.textContent).toBe('run');
+  });
+
+  it('should accept a curly apostrophe as the same spelling answer as a straight apostrophe', () => {
+    const container = document.createElement('div');
+    const reviewed = vi.fn();
+    renderPanel(container, {
+      app: fullApp(),
+      entries: [{ word: "don't", definition: '不要' }],
+      review: { version: 1, cards: {}, flags: {} },
+      reviewMode: 'reverse',
+      onReview: reviewed,
+      hasEnglishVoice: () => true,
+    });
+    const input = container.querySelector('[data-role="spelling-answer"]');
+    input.value = 'don’t';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(reviewed).toHaveBeenCalledWith("don't", 'Good', 'reverse');
+  });
+
+  it('should explain the host highlighting limitation when the notebook contains a hyphenated word', () => {
+    const container = document.createElement('div');
+    renderPanel(container, {
+      app: { ...fullApp(), readingDecorations: { register: vi.fn() } },
+      entries: [{ word: 'mother-in-law', definition: '岳母或婆婆' }],
+      review: { version: 1, cards: {}, flags: {} },
+      hasEnglishVoice: () => true,
+    });
+    expect(container.textContent).toContain('连字符词可用于语境复习，但宿主正文标记会按单词拆分');
+  });
+
   it('should show dictionary empty and collected states in the notebook', async () => {
     const container = document.createElement('div');
     renderPanel(container, {
@@ -935,6 +1019,118 @@ describe('main plugin', () => {
     expect(log).toHaveLength(2);
     expect(new Set(log.map((entry) => entry.id)).size).toBe(2);
     expect(plugin.state.mutationPending).toBe(false);
+  });
+
+  it('should discard every queued old root mutation and clear old root projections synchronously', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const terms = [];
+    app.readingDecorations = { register: () => ({ setTerms: (next) => { terms.push(next); return true; }, dispose() {} }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    let releaseMutation;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const calls = [];
+    plugin.reviewStore.mutateReview = vi.fn(async (operation) => {
+      calls.push(operation.word);
+      markStarted();
+      await new Promise((resolve) => { releaseMutation = resolve; });
+      return { review: { version: 1, cards: { [operation.word]: { state: 'Learning' } }, flags: {} }, previousCard: null, rootChanged: false };
+    });
+    const first = plugin.rateWord('alpha', 'Good', 'flip');
+    await started;
+    const second = plugin.rateWord('beta', 'Good', 'flip');
+    plugin.state.invalid = [{ path: 'old.md' }];
+    plugin.state.recommendations = { items: [{ path: 'old.md' }] };
+    plugin.latestReadingEvent = { path: 'old.md' };
+    plugin.readingUndoSnapshots.set('alpha', { logId: 'old' });
+    app.storage.setRoot('root-b');
+    const rootChange = app.events.find((event) => event.name === 'knowledge.root-changed').listener();
+    expect(plugin.state.entries).toEqual([]);
+    expect(plugin.state.invalid).toEqual([]);
+    expect(plugin.state.recommendations).toBeNull();
+    expect(plugin.latestReadingEvent).toBeNull();
+    expect(plugin.readingUndoSnapshots.size).toBe(0);
+    expect(terms.at(-1)).toEqual([]);
+    releaseMutation();
+    await expect(Promise.all([first, second])).resolves.toEqual([false, false]);
+    await rootChange;
+    expect(calls).toEqual(['alpha']);
+  });
+
+  it('should discard a delayed earlier root reload after a newer root generation has loaded', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    let releaseFirst;
+    let calls = 0;
+    plugin.reviewStore.reloadForRootChange = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return new Promise((resolve) => { releaseFirst = () => resolve({ version: 1, cards: { old: { state: 'New' } }, flags: {} }); });
+      return Promise.resolve({ version: 1, cards: { current: { state: 'New' } }, flags: {} });
+    });
+    const listener = plugin.app.events.find((event) => event.name === 'knowledge.root-changed').listener;
+    const first = listener();
+    const second = listener();
+    await second;
+    expect(plugin.state.review.cards.current).toBeTruthy();
+    releaseFirst();
+    await first;
+    expect(plugin.state.review.cards.old).toBeUndefined();
+    expect(plugin.state.review.cards.current).toBeTruthy();
+  });
+
+  it('should stop stale index and recommender continuations at their generation boundaries', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const plugin = new module.default(fullApp(), { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+
+    let releaseMoved;
+    plugin.rootMoved = () => new Promise((resolve) => { releaseMoved = resolve; });
+    const staleIndex = plugin.refreshIndex(plugin.rootGeneration);
+    plugin.invalidateRoot();
+    releaseMoved(false);
+    await staleIndex;
+
+    plugin.reviewStore.reloadForRootChange = async () => ({ version: 1, cards: {}, flags: {} });
+    let releaseReload;
+    plugin.recommender = { reload: () => new Promise((resolve) => { releaseReload = resolve; }) };
+    const generation = plugin.invalidateRoot();
+    const staleRecommendations = plugin.handleRootChanged(generation);
+    await Promise.resolve();
+    await Promise.resolve();
+    plugin.invalidateRoot();
+    releaseReload();
+    await staleRecommendations;
+    expect(plugin.state.entries).toEqual([]);
+  });
+
+  it('should keep automatic review modes out of saved preferences and persist only an explicit click', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    plugin.saveData = vi.fn(async () => undefined);
+    await plugin.onload();
+    plugin.state.entries = [
+      { word: 'candid', definition: '坦率的', examples: [] },
+      { word: 'run', pos: 'verb', definition: '跑', examples: ['I run daily.'] },
+    ];
+    plugin.state.review = { version: 1, cards: {}, flags: {} };
+    const container = document.createElement('div');
+    app.panels[0].render(container);
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('翻卡');
+    plugin.state.review.flags.candid = 'ignored';
+    plugin.emitState();
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
+    expect(plugin.saveData).not.toHaveBeenCalled();
+    [...container.querySelectorAll('.ev-mode button')].find((node) => node.textContent === '翻卡').click();
+    await Promise.resolve();
+    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ reviewMode: 'flip' }));
   });
 
   it('should load and merge review mode preferences without erasing unrelated data', async () => {
@@ -1547,7 +1743,7 @@ describe('main plugin', () => {
         },
       },
     );
-    expect(proposals[0].changes[0].newContent).toContain('- It was pure serendipity. — <https://example.com/article>');
+    expect(proposals[0].changes[0].newContent).toContain('- It was pure serendipity. — [Article](https://example.com/article)');
   });
 
   it('should write a web url source when adding an example from web lookup', async () => {
@@ -1570,7 +1766,7 @@ describe('main plugin', () => {
         ownerPluginId: 'dev.auton.browser-panel',
       },
     });
-    expect(proposals[0].changes[0].newContent).toContain('- Alpha appears on the web. — <https://example.com/alpha>');
+    expect(proposals[0].changes[0].newContent).toContain('- Alpha appears on the web. — [Alpha page](https://example.com/alpha)');
   });
 
   it('should deduplicate an example by sentence when web source differs', async () => {

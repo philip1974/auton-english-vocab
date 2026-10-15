@@ -25,6 +25,11 @@ for (const [base, forms] of Object.entries(IRREGULAR_BASE)) {
   for (const form of forms) IRREGULAR_SURFACE.set(form, base);
 }
 
+const COMPARATIVE_BASES = new Set([
+  'big', 'fast', 'small', 'tall', 'short', 'long', 'high', 'low', 'young', 'old',
+  'large', 'late', 'nice', 'wide', 'close', 'safe', 'simple', 'clever', 'quiet',
+]);
+
 function normalize(value) {
   return String(value ?? '').normalize('NFC').toLowerCase().replaceAll('’', "'");
 }
@@ -44,9 +49,9 @@ export function rankMapFromWords(words) {
 export function rankCandidates(surface) {
   const word = normalize(surface);
   const candidates = new Set([word]);
+  if (IRREGULAR_SURFACE.has(word)) addCandidate(candidates, IRREGULAR_SURFACE.get(word));
   if (word.length < 5 || RANK_DENYLIST.has(word)) return [...candidates];
 
-  if (IRREGULAR_SURFACE.has(word)) addCandidate(candidates, IRREGULAR_SURFACE.get(word));
   if (word.endsWith('ies')) addCandidate(candidates, `${word.slice(0, -3)}y`);
   if (word.endsWith('ied')) addCandidate(candidates, `${word.slice(0, -3)}y`);
   if (word.endsWith('es')) addCandidate(candidates, word.slice(0, -2));
@@ -72,10 +77,11 @@ export function rankCandidates(surface) {
   for (const suffix of ['er', 'est']) {
     if (!word.endsWith(suffix)) continue;
     const stem = word.slice(0, -suffix.length);
-    addCandidate(candidates, stem);
-    addCandidate(candidates, `${stem}e`);
+    if (COMPARATIVE_BASES.has(stem)) addCandidate(candidates, stem);
+    if (COMPARATIVE_BASES.has(`${stem}e`)) addCandidate(candidates, `${stem}e`);
     if (stem.length >= 2 && stem.at(-1) === stem.at(-2) && isConsonant(stem.at(-1))) {
-      addCandidate(candidates, stem.slice(0, -1));
+      const undoubled = stem.slice(0, -1);
+      if (COMPARATIVE_BASES.has(undoubled)) addCandidate(candidates, undoubled);
     }
   }
   return [...candidates];

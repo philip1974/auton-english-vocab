@@ -192,7 +192,12 @@ describe('review store', () => {
   });
 
   it('should back up valid json when the review container schema is damaged', async () => {
-    for (const value of [null, {}, { version: 1, cards: 'lost', flags: [] }]) {
+    for (const value of [
+      null,
+      {},
+      { version: 1, cards: 'lost', flags: [] },
+      { version: 1, cards: {}, flags: { run: true }, pendingLogs: 'lost' },
+    ]) {
       const app = appWithStorage({ 'review.json': JSON.stringify(value) });
       const notices = [];
       const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
@@ -215,6 +220,42 @@ describe('review store', () => {
     const store = new ReviewStore(app);
     await store.load();
     expect(Object.keys(store.review.cards)).toEqual(['valid']);
+  });
+
+  it('should isolate invalid fsrs counts difficulty and state review date combinations', async () => {
+    const valid = newSerializedCard(new Date('2026-10-14T00:00:00Z'));
+    const reviewed = { ...valid, state: 'Review', difficulty: 5, stability: 2, reps: 1, last_review: '2026-10-14T00:00:00.000Z' };
+    const app = appWithStorage({ 'review.json': JSON.stringify({ version: 1, cards: {
+      valid,
+      reviewed,
+      fractionalReps: { ...reviewed, reps: 0.5 },
+      fractionalLapses: { ...reviewed, lapses: 0.25 },
+      highDifficulty: { ...reviewed, difficulty: 11 },
+      missingReviewDate: { ...reviewed, last_review: null },
+    }, flags: {} }) });
+    const store = new ReviewStore(app);
+    await store.load();
+    expect(Object.keys(store.review.cards)).toEqual(['valid', 'reviewed']);
+  });
+
+  it('should report and isolate invalid flag and pending log entries while keeping valid items', async () => {
+    const notices = [];
+    const app = appWithStorage({ 'review.json': JSON.stringify({
+      version: 1,
+      cards: {},
+      flags: { run: 'ignored', bad: true },
+      pendingLogs: [{ id: 'ok', word: 'run' }, null, { word: 'missing-id' }],
+    }) });
+    const originalWrite = app.storage.write;
+    app.storage.write = async (...args) => {
+      if (args[1] === 'log.json') throw Object.assign(new Error('offline'), { code: 'STORAGE_WRITE_FAILED' });
+      return originalWrite(...args);
+    };
+    const store = new ReviewStore(app, { locale: 'zh', notify: (message) => notices.push(message) });
+    await store.load();
+    expect(store.review.flags).toEqual({ run: 'ignored' });
+    expect(store.review.pendingLogs).toEqual([{ id: 'ok', word: 'run' }]);
+    expect(notices.join('\n')).toMatch(/3/u);
   });
 
   it('should keep activation usable and pending logs intact when startup log recovery fails', async () => {

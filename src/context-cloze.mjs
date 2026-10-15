@@ -1,6 +1,6 @@
 import { buildSurfaceMap } from './inflections.mjs';
 
-const TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+const TOKEN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*)*/g;
 const SOURCE_MARKDOWN_RE = /^(?<sentence>.+?)\s+—\s+\[(?<title>(?:\\.|[^\]])+)\]\((?<path>[^)]+)\)\s*$/u;
 const SOURCE_URL_RE = /^(?<sentence>.+?)\s+—\s+<(?<url>https?:\/\/[^>]+)>\s*$/u;
 const DEFAULT_MAX_LENGTH = 300;
@@ -23,9 +23,12 @@ export function parseExampleLine(text) {
   if (noSource?.groups) return { sentence: noSource.groups.sentence, source: null };
   const markdown = line.match(SOURCE_MARKDOWN_RE);
   if (markdown?.groups) {
+    const target = decodeSourcePath(markdown.groups.path.trim());
     return {
       sentence: markdown.groups.sentence.trim(),
-      source: { title: unescapeTitle(markdown.groups.title), path: decodeSourcePath(markdown.groups.path.trim()) },
+      source: /^https?:\/\//u.test(target)
+        ? { title: unescapeTitle(markdown.groups.title), url: target }
+        : { title: unescapeTitle(markdown.groups.title), path: target },
     };
   }
   const url = line.match(SOURCE_URL_RE);

@@ -253,8 +253,8 @@ function addCandidate(set, surface) {
 function normalizePos(value) {
   const pos = normalize(value).replace(/\.$/u, '');
   if (['n', 'noun', '名词'].includes(pos)) return 'noun';
-  if (['v', 'verb', '动词'].includes(pos)) return 'verb';
-  if (['adj', 'adjective', 'adv', 'adverb', '形容词', '副词'].includes(pos)) return 'comparative';
+  if (['v', 'vt', 'vi', 'verb', '动词'].includes(pos)) return 'verb';
+  if (['a', 'adj', 'adjective', 'adv', 'adverb', '形容词', '副词'].includes(pos)) return 'comparative';
   return '';
 }
 

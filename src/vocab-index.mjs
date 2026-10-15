@@ -24,6 +24,15 @@ export class VocabIndex {
     this.invalid = [];
     this.refreshing = null;
     this.pending = false;
+    this.generation = 0;
+  }
+
+  reset() {
+    this.generation += 1;
+    this.cache.clear();
+    this.entries.clear();
+    this.invalid = [];
+    if (this.refreshing) this.pending = true;
   }
 
   async refresh() {
@@ -35,7 +44,17 @@ export class VocabIndex {
       let result;
       do {
         this.pending = false;
-        result = await this.refreshOnce();
+        const generation = this.generation;
+        try {
+          result = await this.refreshOnce(generation);
+        } catch (error) {
+          if (error?.code !== 'ROOT_CHANGED' && generation === this.generation) throw error;
+          this.cache.clear();
+          this.entries.clear();
+          this.invalid = [];
+          if (!this.pending && generation === this.generation) throw error;
+          this.pending = true;
+        }
       } while (this.pending);
       return result;
     })();
@@ -46,8 +65,9 @@ export class VocabIndex {
     }
   }
 
-  async refreshOnce() {
+  async refreshOnce(generation = this.generation) {
     const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
+    if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
     this.invalid = [];
     const readFailures = [];
     const live = new Set(metas.map((meta) => meta.path));
@@ -63,6 +83,7 @@ export class VocabIndex {
             const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
             this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
           } catch (error) {
+            if (error?.code === 'ROOT_CHANGED' || generation !== this.generation) throw error;
             this.cache.delete(meta.path);
             readFailures.push({
               path: meta.path,
@@ -73,6 +94,7 @@ export class VocabIndex {
           }
         }
         done += 1;
+        if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
         this.onProgress(done, metas.length);
         const partial = this.rebuild(readFailures);
         this.onUpdate(partial);

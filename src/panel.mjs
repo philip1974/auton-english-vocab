@@ -1,6 +1,6 @@
 import { activeReviewLog, dueQueue } from './scheduler.mjs';
 import { familiarityFor } from './familiarity.mjs';
-import { assertEnglishWord } from './note-format.mjs';
+import { assertEnglishWord, normalizeWord } from './note-format.mjs';
 import { uiText, currentLocale } from './ui-text.mjs';
 import { requestTextForWord, requestTextFromSelection } from './request-text.mjs';
 import { validateLevelSettings } from './reading-level.mjs';
@@ -119,13 +119,14 @@ export function renderPanel(container, controls) {
   const body = el('div', 'ev-body');
   const toolbar = el('div', 'ev-toolbar');
   let mode = null;
-  let modeSelected = false;
-  let modeWord = null;
+  let explicitMode = null;
   let renderedWord = null;
   let tab = 'today';
   let flipped = false;
   let lastSpokenWord = null;
   let dictionaryResult = null;
+  let dictionaryQuery = '';
+  let dictionarySuggestions = [];
   let suggestionRequest = 0;
   let lookupRequest = 0;
   const phonetics = new Map();
@@ -159,21 +160,15 @@ export function renderPanel(container, controls) {
     if (renderedWord !== null && renderedWord !== item?.word) controls.cancelSpeech?.();
     renderedWord = item?.word ?? null;
     if (validModes.includes(state.reviewMode)) {
-      mode = state.reviewMode;
-      modeSelected = true;
-    } else if (item && !modeSelected && (modeWord !== item.word || !validModes.includes(mode))) {
-      mode = defaultModeFor(state, item);
-      modeWord = item.word;
-    } else if (!item && !validModes.includes(mode)) {
-      mode = 'context';
+      explicitMode = state.reviewMode;
     }
+    mode = explicitMode ?? (item ? defaultModeFor(state, item) : 'context');
     const modeRow = el('div', 'ev-mode');
     for (const [id, label] of [['context', t.context], ['flip', t.flip], ['reverse', t.reverse], ['listening', t.listening]]) {
       const modeButton = button(label, () => {
         controls.cancelSpeech?.();
         mode = id;
-        modeSelected = true;
-        modeWord = item?.word ?? null;
+        explicitMode = id;
         flipped = false;
         controls.onReviewModeChange?.(id);
         rerender();
@@ -240,7 +235,7 @@ export function renderPanel(container, controls) {
       const input = el('input', 'ev-input');
       input.placeholder = t.spellingPlaceholder;
       input.dataset.role = 'spelling-answer';
-      const submit = () => review(input.value.trim().toLowerCase() === item.word ? 'Good' : 'Again');
+      const submit = () => review(normalizeWord(input.value) === normalizeWord(item.word) ? 'Good' : 'Again');
       input.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
       card.append(input, button(t.answer, submit));
       if (mode === 'listening') card.append(button(t.replay, () => controls.speak?.(item.word)));
@@ -257,7 +252,6 @@ export function renderPanel(container, controls) {
     const suggestions = el('div', 'ev-dict-suggestions');
     const resultBox = el('div', 'ev-dict-result');
     const showResult = (result) => {
-      dictionaryResult = result;
       resultBox.textContent = '';
       if (!result) {
         resultBox.append(el('p', 'ev-empty', t.dictionaryNoEntry));
@@ -278,19 +272,16 @@ export function renderPanel(container, controls) {
     const runLookup = async (word) => {
       const request = ++lookupRequest;
       const query = String(word ?? '').trim().toLowerCase();
+      dictionaryQuery = query;
       const result = await controls.lookupDictionary?.(query);
-      if (request !== lookupRequest || lookupInput.value.trim().toLowerCase() !== query) return;
-      showResult(result);
+      if (request !== lookupRequest || dictionaryQuery !== query) return;
+      dictionaryResult = result;
+      dictionarySuggestions = [];
+      rerender();
     };
-    const runSuggest = async () => {
-      const request = ++suggestionRequest;
-      const q = lookupInput.value.trim().toLowerCase();
+    const showSuggestions = (items) => {
       suggestions.textContent = '';
-      resultBox.textContent = '';
-      if (q.length < 2) return;
-      const items = await controls.suggestDictionary?.(q, 8) ?? [];
-      if (request !== suggestionRequest || lookupInput.value.trim().toLowerCase() !== q) return;
-      if (!items.length) {
+      if (!items.length && dictionaryQuery.length >= 2) {
         suggestions.append(el('p', 'ev-empty', t.dictionaryNoEntry));
         return;
       }
@@ -298,7 +289,22 @@ export function renderPanel(container, controls) {
         suggestions.append(button(item.word, () => { lookupInput.value = item.word; runLookup(item.word); }, 'ev-dict-chip'));
       }
     };
-    lookupInput.addEventListener('input', () => { dictionaryResult = null; runSuggest(); });
+    const runSuggest = async () => {
+      const request = ++suggestionRequest;
+      const q = lookupInput.value.trim().toLowerCase();
+      dictionaryQuery = q;
+      lookupRequest += 1;
+      dictionaryResult = null;
+      dictionarySuggestions = [];
+      suggestions.textContent = '';
+      resultBox.textContent = '';
+      if (q.length < 2) return;
+      const items = await controls.suggestDictionary?.(q, 8) ?? [];
+      if (request !== suggestionRequest || dictionaryQuery !== q) return;
+      dictionarySuggestions = items;
+      rerender();
+    };
+    lookupInput.addEventListener('input', runSuggest);
     lookupInput.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
@@ -307,6 +313,7 @@ export function renderPanel(container, controls) {
     lookupBox.append(lookupInput, suggestions, resultBox);
     body.append(lookupBox);
     if (dictionaryResult) showResult(dictionaryResult);
+    else if (dictionarySuggestions.length || dictionaryQuery.length >= 2) showSuggestions(dictionarySuggestions);
 
     const addRow = el('div', 'ev-add');
     const addInput = el('input', 'ev-input');
@@ -468,6 +475,9 @@ export function renderPanel(container, controls) {
         lookupInput.addEventListener('click', () => controls.onLookupAnyWordChange?.(lookupInput.checked));
         lookupLabel.append(lookupInput, el('span', '', t.lookupAnyWord));
         toolbar.append(lookupLabel);
+      }
+      if (state.highlight !== false && state.entries.some((entry) => normalizeWord(entry.word).includes('-'))) {
+        toolbar.append(el('p', 'ev-note', t.hyphenHighlightLimited));
       }
     }
     tabs.textContent = '';

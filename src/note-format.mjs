@@ -26,7 +26,10 @@ function today() {
 
 function sourceLink(source) {
   if (!source) return '';
-  if (source.url) return `<${source.url}>`;
+  if (source.url) {
+    if (!source.title) return `<${source.url}>`;
+    return `[${String(source.title).replace(/[\[\]]/g, '\\$&')}](${source.url})`;
+  }
   if (source.path) {
     const path = String(source.path).replaceAll('%', '%25').replaceAll(' ', '%20').replaceAll('(', '%28').replaceAll(')', '%29');
     return `[${String(source.title || source.path).replace(/[\[\]]/g, '\\$&')}](${path})`;

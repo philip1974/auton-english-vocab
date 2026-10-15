@@ -70,8 +70,13 @@ export class ReviewStore {
     this.reviewRevision = result.revision;
     try {
       let invalidCards = 0;
-      this.review = normalizeReview(JSON.parse(result.text), { onInvalidCard: () => { invalidCards += 1; } });
+      let invalidItems = 0;
+      this.review = normalizeReview(JSON.parse(result.text), {
+        onInvalidCard: () => { invalidCards += 1; },
+        onInvalidItem: () => { invalidItems += 1; },
+      });
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
+      if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
     } catch (error) {
       await this.#backupCorrupt('review', result.text, rootGeneration, generation);
       /* v8 ignore next -- backup boundary uses the tested shared stale guard. */
@@ -276,12 +281,13 @@ export function applyReviewOperation(value, operation, now = new Date()) {
   return { review, previousCard, applied: true };
 }
 
-export function normalizeReview(value, { onInvalidCard = () => undefined } = {}) {
+export function normalizeReview(value, { onInvalidCard = () => undefined, onInvalidItem = () => undefined } = {}) {
   if (value?.version !== undefined && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: 'UNSUPPORTED_REVIEW_VERSION' });
   }
   const isObject = (item) => item !== null && typeof item === 'object' && !Array.isArray(item);
-  if (!isObject(value) || value.version !== 1 || !isObject(value.cards) || !isObject(value.flags)) throw new Error('invalid review schema');
+  if (!isObject(value) || value.version !== 1 || !isObject(value.cards) || !isObject(value.flags)
+    || ('pendingLogs' in value && !Array.isArray(value.pendingLogs))) throw new Error('invalid review schema');
   const review = EMPTY();
   for (const [word, card] of Object.entries(value.cards)) {
     try {
@@ -289,7 +295,12 @@ export function normalizeReview(value, { onInvalidCard = () => undefined } = {})
       for (const key of ['stability', 'difficulty', 'elapsed_days', 'scheduled_days', 'reps', 'lapses']) {
         if (!Number.isFinite(card[key]) || card[key] < 0) throw new Error('invalid card');
       }
+      for (const key of ['elapsed_days', 'scheduled_days', 'reps', 'lapses']) {
+        if (!Number.isInteger(card[key])) throw new Error('invalid card');
+      }
+      if (card.difficulty > 10) throw new Error('invalid card');
       if (!['New', 'Learning', 'Review', 'Relearning'].includes(card.state)) throw new Error('invalid card');
+      if (card.state !== 'New' && !card.last_review) throw new Error('invalid card');
       const normalized = deserializeCard(card);
       if (!normalized || Number.isNaN(normalized.due?.getTime?.()) || (normalized.last_review && Number.isNaN(normalized.last_review.getTime())) || ![0, 1, 2, 3].includes(normalized.state)) throw new Error('invalid card');
       review.cards[word] = serializeCard(normalized);
@@ -299,9 +310,15 @@ export function normalizeReview(value, { onInvalidCard = () => undefined } = {})
   }
   for (const [word, flag] of Object.entries(value.flags)) {
     if (flag === 'mastered' || flag === 'ignored') review.flags[word] = flag;
+    else onInvalidItem(`flag:${word}`);
   }
-  if (Array.isArray(value?.pendingLogs)) {
-    review.pendingLogs = value.pendingLogs.filter((entry) => entry && typeof entry === 'object' && typeof entry.id === 'string').slice(-2000);
+  if (Array.isArray(value.pendingLogs)) {
+    review.pendingLogs = [];
+    for (const entry of value.pendingLogs) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.id === 'string') review.pendingLogs.push(entry);
+      else onInvalidItem('pendingLog');
+    }
+    review.pendingLogs = review.pendingLogs.slice(-2000);
   }
   return review;
 }

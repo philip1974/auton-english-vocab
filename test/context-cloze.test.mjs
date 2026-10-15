@@ -82,6 +82,17 @@ describe('context cloze', () => {
     expect(clozeSentence("I don’t know, but I don't mind.", { word: "don't" }).text).toBe('I _____ know, but I _____ mind.');
   });
 
+  it('should cloze a collected hyphenated word as one context token', () => {
+    expect(clozeSentence('My mother-in-law arrived.', { word: 'mother-in-law', pos: 'noun' }).text).toBe('My _____ arrived.');
+  });
+
+  it('should preserve a titled web source when parsing a markdown example source', () => {
+    expect(parseExampleLine('Read it. — [Article title](https://example.com/article)')).toEqual({
+      sentence: 'Read it.',
+      source: { title: 'Article title', url: 'https://example.com/article' },
+    });
+  });
+
   it('should pick examples by review log count after filtering unusable examples', () => {
     const entry = {
       word: 'run',

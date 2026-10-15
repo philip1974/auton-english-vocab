@@ -132,6 +132,20 @@ describe('inflections', () => {
     expect(map.has('booked')).toBe(false);
   });
 
+  it('should normalize abbreviated adjective and transitive or intransitive verb prefixes when pos is absent', () => {
+    const map = buildSurfaceMap([
+      { word: 'happy', definition: 'a. 快乐的' },
+      { word: 'consider', definition: 'vt. 考虑' },
+      { word: 'arrive', definition: 'vi. 到达' },
+    ]);
+    expect(map.get('happier')).toBe('happy');
+    expect(map.get('happiest')).toBe('happy');
+    expect(map.get('considered')).toBe('consider');
+    expect(map.get('considering')).toBe('consider');
+    expect(map.get('arrived')).toBe('arrive');
+    expect(map.get('arriving')).toBe('arrive');
+  });
+
   it('should publish straight and curly apostrophe surfaces without generating contraction inflections', () => {
     const map = buildSurfaceMap([{ word: "don't", pos: 'verb' }]);
     expect(map.get("don't")).toBe("don't");
