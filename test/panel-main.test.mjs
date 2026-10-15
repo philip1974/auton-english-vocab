@@ -656,6 +656,28 @@ describe('panel', () => {
     expect(notices.at(-1)).toContain('生词率设置保存失败');
   });
 
+  it('should restore persisted level inputs when saving changed settings fails', async () => {
+    const container = document.createElement('div');
+    const state = {
+      entries: [], review: { version: 1, cards: {}, flags: {} },
+      levelSettings: { vocabularySize: 3000, easyMax: 2, goodMax: 5 },
+      recommendations: { items: [], skipped: {} },
+    };
+    renderPanel(container, {
+      app: { ...fullApp(), workspace: { scope: () => ({ epoch: 'e1' }) } },
+      locale: 'zh', getState: () => state, onLevelSettingsChange: async () => false, hasEnglishVoice: () => true,
+    });
+    [...container.querySelectorAll('button')].find((node) => node.textContent === '推荐阅读').click();
+    const easy = container.querySelector('[data-role="level-easy-max"]');
+    easy.value = '1';
+    easy.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(container.querySelector('[data-role="level-vocabulary-size"]').value).toBe('3000');
+    expect(easy.value).toBe('2');
+    expect(container.querySelector('[data-role="level-good-max"]').value).toBe('5');
+  });
+
   it('should hide the skipped summary when every empty-result count is zero', () => {
     const container = document.createElement('div');
     renderPanel(container, {
@@ -1465,12 +1487,29 @@ describe('main plugin', () => {
     await plugin.onload();
     await expect(plugin.setReviewMode('unknown')).resolves.toBe(false);
     await expect(plugin.setReviewMode('context')).resolves.toBe(false);
-    expect(plugin.state.reviewMode).toBe('context');
+    expect(plugin.state.reviewMode).toBeNull();
+    expect(plugin.app.notices.some((item) => item.message.includes('复习模式保存失败'))).toBe(true);
     globalThis.speechSynthesis = { getVoices: () => [{ lang: 'ko-KR' }], cancel: vi.fn(), speak: vi.fn() };
     globalThis.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; };
     expect(plugin.speakEnglish('Run.')).toBe(false);
     delete globalThis.speechSynthesis;
     delete globalThis.SpeechSynthesisUtterance;
+  });
+
+  it('should restore the selected review mode when its preference save fails', async () => {
+    const container = document.createElement('div');
+    const state = {
+      entries: [{ word: 'run', definition: '跑', examples: ['I run.'] }],
+      review: { version: 1, cards: {}, flags: {} }, log: [], reviewMode: 'context',
+    };
+    renderPanel(container, {
+      app: fullApp(), getState: () => state, onReviewModeChange: async () => false, hasEnglishVoice: () => true,
+    });
+    const flip = [...container.querySelectorAll('.ev-mode button')].find((node) => node.textContent === '翻卡');
+    flip.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('语境');
   });
 
   it('should reread the latest note and propose only path and appended content when adding an example', async () => {
@@ -2149,6 +2188,30 @@ describe('main plugin', () => {
     const propose = vi.spyOn(app.knowledge, 'propose');
     await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'running', definition: '跑步中' }] })).resolves.toContain('已作为 run 收录');
     expect(propose).not.toHaveBeenCalled();
+  });
+
+  it('should avoid a duplicate surface proposal when an enriched index refresh is still running', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    const run = { word: 'run', definition: 'v. move', path: 'wiki/vocab/run.md', forms: ['run', 'ran'] };
+    plugin.index.entries = new Map([['run', run]]);
+    plugin.index.rebuildSurfaces();
+    plugin.state.entries = [run];
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    plugin.index.enrichEntries = async (entries) => { markStarted(); await waiting; return entries; };
+    const refreshing = plugin.refreshIndex();
+    await started;
+    const propose = vi.spyOn(app.knowledge, 'propose');
+    await expect(app.tools.get('vocab_add').run({ entries: [{ word: 'ran', definition: 'past of run' }] })).resolves.toContain('已作为 run 收录');
+    expect(propose).not.toHaveBeenCalled();
+    release();
+    await refreshing;
   });
 
   it('should recover a silent root change before vocab lookup reads index and review projections', async () => {
@@ -3046,17 +3109,31 @@ describe('main plugin', () => {
     const cancel = vi.fn();
     const previousSpeech = globalThis.speechSynthesis;
     Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: { cancel } });
-    const reset = vi.spyOn(plugin.index, 'reset');
+    const cancelIndex = vi.spyOn(plugin.index, 'cancel');
     plugin.readingUndoSnapshots.set('run', {});
     const before = [plugin.rootGeneration, plugin.recommendationRequest, plugin.readingStatusRequest];
     plugin.onunload();
     expect(cancel).toHaveBeenCalledOnce();
-    expect(reset).toHaveBeenCalledOnce();
+    expect(cancelIndex).toHaveBeenCalledOnce();
     expect(plugin.readingUndoSnapshots.size).toBe(0);
     expect(plugin.rootGeneration).toBeGreaterThan(before[0]);
     expect(plugin.recommendationRequest).toBeGreaterThan(before[1]);
     expect(plugin.readingStatusRequest).toBeGreaterThan(before[2]);
     Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: previousSpeech });
+  });
+
+  it('should load a fresh index when the plugin is enabled after a prior instance unloads', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const first = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await first.onload();
+    first.onunload();
+    for (const disposable of first.registered) disposable.dispose?.();
+    const second = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await second.onload();
+    expect(second.index.get('alpha')).toMatchObject({ word: 'alpha' });
+    expect(second.index).not.toBe(first.index);
   });
 
   it('should expose panel controls for flags notices highlights and reading document opening', async () => {
@@ -3093,6 +3170,24 @@ describe('main plugin', () => {
     expect(plugin.state.recommendationLoading).toBeNull();
     expect(plugin.state.recommendations).toBe(previous);
     expect(app.notices.some((item) => item.message.includes('推荐阅读刷新失败'))).toBe(true);
+  });
+
+  it('should suppress incremental state publications when recommendations refresh silently', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    app.workspace = { scope: () => ({ epoch: 'epoch-1' }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.recommender.recommend = vi.fn(async ({ onProgress }) => {
+      onProgress(20, 40);
+      onProgress(40, 40);
+      return { stale: false, items: [], skipped: {} };
+    });
+    const emit = vi.spyOn(plugin, 'emitState');
+    await plugin.refreshRecommendations({ silent: true });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(plugin.state.recommendationLoading).toBeNull();
   });
 
   it('should keep the newest same-epoch recommendation result when requests finish out of order', async () => {

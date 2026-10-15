@@ -132,6 +132,7 @@ export function renderPanel(container, controls) {
   let dictionaryCollectStatus = '';
   let suggestionRequest = 0;
   let lookupRequest = 0;
+  let modeRequest = 0;
   let refreshTimer = null;
   let cleaned = false;
   const phonetics = new Map();
@@ -196,11 +197,25 @@ export function renderPanel(container, controls) {
     for (const [id, label] of [['context', t.context], ['flip', t.flip], ['reverse', t.reverse], ['listening', t.listening]]) {
       const modeButton = button(label, () => {
         controls.cancelSpeech?.();
-        mode = id;
-        explicitMode = id;
-        flipped = false;
-        controls.onReviewModeChange?.(id);
-        rerender();
+        const request = ++modeRequest;
+        const finish = (saved) => {
+          if (request !== modeRequest) return;
+          if (saved !== false) {
+            mode = id;
+            explicitMode = id;
+            flipped = false;
+          }
+          rerender();
+        };
+        const saving = controls.onReviewModeChange?.(id);
+        if (saving && typeof saving.then === 'function') {
+          saving.then(finish, () => finish(false));
+        } else {
+          mode = id;
+          explicitMode = id;
+          flipped = false;
+          rerender();
+        }
       });
       modeButton.disabled = id === 'listening' && !controls.hasEnglishVoice?.();
       if (id === mode) modeButton.setAttribute('aria-pressed', 'true');
@@ -488,15 +503,26 @@ export function renderPanel(container, controls) {
     hard.max = '20';
     hard.step = '0.5';
     hard.value = String(settings.goodMax);
-    const save = () => {
+    const save = async () => {
       const result = validateLevelSettings({ vocabularySize: Number(vocab.value), easyMax: Number(easy.value), goodMax: Number(hard.value) });
       if (!result.ok) {
         controls.notify?.(t.levelSettingsSaveFailed);
         return;
       }
-      controls.onLevelSettingsChange?.(result.settings);
+      const saved = await controls.onLevelSettingsChange?.(result.settings);
+      if (saved === false) {
+        const persisted = read().levelSettings ?? settings;
+        for (const [role, value] of [
+          ['level-vocabulary-size', persisted.vocabularySize],
+          ['level-easy-max', persisted.easyMax],
+          ['level-good-max', persisted.goodMax],
+        ]) {
+          const current = body.querySelector(`[data-role="${role}"]`);
+          if (current) current.value = String(value);
+        }
+      }
     };
-    for (const input of [vocab, easy, hard]) input.addEventListener('change', save);
+    for (const input of [vocab, easy, hard]) input.addEventListener('change', () => { void save(); });
     const line = el('div', 'ev-setting-line');
     line.append(el('label', '', t.vocabularySize), vocab, el('label', '', t.goodRange), easy, hard);
     settingsBox.append(line, el('p', 'ev-note', t.defaultRangeNote));

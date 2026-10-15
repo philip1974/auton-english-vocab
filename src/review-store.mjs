@@ -76,6 +76,13 @@ function localDay(value) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function isLocalDay(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
 const MAX_LOG_ENTRIES = 2000;
 const MAX_LOG_BYTES = 1024 * 1024;
 
@@ -134,7 +141,11 @@ export class ReviewStore {
         if (generation !== this.generation) return this.review;
         if (this.introducedNeedsMigration) await this.#migrateIntroducedWords(generation);
         else if (this.review.introduced && this.review.introduced.day !== localDay(this.now())) {
-          const rolled = await this.mutateReview({ type: 'migrateIntroduced', words: [], day: localDay(this.now()) });
+          const rolled = await this.mutateReview({
+            type: 'rollIntroducedDay',
+            expectedDay: this.review.introduced.day,
+            day: localDay(this.now()),
+          });
           if (rolled.rootChanged) throw Object.assign(new Error('root changed while rolling introduced words'), { code: 'ROOT_CHANGED' });
         }
         if (this.review.pendingLogs?.length) {
@@ -196,6 +207,7 @@ export class ReviewStore {
         onInvalidCard: () => { invalidCards += 1; },
         onInvalidItem: () => { invalidItems += 1; },
         onLogIdCollision: () => { logIdCollisions += 1; },
+        introducedDay: localDay(this.now()),
       });
       if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
         await this.#preserveCorrupt('review', result.text, rootGeneration, generation);
@@ -328,7 +340,7 @@ export class ReviewStore {
       this.introducedNeedsMigration = false;
       return;
     }
-    const operation = { type: 'migrateIntroduced', words, day: today };
+    const operation = { type: 'mergeIntroduced', words, day: today };
     try {
       const result = await this.mutateReview(operation);
       if (result.rootChanged) throw Object.assign(new Error('root changed while migrating introduced words'), { code: 'ROOT_CHANGED' });
@@ -479,7 +491,7 @@ export class ReviewStore {
 }
 
 export function applyReviewOperation(value, operation, now = new Date()) {
-  const review = normalizeReview(value);
+  const review = normalizeReview(value, { introducedDay: localDay(now) });
   const previousCard = Object.hasOwn(review.cards, operation.word) ? review.cards[operation.word] : null;
   if (operation.type === 'restoreCardIfFingerprint' && JSON.stringify(previousCard) !== operation.expectedFingerprint) {
     return { review, previousCard, applied: false };
@@ -506,8 +518,15 @@ export function applyReviewOperation(value, operation, now = new Date()) {
     const ids = new Set(operation.ids);
     review.pendingLogs = (review.pendingLogs ?? []).filter((entry) => !ids.has(entry.id));
   }
-  else if (operation.type === 'migrateIntroduced') {
-    review.introduced = { day: operation.day ?? localDay(now), words: [...new Set(operation.words ?? [])] };
+  else if (operation.type === 'mergeIntroduced') {
+    const day = operation.day ?? localDay(now);
+    if (review.introduced && review.introduced.day !== day) return { review, previousCard, applied: false };
+    const current = review.introduced?.words ?? [];
+    review.introduced = { day, words: [...new Set([...current, ...(operation.words ?? [])])] };
+  }
+  else if (operation.type === 'rollIntroducedDay') {
+    if (review.introduced?.day !== operation.expectedDay) return { review, previousCard, applied: false };
+    review.introduced = { day: operation.day ?? localDay(now), words: [] };
   }
   else throw new Error(`unknown review operation: ${operation.type}`);
   if (operation.logEntry) {
@@ -519,7 +538,12 @@ export function applyReviewOperation(value, operation, now = new Date()) {
   return { review, previousCard, applied: true };
 }
 
-export function normalizeReview(value, { onInvalidCard = () => undefined, onInvalidItem = () => undefined, onLogIdCollision = () => undefined } = {}) {
+export function normalizeReview(value, {
+  onInvalidCard = () => undefined,
+  onInvalidItem = () => undefined,
+  onLogIdCollision = () => undefined,
+  introducedDay = localDay(new Date()),
+} = {}) {
   if (value?.version !== undefined && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: 'UNSUPPORTED_REVIEW_VERSION' });
   }
@@ -563,9 +587,11 @@ export function normalizeReview(value, { onInvalidCard = () => undefined, onInva
     review.pendingLogs = retainLogHistory(uniqueLogEntries(pendingLogs, onLogIdCollision));
   }
   if (value.introduced !== undefined) {
-    if (!isObject(value.introduced) || typeof value.introduced.day !== 'string' || !Array.isArray(value.introduced.words)
-      || value.introduced.words.some((word) => typeof word !== 'string' || !word)) throw new Error('invalid review schema');
-    review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
+    if (!isObject(value.introduced) || typeof value.introduced.day !== 'string' || !isLocalDay(value.introduced.day) || !Array.isArray(value.introduced.words)
+      || value.introduced.words.some((word) => typeof word !== 'string' || !word)) {
+      onInvalidItem('introduced');
+      review.introduced = { day: introducedDay, words: [] };
+    } else review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
   }
   return review;
 }
@@ -582,8 +608,10 @@ export function mergeReview(base, incoming) {
     merged.pendingLogs = retainLogHistory(uniqueLogEntries([...(merged.pendingLogs ?? []), ...(other.pendingLogs ?? [])]));
   }
   if (other.introduced) {
-    const words = merged.introduced?.day === other.introduced.day ? merged.introduced.words : [];
-    merged.introduced = { day: other.introduced.day, words: [...new Set([...words, ...other.introduced.words])] };
+    if (!merged.introduced || other.introduced.day > merged.introduced.day) merged.introduced = other.introduced;
+    else if (merged.introduced.day === other.introduced.day) {
+      merged.introduced = { day: other.introduced.day, words: [...new Set([...merged.introduced.words, ...other.introduced.words])] };
+    }
   }
   return merged;
 }

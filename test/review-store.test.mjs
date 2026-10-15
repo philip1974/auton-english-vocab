@@ -289,6 +289,17 @@ describe('review store', () => {
     expect(mergeReview({ version: 1, cards: {}, flags: { a: 'ignored' } }, { version: 1, cards: {}, flags: { b: 'mastered' } }).flags).toEqual({ a: 'ignored', b: 'mastered' });
   });
 
+  it('should union same-day introductions and retain the newest day when reviews merge', () => {
+    const sameDay = mergeReview(
+      { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-15', words: ['alpha'] } },
+      { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-15', words: ['beta'] } },
+    );
+    expect(sameDay.introduced).toEqual({ day: '2026-10-15', words: ['alpha', 'beta'] });
+    const newer = mergeReview(sameDay, { version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-16', words: ['gamma'] } });
+    expect(newer.introduced).toEqual({ day: '2026-10-16', words: ['gamma'] });
+    expect(mergeReview(newer, sameDay).introduced).toEqual({ day: '2026-10-16', words: ['gamma'] });
+  });
+
   it('should keep existing card when it has the newest review time', () => {
     const newer = { ...newSerializedCard(new Date('2026-10-15T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2026-10-15T00:00:00.000Z', last_review: '2026-10-15T00:00:00.000Z' };
     const older = { ...newSerializedCard(new Date('2026-10-14T00:00:00Z')), state: 'Review', stability: 2, difficulty: 5, reps: 1, due: '2026-10-14T00:00:00.000Z', last_review: '2026-10-14T00:00:00.000Z' };
@@ -665,6 +676,51 @@ describe('review store', () => {
     const store = new ReviewStore(app, { now: () => new Date('2026-10-15T00:01:00') });
     await store.load();
     expect(store.review.introduced).toEqual({ day: '2026-10-15', words: [] });
+  });
+
+  it('should isolate a damaged introduced field when valid cards and flags are loaded', async () => {
+    const card = rateCard(newSerializedCard(new Date('2026-10-14T00:00:00Z')), 'Easy', new Date('2026-10-14T00:00:00Z'));
+    const app = appWithStorage({
+      'review.json': JSON.stringify({ version: 1, cards: { alpha: card }, flags: { alpha: 'mastered' }, introduced: { day: '2026-10-15', words: [null] } }),
+    });
+    const store = new ReviewStore(app, { now: () => new Date('2026-10-15T12:00:00') });
+    await store.load();
+    expect(store.review.cards.alpha).toEqual(card);
+    expect(store.review.flags.alpha).toBe('mastered');
+    expect(store.review.introduced).toEqual({ day: '2026-10-15', words: [] });
+    expect(Object.keys(app.files).some((name) => name.startsWith('review.corrupt-'))).toBe(true);
+    await store.mutateReview({ type: 'setFlag', word: 'beta', flag: 'ignored' });
+    const written = JSON.parse(app.files['review.json']);
+    expect(written.cards.alpha).toEqual(card);
+    expect(written.flags).toMatchObject({ alpha: 'mastered', beta: 'ignored' });
+  });
+
+  it('should union migrated introductions when two stores replay after a conflict', async () => {
+    const day = new Date('2026-10-15T12:00:00');
+    const app = appWithStorage({
+      'review.json': JSON.stringify({ version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-15', words: ['alpha'] } }),
+    });
+    const first = new ReviewStore(app, { now: () => day });
+    const second = new ReviewStore(app, { now: () => day });
+    await Promise.all([first.load(), second.load()]);
+    await first.mutateReview({ type: 'rateCard', word: 'xray', rating: 'Good' });
+    await second.mutateReview({ type: 'mergeIntroduced', day: '2026-10-15', words: ['alpha'] });
+    expect(JSON.parse(app.files['review.json']).introduced.words.sort()).toEqual(['alpha', 'xray']);
+  });
+
+  it('should keep a concurrent new-day introduction when another store replays midnight rollover', async () => {
+    let now = new Date('2026-10-14T23:59:00');
+    const app = appWithStorage({
+      'review.json': JSON.stringify({ version: 1, cards: {}, flags: {}, introduced: { day: '2026-10-14', words: ['old'] } }),
+    });
+    const first = new ReviewStore(app, { now: () => now });
+    const second = new ReviewStore(app, { now: () => now });
+    await Promise.all([first.load(), second.load()]);
+    now = new Date('2026-10-15T00:01:00');
+    await first.mutateReview({ type: 'rateCard', word: 'xray', rating: 'Good' });
+    const rolled = await second.mutateReview({ type: 'rollIntroducedDay', expectedDay: '2026-10-14', day: '2026-10-15' });
+    expect(rolled.applied).toBe(false);
+    expect(JSON.parse(app.files['review.json']).introduced).toEqual({ day: '2026-10-15', words: ['xray'] });
   });
 
   it('should keep persisted log history bounded when count and utf8 bytes are large', async () => {

@@ -33,9 +33,11 @@ export class VocabIndex {
     this.refreshing = null;
     this.pending = false;
     this.generation = 0;
+    this.disposed = false;
   }
 
   reset() {
+    this.disposed = false;
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
@@ -49,7 +51,23 @@ export class VocabIndex {
     if (this.refreshing) this.pending = true;
   }
 
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.pending = false;
+    this.cache.clear();
+    this.entries.clear();
+    this.surfaces.clear();
+    this.ambiguousSurfaces.clear();
+    this.duplicateWords.clear();
+    this.invalid = [];
+    if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
+    this.enrichmentRetryTimer = null;
+    this.enrichmentRetryAttempt = 0;
+  }
+
   async refresh() {
+    if (this.disposed) return { entries: [], invalid: [] };
     if (this.refreshing) {
       this.pending = true;
       return this.refreshing;
@@ -62,12 +80,14 @@ export class VocabIndex {
         try {
           result = await this.refreshOnce(generation);
         } catch (error) {
+          if (this.disposed) return { entries: [], invalid: [] };
           if (error?.code !== 'ROOT_CHANGED' && generation === this.generation) throw error;
           this.cache.clear();
           this.entries.clear();
           this.duplicateWords.clear();
           this.invalid = [];
           if (!this.pending && generation === this.generation) throw error;
+          if (generation !== this.generation && !this.pending) return { entries: [], invalid: [] };
           this.pending = true;
         }
       } while (this.pending);
@@ -83,7 +103,6 @@ export class VocabIndex {
   async refreshOnce(generation = this.generation) {
     const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
     if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
-    this.invalid = [];
     const readFailures = [];
     const live = new Set(metas.map((meta) => meta.path));
     for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
@@ -96,6 +115,7 @@ export class VocabIndex {
         if (cached?.hash !== hash) {
           try {
             const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
+            if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
             this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
           } catch (error) {
             if (error?.code === 'ROOT_CHANGED' || generation !== this.generation) throw error;
@@ -112,40 +132,40 @@ export class VocabIndex {
         if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
       }
       this.onProgress(done, metas.length);
-      const partial = this.rebuild(readFailures);
-      this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
     }
-    const result = this.rebuild(readFailures);
+    const result = this.buildProjection(readFailures);
     result.entries = await this.enrichEntries(result.entries);
     if (generation !== this.generation) throw Object.assign(new Error('stale root'), { code: 'ROOT_CHANGED' });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.duplicateWords = result.duplicateWords;
+    this.invalid = result.invalid;
     this.rebuildSurfaces();
-    this.onUpdate(result);
+    this.onUpdate({ entries: result.entries, invalid: result.invalid });
     if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
     else this.enrichmentRetryAttempt = 0;
     return result;
   }
 
   scheduleEnrichmentRetry(generation) {
-    if (this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
+    if (this.disposed || this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
     const delay = this.enrichmentRetryDelays[this.enrichmentRetryAttempt];
     this.enrichmentRetryAttempt += 1;
     this.enrichmentRetryTimer = setTimeout(() => {
       this.enrichmentRetryTimer = null;
-      if (generation !== this.generation) return;
+      if (this.disposed || generation !== this.generation) return;
       Promise.resolve(this.onEnrichmentRetry(generation)).catch(() => undefined);
     }, delay);
   }
 
-  rebuild(readFailures = []) {
-    this.entries = new Map();
-    this.duplicateWords = new Set();
-    this.invalid = [];
+  buildProjection(readFailures = []) {
+    const entries = new Map();
+    const duplicateWords = new Set();
+    const invalid = [];
     const byWord = new Map();
     for (const [path, item] of this.cache.entries()) {
       if (!item.parsed.ok) {
-        this.invalid.push({ path, kind: 'parse', error: item.parsed.error });
+        invalid.push({ path, kind: 'parse', error: item.parsed.error });
         continue;
       }
       const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
@@ -154,15 +174,14 @@ export class VocabIndex {
       byWord.set(entry.word, matches);
     }
     for (const [word, matches] of byWord.entries()) {
-      if (matches.length === 1) this.entries.set(word, matches[0]);
+      if (matches.length === 1) entries.set(word, matches[0]);
       else {
-        this.duplicateWords.add(word);
-        for (const entry of matches) this.invalid.push({ path: entry.path, kind: 'duplicate', word });
+        duplicateWords.add(word);
+        for (const entry of matches) invalid.push({ path: entry.path, kind: 'duplicate', word });
       }
     }
-    this.rebuildSurfaces();
-    this.invalid.push(...readFailures);
-    return { entries: [...this.entries.values()], invalid: this.invalid };
+    invalid.push(...readFailures);
+    return { entries: [...entries.values()], invalid, duplicateWords };
   }
 
   get(word) {

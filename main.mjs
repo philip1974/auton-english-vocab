@@ -13,7 +13,7 @@ var TEXT = {
     collectFailed: "Could not append the vocabulary request to chat.",
     corruptReview: "review.json is damaged. It was backed up and review progress was reset.",
     invalidReviewCards: (count) => `${count} damaged review card(s) were skipped; other progress was kept.`,
-    invalidReviewItems: (count) => `${count} damaged review flag or pending log item(s) were skipped.`,
+    invalidReviewItems: (count) => `${count} damaged review metadata item(s) were skipped.`,
     unsupportedReviewVersion: "review.json uses an unsupported version. It was backed up and will not be overwritten.",
     corruptLog: "log.json is damaged. It was backed up and the review log was reset.",
     logIdCollisions: (count) => `${count} conflicting review log ID(s) were recovered; the original log was backed up.`,
@@ -46,6 +46,7 @@ var TEXT = {
     recommendationFailed: "Could not refresh recommended reading.",
     noRecommendations: "No English reading candidates.",
     levelSettingsSaveFailed: "Could not save reading level settings.",
+    reviewModeSaveFailed: "Could not save the review mode.",
     readingStatus: (rate, band) => `New ${Math.round(rate)}%·${band === "good" ? "good for study" : band === "easy" ? "easy" : "hard"}`,
     readingStatusTitle: (rate, counted) => `${rate.toFixed(1)}% new words across ${counted} counted words`,
     context: "Context",
@@ -141,7 +142,7 @@ var TEXT = {
     collectFailed: "无法把生词请求追加到对话框。",
     corruptReview: "review.json 已损坏，已备份并从空进度开始。",
     invalidReviewCards: (count) => `已跳过 ${count} 张损坏的复习卡，其余进度已保留。`,
-    invalidReviewItems: (count) => `已跳过 ${count} 条损坏的复习标记或待补写日志。`,
+    invalidReviewItems: (count) => `已跳过 ${count} 条损坏的复习元数据。`,
     unsupportedReviewVersion: "review.json 版本不受支持，已备份且不会覆盖原文件。",
     corruptLog: "log.json 已损坏，已备份并从空日志恢复。",
     logIdCollisions: (count) => `已恢复 ${count} 条 ID 冲突的复习日志，原日志已备份。`,
@@ -174,6 +175,7 @@ var TEXT = {
     recommendationFailed: "推荐阅读刷新失败。",
     noRecommendations: "没有可推荐的英文文章。",
     levelSettingsSaveFailed: "生词率设置保存失败。",
+    reviewModeSaveFailed: "复习模式保存失败。",
     readingStatus: (rate, band) => `生词 ${Math.round(rate)}%·${band === "good" ? "适合学习" : band === "easy" ? "偏易" : "偏难"}`,
     readingStatusTitle: (rate, counted) => `${counted} 个计数词，生词率 ${rate.toFixed(1)}%`,
     context: "语境",
@@ -269,7 +271,7 @@ var TEXT = {
     collectFailed: "チャットへ単語リクエストを追加できませんでした。",
     corruptReview: "review.json が破損しています。バックアップして復習進捗を初期化しました。",
     invalidReviewCards: (count) => `破損した復習カード ${count} 件をスキップし、その他の進捗は保持しました。`,
-    invalidReviewItems: (count) => `破損した復習フラグまたは保留ログ ${count} 件をスキップしました。`,
+    invalidReviewItems: (count) => `破損した復習メタデータ ${count} 件をスキップしました。`,
     unsupportedReviewVersion: "review.json のバージョンは未対応です。バックアップし、元ファイルは上書きしません。",
     corruptLog: "log.json が破損しています。バックアップして復習ログを初期化しました。",
     logIdCollisions: (count) => `ID が競合した復習ログ ${count} 件を復元し、元のログをバックアップしました。`,
@@ -302,6 +304,7 @@ var TEXT = {
     recommendationFailed: "おすすめ読書を更新できませんでした。",
     noRecommendations: "おすすめできる英文記事がありません。",
     levelSettingsSaveFailed: "読書レベル設定を保存できませんでした。",
+    reviewModeSaveFailed: "復習モードを保存できませんでした。",
     readingStatus: (rate, band) => `新出語 ${Math.round(rate)}%·${band === "good" ? "学習向き" : band === "easy" ? "易しめ" : "難しめ"}`,
     readingStatusTitle: (rate, counted) => `${counted} 語中、新出語率 ${rate.toFixed(1)}%`,
     context: "文脈",
@@ -397,7 +400,7 @@ var TEXT = {
     collectFailed: "채팅에 단어 요청을 추가할 수 없습니다.",
     corruptReview: "review.json이 손상되었습니다. 백업 후 복습 진도를 초기화했습니다.",
     invalidReviewCards: (count) => `손상된 복습 카드 ${count}개를 건너뛰고 나머지 진도는 유지했습니다.`,
-    invalidReviewItems: (count) => `손상된 복습 표시 또는 대기 로그 ${count}개를 건너뛰었습니다.`,
+    invalidReviewItems: (count) => `손상된 복습 메타데이터 ${count}개를 건너뛰었습니다.`,
     unsupportedReviewVersion: "review.json 버전이 지원되지 않습니다. 백업했으며 원본을 덮어쓰지 않습니다.",
     corruptLog: "log.json이 손상되었습니다. 백업 후 복습 로그를 초기화했습니다.",
     logIdCollisions: (count) => `ID가 충돌한 복습 로그 ${count}개를 복구하고 원본 로그를 백업했습니다.`,
@@ -430,6 +433,7 @@ var TEXT = {
     recommendationFailed: "추천 읽기를 새로고침할 수 없습니다.",
     noRecommendations: "추천할 영어 글이 없습니다.",
     levelSettingsSaveFailed: "읽기 수준 설정을 저장할 수 없습니다.",
+    reviewModeSaveFailed: "복습 모드를 저장할 수 없습니다.",
     readingStatus: (rate, band) => `새 단어 ${Math.round(rate)}%·${band === "good" ? "학습 적합" : band === "easy" ? "쉬움" : "어려움"}`,
     readingStatusTitle: (rate, counted) => `${counted}개 단어 기준 새 단어율 ${rate.toFixed(1)}%`,
     context: "문맥",
@@ -1278,6 +1282,12 @@ function localDay(value) {
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
+function isLocalDay(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
 var MAX_LOG_ENTRIES = 2e3;
 var MAX_LOG_BYTES = 1024 * 1024;
 function retainLogHistory(entries) {
@@ -1329,7 +1339,11 @@ var ReviewStore = class {
         if (generation !== this.generation) return this.review;
         if (this.introducedNeedsMigration) await this.#migrateIntroducedWords(generation);
         else if (this.review.introduced && this.review.introduced.day !== localDay(this.now())) {
-          const rolled = await this.mutateReview({ type: "migrateIntroduced", words: [], day: localDay(this.now()) });
+          const rolled = await this.mutateReview({
+            type: "rollIntroducedDay",
+            expectedDay: this.review.introduced.day,
+            day: localDay(this.now())
+          });
           if (rolled.rootChanged) throw Object.assign(new Error("root changed while rolling introduced words"), { code: "ROOT_CHANGED" });
         }
         if (this.review.pendingLogs?.length) {
@@ -1392,7 +1406,8 @@ var ReviewStore = class {
         },
         onLogIdCollision: () => {
           logIdCollisions += 1;
-        }
+        },
+        introducedDay: localDay(this.now())
       });
       if (invalidCards > 0 || invalidItems > 0 || logIdCollisions > 0) {
         await this.#preserveCorrupt("review", result.text, rootGeneration, generation);
@@ -1510,7 +1525,7 @@ var ReviewStore = class {
       this.introducedNeedsMigration = false;
       return;
     }
-    const operation = { type: "migrateIntroduced", words, day: today2 };
+    const operation = { type: "mergeIntroduced", words, day: today2 };
     try {
       const result = await this.mutateReview(operation);
       if (result.rootChanged) throw Object.assign(new Error("root changed while migrating introduced words"), { code: "ROOT_CHANGED" });
@@ -1647,7 +1662,7 @@ var ReviewStore = class {
   }
 };
 function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()) {
-  const review = normalizeReview(value);
+  const review = normalizeReview(value, { introducedDay: localDay(now) });
   const previousCard = Object.hasOwn(review.cards, operation.word) ? review.cards[operation.word] : null;
   if (operation.type === "restoreCardIfFingerprint" && JSON.stringify(previousCard) !== operation.expectedFingerprint) {
     return { review, previousCard, applied: false };
@@ -1672,8 +1687,14 @@ function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()
   else if (operation.type === "removePendingLogs") {
     const ids = new Set(operation.ids);
     review.pendingLogs = (review.pendingLogs ?? []).filter((entry) => !ids.has(entry.id));
-  } else if (operation.type === "migrateIntroduced") {
-    review.introduced = { day: operation.day ?? localDay(now), words: [...new Set(operation.words ?? [])] };
+  } else if (operation.type === "mergeIntroduced") {
+    const day = operation.day ?? localDay(now);
+    if (review.introduced && review.introduced.day !== day) return { review, previousCard, applied: false };
+    const current = review.introduced?.words ?? [];
+    review.introduced = { day, words: [.../* @__PURE__ */ new Set([...current, ...operation.words ?? []])] };
+  } else if (operation.type === "rollIntroducedDay") {
+    if (review.introduced?.day !== operation.expectedDay) return { review, previousCard, applied: false };
+    review.introduced = { day: operation.day ?? localDay(now), words: [] };
   } else throw new Error(`unknown review operation: ${operation.type}`);
   if (operation.logEntry) {
     const entry = operation.type === "rateCard" ? { ...operation.logEntry, previousState: previousCard?.state ?? "New" } : operation.logEntry;
@@ -1681,7 +1702,12 @@ function applyReviewOperation(value, operation, now = /* @__PURE__ */ new Date()
   }
   return { review, previousCard, applied: true };
 }
-function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = () => void 0, onLogIdCollision = () => void 0 } = {}) {
+function normalizeReview(value, {
+  onInvalidCard = () => void 0,
+  onInvalidItem = () => void 0,
+  onLogIdCollision = () => void 0,
+  introducedDay = localDay(/* @__PURE__ */ new Date())
+} = {}) {
   if (value?.version !== void 0 && value.version !== 1) {
     throw Object.assign(new Error(`unsupported review version: ${value.version}`), { code: "UNSUPPORTED_REVIEW_VERSION" });
   }
@@ -1724,8 +1750,10 @@ function normalizeReview(value, { onInvalidCard = () => void 0, onInvalidItem = 
     review.pendingLogs = retainLogHistory(uniqueLogEntries(pendingLogs, onLogIdCollision));
   }
   if (value.introduced !== void 0) {
-    if (!isObject(value.introduced) || typeof value.introduced.day !== "string" || !Array.isArray(value.introduced.words) || value.introduced.words.some((word) => typeof word !== "string" || !word)) throw new Error("invalid review schema");
-    review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
+    if (!isObject(value.introduced) || typeof value.introduced.day !== "string" || !isLocalDay(value.introduced.day) || !Array.isArray(value.introduced.words) || value.introduced.words.some((word) => typeof word !== "string" || !word)) {
+      onInvalidItem("introduced");
+      review.introduced = { day: introducedDay, words: [] };
+    } else review.introduced = { day: value.introduced.day, words: [...new Set(value.introduced.words)] };
   }
   return review;
 }
@@ -1741,8 +1769,10 @@ function mergeReview(base, incoming) {
     merged.pendingLogs = retainLogHistory(uniqueLogEntries([...merged.pendingLogs ?? [], ...other.pendingLogs ?? []]));
   }
   if (other.introduced) {
-    const words = merged.introduced?.day === other.introduced.day ? merged.introduced.words : [];
-    merged.introduced = { day: other.introduced.day, words: [.../* @__PURE__ */ new Set([...words, ...other.introduced.words])] };
+    if (!merged.introduced || other.introduced.day > merged.introduced.day) merged.introduced = other.introduced;
+    else if (merged.introduced.day === other.introduced.day) {
+      merged.introduced = { day: other.introduced.day, words: [.../* @__PURE__ */ new Set([...merged.introduced.words, ...other.introduced.words])] };
+    }
   }
   return merged;
 }
@@ -2682,8 +2712,10 @@ var VocabIndex = class {
     this.refreshing = null;
     this.pending = false;
     this.generation = 0;
+    this.disposed = false;
   }
   reset() {
+    this.disposed = false;
     this.generation += 1;
     this.cache.clear();
     this.entries.clear();
@@ -2696,7 +2728,22 @@ var VocabIndex = class {
     this.enrichmentRetryAttempt = 0;
     if (this.refreshing) this.pending = true;
   }
+  cancel() {
+    this.disposed = true;
+    this.generation += 1;
+    this.pending = false;
+    this.cache.clear();
+    this.entries.clear();
+    this.surfaces.clear();
+    this.ambiguousSurfaces.clear();
+    this.duplicateWords.clear();
+    this.invalid = [];
+    if (this.enrichmentRetryTimer !== null) clearTimeout(this.enrichmentRetryTimer);
+    this.enrichmentRetryTimer = null;
+    this.enrichmentRetryAttempt = 0;
+  }
   async refresh() {
+    if (this.disposed) return { entries: [], invalid: [] };
     if (this.refreshing) {
       this.pending = true;
       return this.refreshing;
@@ -2709,12 +2756,14 @@ var VocabIndex = class {
         try {
           result = await this.refreshOnce(generation);
         } catch (error) {
+          if (this.disposed) return { entries: [], invalid: [] };
           if (error?.code !== "ROOT_CHANGED" && generation === this.generation) throw error;
           this.cache.clear();
           this.entries.clear();
           this.duplicateWords.clear();
           this.invalid = [];
           if (!this.pending && generation === this.generation) throw error;
+          if (generation !== this.generation && !this.pending) return { entries: [], invalid: [] };
           this.pending = true;
         }
       } while (this.pending);
@@ -2729,7 +2778,6 @@ var VocabIndex = class {
   async refreshOnce(generation = this.generation) {
     const metas = unwrap(await this.knowledge.listDocuments()).filter((meta) => VOCAB_PATH.test(meta.path));
     if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
-    this.invalid = [];
     const readFailures = [];
     const live = new Set(metas.map((meta) => meta.path));
     for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
@@ -2742,6 +2790,7 @@ var VocabIndex = class {
         if (cached?.hash !== hash) {
           try {
             const doc = unwrap(await this.knowledge.readDocument({ path: meta.path }));
+            if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
             this.cache.set(meta.path, { hash, meta, parsed: parseNote(doc.content) });
           } catch (error) {
             if (error?.code === "ROOT_CHANGED" || generation !== this.generation) throw error;
@@ -2758,38 +2807,38 @@ var VocabIndex = class {
         if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
       }
       this.onProgress(done, metas.length);
-      const partial = this.rebuild(readFailures);
-      this.onUpdate(partial);
       if (i + this.batchSize < metas.length) await sleep();
     }
-    const result = this.rebuild(readFailures);
+    const result = this.buildProjection(readFailures);
     result.entries = await this.enrichEntries(result.entries);
     if (generation !== this.generation) throw Object.assign(new Error("stale root"), { code: "ROOT_CHANGED" });
     this.entries = new Map(result.entries.map((entry) => [entry.word, entry]));
+    this.duplicateWords = result.duplicateWords;
+    this.invalid = result.invalid;
     this.rebuildSurfaces();
-    this.onUpdate(result);
+    this.onUpdate({ entries: result.entries, invalid: result.invalid });
     if (result.entries.incomplete === true) this.scheduleEnrichmentRetry(generation);
     else this.enrichmentRetryAttempt = 0;
     return result;
   }
   scheduleEnrichmentRetry(generation) {
-    if (this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
+    if (this.disposed || this.enrichmentRetryTimer !== null || this.enrichmentRetryAttempt >= this.enrichmentRetryDelays.length) return;
     const delay = this.enrichmentRetryDelays[this.enrichmentRetryAttempt];
     this.enrichmentRetryAttempt += 1;
     this.enrichmentRetryTimer = setTimeout(() => {
       this.enrichmentRetryTimer = null;
-      if (generation !== this.generation) return;
+      if (this.disposed || generation !== this.generation) return;
       Promise.resolve(this.onEnrichmentRetry(generation)).catch(() => void 0);
     }, delay);
   }
-  rebuild(readFailures = []) {
-    this.entries = /* @__PURE__ */ new Map();
-    this.duplicateWords = /* @__PURE__ */ new Set();
-    this.invalid = [];
+  buildProjection(readFailures = []) {
+    const entries = /* @__PURE__ */ new Map();
+    const duplicateWords = /* @__PURE__ */ new Set();
+    const invalid = [];
     const byWord = /* @__PURE__ */ new Map();
     for (const [path, item] of this.cache.entries()) {
       if (!item.parsed.ok) {
-        this.invalid.push({ path, kind: "parse", error: item.parsed.error });
+        invalid.push({ path, kind: "parse", error: item.parsed.error });
         continue;
       }
       const entry = { ...item.parsed.entry, path, title: item.meta.title || item.parsed.entry.word };
@@ -2798,15 +2847,14 @@ var VocabIndex = class {
       byWord.set(entry.word, matches);
     }
     for (const [word, matches] of byWord.entries()) {
-      if (matches.length === 1) this.entries.set(word, matches[0]);
+      if (matches.length === 1) entries.set(word, matches[0]);
       else {
-        this.duplicateWords.add(word);
-        for (const entry of matches) this.invalid.push({ path: entry.path, kind: "duplicate", word });
+        duplicateWords.add(word);
+        for (const entry of matches) invalid.push({ path: entry.path, kind: "duplicate", word });
       }
     }
-    this.rebuildSurfaces();
-    this.invalid.push(...readFailures);
-    return { entries: [...this.entries.values()], invalid: this.invalid };
+    invalid.push(...readFailures);
+    return { entries: [...entries.values()], invalid, duplicateWords };
   }
   get(word) {
     return this.entries.get(normalizeWord(word));
@@ -3536,6 +3584,7 @@ function renderPanel(container, controls) {
   let dictionaryCollectStatus = "";
   let suggestionRequest = 0;
   let lookupRequest = 0;
+  let modeRequest = 0;
   let refreshTimer = null;
   let cleaned = false;
   const phonetics = /* @__PURE__ */ new Map();
@@ -3596,11 +3645,25 @@ function renderPanel(container, controls) {
     for (const [id, label] of [["context", t.context], ["flip", t.flip], ["reverse", t.reverse], ["listening", t.listening]]) {
       const modeButton = button(label, () => {
         controls.cancelSpeech?.();
-        mode = id;
-        explicitMode = id;
-        flipped = false;
-        controls.onReviewModeChange?.(id);
-        rerender();
+        const request = ++modeRequest;
+        const finish = (saved) => {
+          if (request !== modeRequest) return;
+          if (saved !== false) {
+            mode = id;
+            explicitMode = id;
+            flipped = false;
+          }
+          rerender();
+        };
+        const saving = controls.onReviewModeChange?.(id);
+        if (saving && typeof saving.then === "function") {
+          saving.then(finish, () => finish(false));
+        } else {
+          mode = id;
+          explicitMode = id;
+          flipped = false;
+          rerender();
+        }
       });
       modeButton.disabled = id === "listening" && !controls.hasEnglishVoice?.();
       if (id === mode) modeButton.setAttribute("aria-pressed", "true");
@@ -3914,15 +3977,28 @@ function renderPanel(container, controls) {
     hard.max = "20";
     hard.step = "0.5";
     hard.value = String(settings.goodMax);
-    const save = () => {
+    const save = async () => {
       const result2 = validateLevelSettings({ vocabularySize: Number(vocab.value), easyMax: Number(easy.value), goodMax: Number(hard.value) });
       if (!result2.ok) {
         controls.notify?.(t.levelSettingsSaveFailed);
         return;
       }
-      controls.onLevelSettingsChange?.(result2.settings);
+      const saved = await controls.onLevelSettingsChange?.(result2.settings);
+      if (saved === false) {
+        const persisted = read().levelSettings ?? settings;
+        for (const [role, value] of [
+          ["level-vocabulary-size", persisted.vocabularySize],
+          ["level-easy-max", persisted.easyMax],
+          ["level-good-max", persisted.goodMax]
+        ]) {
+          const current = body.querySelector(`[data-role="${role}"]`);
+          if (current) current.value = String(value);
+        }
+      }
     };
-    for (const input of [vocab, easy, hard]) input.addEventListener("change", save);
+    for (const input of [vocab, easy, hard]) input.addEventListener("change", () => {
+      void save();
+    });
     const line = el("div", "ev-setting-line");
     line.append(el("label", "", t.vocabularySize), vocab, el("label", "", t.goodRange), easy, hard);
     settingsBox.append(line, el("p", "ev-note", t.defaultRangeNote));
@@ -35068,7 +35144,6 @@ var ReadingRecommender = class {
         if (meta.unreadable || hash === "") {
           skipped.unreadable += 1;
           done += 1;
-          onProgress(done, metas.length);
           continue;
         }
         const cached = this.cache.get(meta.path, hash);
@@ -35076,7 +35151,6 @@ var ReadingRecommender = class {
           if (cached.english) items.push(this.scoreCached(meta, cached, review, entries));
           else skipped[cached.reason] = (skipped[cached.reason] ?? 0) + 1;
           done += 1;
-          onProgress(done, metas.length);
           if (!current()) return { stale: true, items: [], skipped };
           continue;
         }
@@ -35087,7 +35161,6 @@ var ReadingRecommender = class {
           if (!current()) return { stale: true, items: [], skipped };
           skipped.unreadable += 1;
           done += 1;
-          onProgress(done, metas.length);
           continue;
         }
         if (!current()) return { stale: true, items: [], skipped };
@@ -35103,9 +35176,9 @@ var ReadingRecommender = class {
           items.push(this.scoreCached(meta, this.cache.get(meta.path, hash), review, entries));
         }
         done += 1;
-        onProgress(done, metas.length);
         if (!current()) return { stale: true, items: [], skipped };
       }
+      onProgress(done, metas.length);
       if (!current()) return { stale: true, items: [], skipped };
       await this.cache.flush();
       if (!current()) return { stale: true, items: [], skipped };
@@ -35441,6 +35514,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.index = new VocabIndex(this.app.knowledge, {
       onProgress: (done, total) => {
         this.state.loading = { done, total };
+        this.emitState();
       },
       onUpdate: (result) => {
         this.state.entries = result.entries;
@@ -35472,12 +35546,13 @@ var EnglishVocabPlugin = class extends BasePlugin {
   }
   async setReviewMode(mode) {
     if (!REVIEW_MODES.has(mode)) return false;
-    this.state.reviewMode = mode;
     try {
       await this.savePreferences({ reviewMode: mode });
     } catch {
+      this.notice(this.t.reviewModeSaveFailed);
       return false;
     }
+    this.state.reviewMode = mode;
     this.emitState();
     return true;
   }
@@ -35836,7 +35911,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         review: this.state.review,
         entries: this.state.entries,
         onProgress: (done, total) => {
-          if (request !== this.recommendationRequest) return;
+          if (silent || request !== this.recommendationRequest) return;
           this.state.recommendationLoading = { done, total };
           this.emitState();
         }
@@ -35939,7 +36014,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
-    this.index?.reset?.();
+    this.index?.cancel?.();
     this.cancelSpeech();
     this.readingUndoSnapshots?.clear?.();
     this.latestReadingEvent = null;

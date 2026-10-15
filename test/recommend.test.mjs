@@ -85,6 +85,15 @@ describe('reading recommendations', () => {
     expect(suggestions[1].detail).toContain('偏易');
   });
 
+  it('should publish recommendation progress once per batch when scanning many documents', async () => {
+    const docs = Array.from({ length: 125 }, (_, index) => ({ path: `wiki/read-${index}.md`, title: String(index), content: english('the') }));
+    const progress = [];
+    const recommender = new ReadingRecommender(appFor(docs), { table: ['the'], batchSize: 20, onProgress: (done, total) => progress.push([done, total]) });
+    await recommender.reload();
+    await recommender.recommend();
+    expect(progress).toEqual([[20, 125], [40, 125], [60, 125], [80, 125], [100, 125], [120, 125], [125, 125]]);
+  });
+
   it('should reuse cached English and non-English analysis without reading unchanged documents again', async () => {
     const app = appFor([
       { path: 'wiki/good.md', title: 'Good', hash: 'h-good', content: `${english('the')} rareone raretwo rarethree` },

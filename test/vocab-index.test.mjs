@@ -237,7 +237,7 @@ describe('vocab index', () => {
     expect(index.get('beta')).toBeTruthy();
   });
 
-  it('should rebuild and publish at most once per batch plus the enriched final result', async () => {
+  it('should publish only the enriched final result when refreshing many batches', async () => {
     const nameFor = (index) => {
       let value = index;
       let suffix = '';
@@ -258,9 +258,55 @@ describe('vocab index', () => {
       },
     }, { onUpdate: (result) => updates.push(result.entries.length) });
     await index.refresh();
-    expect(updates).toHaveLength(201);
-    expect(updates.slice(0, 2)).toEqual([50, 100]);
-    expect(updates.slice(-2)).toEqual([10_000, 10_000]);
+    expect(updates).toEqual([10_000]);
+  });
+
+  it('should keep the prior complete surface projection when a refresh is still enriching', async () => {
+    let revision = 'one';
+    let release;
+    const wait = new Promise((resolve) => { release = resolve; });
+    let markEnrichment;
+    const enrichmentStarted = new Promise((resolve) => { markEnrichment = resolve; });
+    let blockEnrichment = false;
+    const index = new VocabIndex({
+      async listDocuments() { return [{ path: 'wiki/vocab/run.md', revision: { contentHash: revision } }]; },
+      async readDocument() { return { content: buildNote({ word: 'run', definition: 'v. move' }) }; },
+    }, {
+      batchSize: 1,
+      enrichEntries: async (entries) => {
+        if (blockEnrichment) { markEnrichment(); await wait; }
+        return entries.map((entry) => ({ ...entry, forms: ['run', 'ran'] }));
+      },
+    });
+    await index.refresh();
+    revision = 'two';
+    blockEnrichment = true;
+    const refreshing = index.refresh();
+    await enrichmentStarted;
+    expect(index.resolveSurface('ran')).toMatchObject({ word: 'run' });
+    release();
+    await refreshing;
+    expect(index.resolveSurface('ran')).toMatchObject({ word: 'run' });
+  });
+
+  it('should stop an in-flight refresh without restarting it when the index is cancelled', async () => {
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    let reads = 0;
+    const updates = [];
+    const index = new VocabIndex({
+      async listDocuments() { return [{ path: 'wiki/vocab/run.md', revision: { contentHash: 'one' } }]; },
+      async readDocument() { reads += 1; await waiting; return { content: buildNote({ word: 'run', definition: 'move' }) }; },
+    }, { onUpdate: (result) => updates.push(result) });
+    const refreshing = index.refresh();
+    await vi.waitFor(() => expect(reads).toBe(1));
+    index.cancel();
+    release();
+    await refreshing;
+    expect(reads).toBe(1);
+    expect(updates).toEqual([]);
+    expect(index.entries.size).toBe(0);
+    expect(index.cache.size).toBe(0);
   });
 
   it('should rerun the current root refresh when a coalesced old root scan fails', async () => {

@@ -348,7 +348,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.state.review = await this.reviewStore.load();
     this.state.log = this.reviewStore.effectiveLog();
     this.index = new VocabIndex(this.app.knowledge, {
-      onProgress: (done, total) => { this.state.loading = { done, total }; },
+      onProgress: (done, total) => { this.state.loading = { done, total }; this.emitState(); },
       onUpdate: (result) => { this.state.entries = result.entries; this.state.invalid = result.invalid; this.emitState(); },
       enrichEntries: (entries) => enrichVocabularyEntries(entries),
       onEnrichmentRetry: (indexGeneration) => {
@@ -378,12 +378,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
 
   async setReviewMode(mode) {
     if (!REVIEW_MODES.has(mode)) return false;
-    this.state.reviewMode = mode;
     try {
       await this.savePreferences({ reviewMode: mode });
     } catch {
+      this.notice(this.t.reviewModeSaveFailed);
       return false;
     }
+    this.state.reviewMode = mode;
     this.emitState();
     return true;
   }
@@ -769,7 +770,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         review: this.state.review,
         entries: this.state.entries,
         onProgress: (done, total) => {
-          if (request !== this.recommendationRequest) return;
+          if (silent || request !== this.recommendationRequest) return;
           this.state.recommendationLoading = { done, total };
           this.emitState();
         },
@@ -878,7 +879,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.readingStatusRequest += 1;
-    this.index?.reset?.();
+    this.index?.cancel?.();
     this.cancelSpeech();
     this.readingUndoSnapshots?.clear?.();
     this.latestReadingEvent = null;

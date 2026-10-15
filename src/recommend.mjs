@@ -148,7 +148,6 @@ export class ReadingRecommender {
         if (meta.unreadable || hash === '') {
           skipped.unreadable += 1;
           done += 1;
-          onProgress(done, metas.length);
           continue;
         }
         const cached = this.cache.get(meta.path, hash);
@@ -156,7 +155,6 @@ export class ReadingRecommender {
           if (cached.english) items.push(this.scoreCached(meta, cached, review, entries));
           else skipped[cached.reason] = (skipped[cached.reason] ?? 0) + 1;
           done += 1;
-          onProgress(done, metas.length);
           if (!current()) return { stale: true, items: [], skipped };
           continue;
         }
@@ -168,7 +166,6 @@ export class ReadingRecommender {
           if (!current()) return { stale: true, items: [], skipped };
           skipped.unreadable += 1;
           done += 1;
-          onProgress(done, metas.length);
           continue;
         }
         if (!current()) return { stale: true, items: [], skipped };
@@ -184,10 +181,10 @@ export class ReadingRecommender {
           items.push(this.scoreCached(meta, this.cache.get(meta.path, hash), review, entries));
         }
         done += 1;
-        onProgress(done, metas.length);
         /* v8 ignore next -- synchronous progress cannot change epochs without host re-entry; surrounding async guards are tested. */
         if (!current()) return { stale: true, items: [], skipped };
       }
+      onProgress(done, metas.length);
       /* v8 ignore next -- repeated guard before the flush await. */
       if (!current()) return { stale: true, items: [], skipped };
       await this.cache.flush();
