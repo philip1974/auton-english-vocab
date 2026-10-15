@@ -8,6 +8,10 @@ const IRREGULAR_BASES = new Map([
   ['went', 'go'],
   ['gone', 'go'],
 ]);
+const HYPHEN_ALIASES = new Map([
+  ['co-operate', 'cooperate'],
+  ['e-mail', 'email'],
+]);
 
 function firstLetter(word) {
   const letter = word[0];
@@ -166,6 +170,11 @@ export async function lookup(word, { importer = defaultImporter } = {}) {
     const inflection = kind ? { lemma, kind } : undefined;
     return { surface: displaySurface, lemma: surface, entry: direct, surfaceEntry: direct, ...(inflection ? { inflection } : {}) };
   }
+  const alias = HYPHEN_ALIASES.get(surface);
+  if (alias) {
+    const entry = await entryFor(alias, importer);
+    if (entry) return { surface: displaySurface, lemma: alias, entry, surfaceEntry: null };
+  }
   for (const lemma of candidateBases(surface)) {
     const kinds = inflectionKindsFor(lemma, surface);
     if (kinds.size === 0) continue;
@@ -183,6 +192,11 @@ export async function suggest(prefix, n = 8, { importer = defaultImporter } = {}
   const chunk = await loadChunk(letter, importer);
   if (!chunk) return [];
   const matches = Object.entries(chunk).filter(([word]) => word.startsWith(normalized));
+  for (const [alias, canonical] of HYPHEN_ALIASES) {
+    if (!alias.startsWith(normalized)) continue;
+    const entry = await entryFor(canonical, importer);
+    if (entry) matches.push([alias, entry]);
+  }
   const lemmaTargets = new Set(matches.map(([, entry]) => exchangeLemma(entry)).filter((lemma) => lemma?.startsWith(normalized)));
   return matches
     .sort(([leftWord, left], [rightWord, right]) => {

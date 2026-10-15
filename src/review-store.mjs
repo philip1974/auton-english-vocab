@@ -75,6 +75,10 @@ export class ReviewStore {
         onInvalidCard: () => { invalidCards += 1; },
         onInvalidItem: () => { invalidItems += 1; },
       });
+      if (invalidCards > 0 || invalidItems > 0) {
+        await this.#backupCorrupt('review', result.text, rootGeneration, generation);
+        if (this.#stale(generation, rootGeneration)) return;
+      }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
     } catch (error) {

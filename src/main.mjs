@@ -7,7 +7,7 @@ import { buildReadingTerms, createReadingDecorationSpec } from './decorations.mj
 import { DEFAULT_LEVEL_SETTINGS, detectEnglish } from './reading-level.mjs';
 import { ReadingRecommender, learningSuggestionsFromRecommendations } from './recommend.mjs';
 import { inferPos, lookup, suggest, dictionaryDefinition } from './dictionary.mjs';
-import { appendExample, buildNote, parseNote, slugFor } from './note-format.mjs';
+import { appendExample, buildNote, parseNote, slugFor, normalizeWord, normalizeSourceTitle } from './note-format.mjs';
 import { parseExampleLine } from './context-cloze.mjs';
 
 const BasePlugin = globalThis.autonKnowledge?.Plugin ?? class {};
@@ -27,11 +27,12 @@ function proposalError(error) {
 }
 
 function readingSource(source) {
-  if (source?.kind === 'web' && source.url) return { url: source.url, title: source.title };
-  if (source?.kind === 'document' && source.path) return { path: source.path, title: source.title };
+  const title = normalizeSourceTitle(source?.title);
+  if (source?.kind === 'web' && source.url) return { url: source.url, title };
+  if (source?.kind === 'document' && source.path) return { path: source.path, title };
   // Keep accepting pre-discriminated contexts from older hosts.
-  if (source?.path) return { path: source.path, title: source.title };
-  if (source?.url) return { url: source.url, title: source.title };
+  if (source?.path) return { path: source.path, title };
+  if (source?.url) return { url: source.url, title };
   return null;
 }
 
@@ -59,6 +60,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.submission = 0;
     this.reviewStore = null;
     this.index = null;
+    this.indexBinding = null;
     this.readingHandle = null;
     this.readingStatusHandle = null;
     this.learningSuggestionsHandle = null;
@@ -131,6 +133,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
     this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.index?.reset?.();
+    this.indexBinding = null;
     this.state.entries = [];
     this.state.invalid = [];
     this.state.review = emptyReview();
@@ -157,8 +160,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
     const generation = this.rootGeneration;
     const epoch = this.workspaceEpoch();
     const current = () => generation === this.rootGeneration && epoch === this.workspaceEpoch();
+    const indexCurrent = () => this.indexBinding?.generation === generation && this.indexBinding?.epoch === epoch;
     const assertCurrent = () => {
-      if (!current()) throw Object.assign(new Error('knowledge root changed'), { code: 'KNOWLEDGE_WRITE_ABORTED' });
+      if (!current() || !indexCurrent()) throw Object.assign(new Error('knowledge root or vocabulary index changed'), { code: 'KNOWLEDGE_WRITE_ABORTED' });
     };
     const guard = {
       assertCurrent,
@@ -177,7 +181,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
       assertCurrent();
       return await operation(guard);
     } catch (error) {
-      if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') return abortedValue;
+      if (error?.code === 'KNOWLEDGE_WRITE_ABORTED') {
+        this.refreshIndex().catch(() => undefined);
+        return abortedValue;
+      }
       throw error;
     }
   }
@@ -296,8 +303,9 @@ export default class EnglishVocabPlugin extends BasePlugin {
       if (generation !== this.rootGeneration) return;
     }
     try {
+      this.indexBinding = { generation, epoch: this.workspaceEpoch() };
       const result = await this.index.refresh();
-      if (generation !== this.rootGeneration) return;
+      if (generation !== this.rootGeneration || this.indexBinding.epoch !== this.workspaceEpoch()) return;
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
@@ -379,7 +387,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         if (!isCurrent()) return false;
         this.notice(this.t.logSaveFailed);
       }
-      await this.refreshReadingLevelSurfaces();
+      await this.refreshReadingLevelSurfacesBestEffort();
       if (!isCurrent()) return false;
       return mode === 'reading-card' ? { ok: true, undoId: id } : true;
     });
@@ -426,7 +434,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         this.readingUndoSnapshots.delete(word);
         this.updateReadingTerms();
         this.emitState();
-        await this.refreshReadingLevelSurfaces();
+        await this.refreshReadingLevelSurfacesBestEffort();
         if (!isCurrent()) return false;
         return true;
       } catch {
@@ -460,7 +468,7 @@ export default class EnglishVocabPlugin extends BasePlugin {
         this.state.log = this.reviewStore.effectiveLog();
         this.updateReadingTerms();
         this.emitState();
-        await this.refreshReadingLevelSurfaces();
+        await this.refreshReadingLevelSurfacesBestEffort();
         if (!isCurrent()) return false;
         return true;
       } catch {
@@ -618,6 +626,16 @@ export default class EnglishVocabPlugin extends BasePlugin {
     await this.refreshLatestReadingStatus();
   }
 
+  async refreshReadingLevelSurfacesBestEffort() {
+    try {
+      await this.refreshReadingLevelSurfaces();
+      return true;
+    } catch {
+      this.notice(this.t.recommendationFailed);
+      return false;
+    }
+  }
+
   async refreshLatestReadingStatus() {
     if (!this.latestReadingEvent) return false;
     return this.updateReadingStatus(this.latestReadingEvent);
@@ -668,11 +686,13 @@ export default class EnglishVocabPlugin extends BasePlugin {
     } catch {
       return false;
     }
+    if (this.workspaceEpoch() !== epoch) return false;
     if (doc?._tag === 'Err') return false;
     const detected = detectEnglish(doc.content);
     if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? '' } };
-    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries);
+    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries, epoch);
+    if (!item) return false;
     if ((this.app.workspace?.scope?.().epoch ?? 'legacy') !== epoch) return false;
     return this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
@@ -755,6 +775,10 @@ export default class EnglishVocabPlugin extends BasePlugin {
       if (document?._tag === 'Err') return { outcome: 'aborted', summary: proposalError(document.error) };
       const parsed = parseNote(document.content);
       if (!parsed.ok) return { outcome: 'aborted', summary: parsed.error };
+      if (normalizeWord(parsed.entry.word) !== normalizeWord(word)) {
+        await guard.wait(this.refreshIndex());
+        return { outcome: 'aborted', summary: this.t.knowledgeWriteAborted };
+      }
       const target = normalizedSentence(context.sentence);
       const duplicate = parsed.entry.examples.some((line) => normalizedSentence(parseExampleLine(line).sentence) === target);
       if (duplicate) return { outcome: 'exists', summary: this.t.exampleExists };

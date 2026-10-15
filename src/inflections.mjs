@@ -197,6 +197,9 @@ const IRREGULAR_VERBS = {
 };
 
 const IRREGULAR_NOUNS = {
+  analysis: ['analyses'],
+  axis: ['axes'],
+  crisis: ['crises'],
   child: ['children'], man: ['men'], woman: ['women'], person: ['people'], mouse: ['mice'],
   tooth: ['teeth'], foot: ['feet'], goose: ['geese'], ox: ['oxen'],
 };
@@ -261,7 +264,8 @@ function normalizePos(value) {
   const pos = normalize(value).replace(/\.$/u, '');
   if (['n', 'noun', '名词'].includes(pos)) return 'noun';
   if (['v', 'vt', 'vi', 'verb', '动词'].includes(pos)) return 'verb';
-  if (['a', 'adj', 'adjective', 'adv', 'adverb', '形容词', '副词'].includes(pos)) return 'comparative';
+  if (['a', 'adj', 'adjective', '形容词'].includes(pos)) return 'comparative';
+  if (['adv', 'adverb', '副词'].includes(pos)) return 'adverb';
   return '';
 }
 
@@ -326,7 +330,8 @@ function generatedForms(lemma, pos) {
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
     else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
-    else if (/(s|x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+    else if (lemma.endsWith('s')) return forms;
+    else if (/(x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
     return forms;
   }

@@ -2165,6 +2165,36 @@ describe('main plugin', () => {
     await runCase('tool');
   });
 
+  it('should abort an example write when the visible index belongs to an older workspace epoch', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    epoch = 'epoch-b';
+    app.knowledge.propose = vi.fn();
+    const result = await plugin.addExampleSentence('alpha', { sentence: 'I run daily.' });
+    expect(result).toMatchObject({ outcome: 'aborted' });
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
+  });
+
+  it('should abort and refresh when the target note frontmatter belongs to another word', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    app.knowledge.readDocument = vi.fn(async () => ({ content: buildNote({ word: 'sprint', definition: '冲刺' }), meta: { title: 'Sprint' } }));
+    app.knowledge.propose = vi.fn();
+    plugin.refreshIndex = vi.fn(async () => undefined);
+    const result = await plugin.addExampleSentence('alpha', { sentence: 'Alpha.' });
+    expect(result).toMatchObject({ outcome: 'aborted' });
+    expect(plugin.refreshIndex).toHaveBeenCalled();
+    expect(app.knowledge.propose).not.toHaveBeenCalled();
+  });
+
   it('should use the legacy root-binding epoch when workspace scope is unavailable', async () => {
     vi.resetModules();
     const module = await import('../src/main.mjs');
@@ -2304,6 +2334,39 @@ describe('main plugin', () => {
     app.knowledge.readDocument = async () => { throw new Error('boom'); };
     await expect(plugin.updateReadingStatus({ path: 'wiki/boom.md' })).resolves.toBe(false);
     await expect(plugin.updateReadingStatus({})).resolves.toBe(false);
+  });
+
+  it('should stop an old reading document before scoring when workspace epoch changes during read', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    let epoch = 'epoch-a';
+    app.workspace = { scope: () => ({ epoch }) };
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.readingStatusHandle = { set: vi.fn() };
+    let release;
+    app.knowledge.readDocument = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    plugin.recommender.scoreDocument = vi.fn();
+    const pending = plugin.updateReadingStatus({ path: 'wiki/read.md', contentHash: 'same' });
+    epoch = 'epoch-b';
+    release({ content: `${'the '.repeat(80)}run`, meta: { title: 'Old' }, revision: { contentHash: 'same' } });
+    await expect(pending).resolves.toBe(false);
+    expect(plugin.recommender.scoreDocument).not.toHaveBeenCalled();
+  });
+
+  it('should keep a saved rating successful when reading level refresh fails', async () => {
+    vi.resetModules();
+    const module = await import('../src/main.mjs');
+    const app = fullApp();
+    const plugin = new module.default(app, { id: 'dev.auton.english-vocab' });
+    await plugin.onload();
+    plugin.refreshReadingLevelSurfaces = vi.fn(async () => { throw new Error('level cache write failed'); });
+    const rated = await plugin.rateWord('alpha', 'Good', 'reading-card');
+    expect(rated).toMatchObject({ ok: true });
+    expect(plugin.state.review.cards.alpha.state).toBe('Learning');
+    await expect(plugin.undoReadingRating('alpha', rated.undoId)).resolves.toBe(true);
+    await expect(plugin.setFlag('alpha', 'ignored')).resolves.toBe(true);
   });
 
   it('should save level settings and report save failures from plugin data storage', async () => {

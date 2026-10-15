@@ -111,6 +111,13 @@ describe('tools', () => {
     await expect(add({ entries: [{ word: 'Beta', definition: '测试', source: { path: '../secret' } }] })).rejects.toThrow(/invalid source/);
   });
 
+  it('should preserve safe docs sources and normalize their title to one line', async () => {
+    const fake = app();
+    const add = makeVocabAdd({ app: fake, index: { get: () => null }, nextNumber: () => 9, notify: () => undefined });
+    await add({ entries: [{ word: 'run', definition: '跑', example: 'Run.', source: { path: 'docs/article.md', title: 'Article\n title' } }] });
+    expect(fake.proposals[0].changes[0].newContent).toContain('- Run. — [Article title](docs/article.md)');
+  });
+
   it('should produce distinct notices when proposal outcomes differ', async () => {
     for (const [outcome, pattern] of [
       ['applied', /was applied/],

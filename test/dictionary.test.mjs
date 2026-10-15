@@ -101,6 +101,19 @@ describe('dictionary', () => {
     await expect(suggest('don’', 8, { importer })).resolves.toMatchObject([{ word: "don't" }]);
   });
 
+  it('should use only controlled hyphen aliases for lookup and suggestions', async () => {
+    const local = {
+      c: { cooperate: { t: 'v. 合作' } },
+      e: { email: { t: 'n. 电子邮件' } },
+      r: { resign: { t: 'v. 辞职' } },
+    };
+    const localImporter = async (letter) => ({ default: local[letter] ?? {} });
+    await expect(lookup('co-operate', { importer: localImporter })).resolves.toMatchObject({ surface: 'co-operate', lemma: 'cooperate' });
+    await expect(lookup('e-mail', { importer: localImporter })).resolves.toMatchObject({ surface: 'e-mail', lemma: 'email' });
+    await expect(suggest('co-', 8, { importer: localImporter })).resolves.toMatchObject([{ word: 'co-operate' }]);
+    await expect(lookup('re-sign', { importer: localImporter })).resolves.toBeNull();
+  });
+
   it('should look up irregular and generated inflection candidates across chunks', async () => {
     await expect(lookup('went', { importer })).resolves.toMatchObject({ surface: 'went', lemma: 'go', entry: chunks.g.go });
     await expect(lookup('running', { importer })).resolves.toMatchObject({ surface: 'running', lemma: 'run', entry: chunks.r.run });

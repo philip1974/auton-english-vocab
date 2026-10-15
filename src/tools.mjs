@@ -1,8 +1,13 @@
-import { appendExample, assertEnglishWord, buildNote, parseNote, slugFor, normalizeWord } from './note-format.mjs';
+import { appendExample, assertEnglishWord, buildNote, parseNote, slugFor, normalizeWord, normalizeSourceTitle } from './note-format.mjs';
 import { familiarityFor } from './familiarity.mjs';
 import { uiText } from './ui-text.mjs';
 
 const MAX_ENTRIES = 20;
+const DOCUMENT_SOURCE_RE = /^(?:wiki|docs)\/[^\\\r\n]+$/u;
+
+function isSafeDocumentSourcePath(path) {
+  return DOCUMENT_SOURCE_RE.test(path) && !String(path).split('/').some((part) => part === '.' || part === '..' || part === '');
+}
 
 function unwrap(result) {
   if (result && result._tag === 'Err') throw new Error(String(result.error ?? 'knowledge error'));
@@ -28,7 +33,7 @@ function validateEntry(entry) {
   const source = entry.source;
   if (source) {
     if (source.path) {
-      if (!source.path.startsWith('wiki/')) throw new Error(`invalid source for ${word}`);
+      if (!isSafeDocumentSourcePath(source.path)) throw new Error(`invalid source for ${word}`);
     } else if (source.url) {
       if (/[\s<>]/.test(source.url)) throw new Error(`invalid source for ${word}`);
       let parsed;
@@ -38,7 +43,8 @@ function validateEntry(entry) {
       throw new Error(`invalid source for ${word}`);
     }
   }
-  return { ...entry, word, definition, example };
+  const normalizedSource = source ? { ...source, ...(source.title === undefined ? {} : { title: normalizeSourceTitle(source.title) }) } : source;
+  return { ...entry, word, definition, example, source: normalizedSource };
 }
 
 async function withSoftTimeout(promise, ms) {
@@ -50,14 +56,16 @@ async function withSoftTimeout(promise, ms) {
 }
 
 async function resolveSource(app, source, notes, guard) {
-  if (!source?.path || !source.path.startsWith('wiki/')) return source;
+  if (!source?.path || !isSafeDocumentSourcePath(source.path)) return source;
   const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap).catch(() => null), 3000));
   if (!doc) {
     notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
     return undefined;
   }
-  const rel = source.path.startsWith('wiki/vocab/') ? source.path.slice('wiki/vocab/'.length) : `../${source.path.slice('wiki/'.length)}`;
-  return { path: rel, title: doc.meta?.title || source.path };
+  const rel = source.path.startsWith('wiki/vocab/')
+    ? source.path.slice('wiki/vocab/'.length)
+    : source.path.startsWith('wiki/') ? `../${source.path.slice('wiki/'.length)}` : source.path;
+  return { path: rel, title: normalizeSourceTitle(source.title || doc.meta?.title || source.path) };
 }
 
 async function mapConcurrent(values, limit, mapper) {

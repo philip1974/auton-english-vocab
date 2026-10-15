@@ -20,7 +20,7 @@ describe('inflections', () => {
     expect(map.get('happiest')).toBe('happy');
   });
 
-  it('should generate comparative forms only when pos is adjective or adverb', () => {
+  it('should generate comparative forms only when pos is adjective and keep adverbs conservative', () => {
     const map = buildSurfaceMap([
       { word: 'teach', pos: 'verb' },
       { word: 'big', pos: 'AdJeCtIvE' },
@@ -30,8 +30,21 @@ describe('inflections', () => {
     expect(map.has('teacher')).toBe(false);
     expect(map.get('bigger')).toBe('big');
     expect(map.get('biggest')).toBe('big');
-    expect(map.get('quicker')).toBe('quick');
+    expect(map.has('quicker')).toBe(false);
     expect(map.has('happier')).toBe(false);
+  });
+
+  it('should generate tested is plurals without publishing mechanical fake forms', () => {
+    const map = buildSurfaceMap([
+      { word: 'axis', pos: 'noun' },
+      { word: 'analysis', pos: 'noun' },
+      { word: 'crisis', pos: 'noun' },
+      { word: 'quickly', pos: 'adverb' },
+    ]);
+    expect(map.get('axes')).toBe('axis');
+    expect(map.get('analyses')).toBe('analysis');
+    expect(map.get('crises')).toBe('crisis');
+    for (const fake of ['axises', 'analysises', 'crisises', 'quicklier', 'quickliest']) expect(map.has(fake)).toBe(false);
   });
 
   it('should include common irregular forms and map collected irregular forms back to their lemma', () => {

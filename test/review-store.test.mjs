@@ -189,6 +189,11 @@ describe('review store', () => {
     expect(store.review.cards.valid).toEqual(valid);
     expect(store.review.cards.broken).toBeUndefined();
     expect(notices.join('\n')).toMatch(/1/u);
+    const backup = Object.keys(app.files).find((name) => name.startsWith('review.corrupt-'));
+    expect(backup).toBeTruthy();
+    expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
+    await store.mutateReview({ type: 'setFlag', word: 'valid', flag: 'ignored' });
+    expect(JSON.parse(app.files[backup]).cards.broken.due).toBe('not-a-date');
   });
 
   it('should back up valid json when the review container schema is damaged', async () => {

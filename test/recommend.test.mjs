@@ -145,6 +145,28 @@ describe('reading recommendations', () => {
     expect(app.storage.writes.length).toBeLessThan(docs.length);
   });
 
+  it('should not flush a scored document when its captured workspace or cache epoch becomes stale', async () => {
+    const app = appFor([]);
+    const recommender = new ReadingRecommender(app, { table: ['the'] });
+    await recommender.reload();
+    let release;
+    recommender.cache.get = vi.fn(() => null);
+    recommender.cache.set = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    recommender.cache.flush = vi.fn();
+    const pending = recommender.scoreDocument(
+      { path: 'wiki/read.md', title: 'Old', revision: { contentHash: 'same' } },
+      { content: english('the'), meta: { title: 'Old' } },
+      { cards: {}, flags: {} },
+      [],
+      'e1',
+    );
+    app.workspace.value = 'e2';
+    recommender.cache.epoch = 'root-b';
+    release(true);
+    await expect(pending).resolves.toBeNull();
+    expect(recommender.cache.flush).not.toHaveBeenCalled();
+  });
+
   it('should localize recommendation band labels for non-Chinese locales', async () => {
     const app = appFor([{ path: 'wiki/good.md', title: 'Good', hash: 'h-good', content: `${english('the')} rareone raretwo rarethree` }]);
     const recommender = new ReadingRecommender(app, {

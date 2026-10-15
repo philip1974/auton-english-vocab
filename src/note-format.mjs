@@ -20,6 +20,10 @@ export function slugFor(word) {
   return normalized.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
+export function normalizeSourceTitle(value, maxLength = 160) {
+  return String(value ?? '').trim().replace(/\s+/gu, ' ').slice(0, maxLength);
+}
+
 function yamlString(value) {
   return JSON.stringify(String(value ?? ''));
 }
@@ -31,14 +35,15 @@ function today() {
 
 function sourceLink(source) {
   if (!source) return '';
+  const title = normalizeSourceTitle(source.title);
   if (source.url) {
-    if (!source.title) return `<${source.url}>`;
+    if (!title) return `<${source.url}>`;
     const url = String(source.url).replaceAll('(', '%28').replaceAll(')', '%29');
-    return `[${String(source.title).replace(/[\[\]]/g, '\\$&')}](${url})`;
+    return `[${title.replace(/[\[\]]/g, '\\$&')}](${url})`;
   }
   if (source.path) {
     const path = String(source.path).replaceAll('%', '%25').replaceAll(' ', '%20').replaceAll('(', '%28').replaceAll(')', '%29');
-    return `[${String(source.title || source.path).replace(/[\[\]]/g, '\\$&')}](${path})`;
+    return `[${(title || String(source.path)).replace(/[\[\]]/g, '\\$&')}](${path})`;
   }
   return '';
 }

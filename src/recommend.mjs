@@ -87,14 +87,18 @@ export class ReadingRecommender {
     };
   }
 
-  async scoreDocument(meta, doc, review, entries) {
+  async scoreDocument(meta, doc, review, entries, epoch = this.epoch) {
+    if (epoch !== this.scopeEpoch()) return null;
+    const cacheEpoch = this.cache.epoch;
     const hash = meta.revision?.contentHash ?? '';
     let cached = this.cache.get(meta.path, hash);
     if (!cached) {
       cached = buildLevelCacheEntry(doc.content, this.table);
       cached.title = titleFor(meta, doc, meta.path);
-      await this.cache.set(this.cache.epoch, meta.path, hash, cached);
+      const stored = await this.cache.set(cacheEpoch, meta.path, hash, cached);
+      if (!stored || cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
       await this.cache.flush(cacheShardNameForPath(meta.path));
+      if (cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
     }
     return this.scoreCached(meta, cached, review, entries);
   }

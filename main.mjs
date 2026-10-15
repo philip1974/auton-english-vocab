@@ -1236,6 +1236,10 @@ var ReviewStore = class {
           invalidItems += 1;
         }
       });
+      if (invalidCards > 0 || invalidItems > 0) {
+        await this.#backupCorrupt("review", result.text, rootGeneration, generation);
+        if (this.#stale(generation, rootGeneration)) return;
+      }
       if (invalidCards > 0) this.notify(this.t.invalidReviewCards(invalidCards));
       if (invalidItems > 0) this.notify(this.t.invalidReviewItems(invalidItems));
     } catch (error) {
@@ -1489,6 +1493,9 @@ function slugFor(word) {
   const normalized = assertEnglishWord(word);
   return normalized.replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
+function normalizeSourceTitle(value, maxLength = 160) {
+  return String(value ?? "").trim().replace(/\s+/gu, " ").slice(0, maxLength);
+}
 function yamlString(value) {
   return JSON.stringify(String(value ?? ""));
 }
@@ -1498,14 +1505,15 @@ function today() {
 }
 function sourceLink(source) {
   if (!source) return "";
+  const title = normalizeSourceTitle(source.title);
   if (source.url) {
-    if (!source.title) return `<${source.url}>`;
+    if (!title) return `<${source.url}>`;
     const url = String(source.url).replaceAll("(", "%28").replaceAll(")", "%29");
-    return `[${String(source.title).replace(/[\[\]]/g, "\\$&")}](${url})`;
+    return `[${title.replace(/[\[\]]/g, "\\$&")}](${url})`;
   }
   if (source.path) {
     const path = String(source.path).replaceAll("%", "%25").replaceAll(" ", "%20").replaceAll("(", "%28").replaceAll(")", "%29");
-    return `[${String(source.title || source.path).replace(/[\[\]]/g, "\\$&")}](${path})`;
+    return `[${(title || String(source.path)).replace(/[\[\]]/g, "\\$&")}](${path})`;
   }
   return "";
 }
@@ -2074,6 +2082,9 @@ var IRREGULAR_VERBS = {
   write: ["wrote", "written"]
 };
 var IRREGULAR_NOUNS = {
+  analysis: ["analyses"],
+  axis: ["axes"],
+  crisis: ["crises"],
   child: ["children"],
   man: ["men"],
   woman: ["women"],
@@ -2145,7 +2156,8 @@ function normalizePos(value) {
   const pos = normalize(value).replace(/\.$/u, "");
   if (["n", "noun", "名词"].includes(pos)) return "noun";
   if (["v", "vt", "vi", "verb", "动词"].includes(pos)) return "verb";
-  if (["a", "adj", "adjective", "adv", "adverb", "形容词", "副词"].includes(pos)) return "comparative";
+  if (["a", "adj", "adjective", "形容词"].includes(pos)) return "comparative";
+  if (["adv", "adverb", "副词"].includes(pos)) return "adverb";
   return "";
 }
 function partsOf(value) {
@@ -2209,7 +2221,8 @@ function generatedForms(lemma, pos) {
     else if (O_ES_NOUNS.has(lemma)) addCandidate(forms, `${lemma}es`);
     else if (endsConsonantY(lemma)) addCandidate(forms, `${lemma.slice(0, -1)}ies`);
     else if (/[^z]z$/u.test(lemma)) addCandidate(forms, `${lemma}zes`);
-    else if (/(s|x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
+    else if (lemma.endsWith("s")) return forms;
+    else if (/(x|zz|ch|sh)$/u.test(lemma)) addCandidate(forms, `${lemma}es`);
     else addCandidate(forms, `${lemma}s`);
     return forms;
   }
@@ -2443,6 +2456,10 @@ var IRREGULAR_BASES = /* @__PURE__ */ new Map([
   ["went", "go"],
   ["gone", "go"]
 ]);
+var HYPHEN_ALIASES = /* @__PURE__ */ new Map([
+  ["co-operate", "cooperate"],
+  ["e-mail", "email"]
+]);
 function firstLetter(word) {
   const letter = word[0];
   return LETTER_RE.test(letter) ? letter : null;
@@ -2600,6 +2617,11 @@ async function lookup(word, { importer = defaultImporter } = {}) {
     const inflection = kind ? { lemma, kind } : void 0;
     return { surface: displaySurface, lemma: surface, entry: direct, surfaceEntry: direct, ...inflection ? { inflection } : {} };
   }
+  const alias = HYPHEN_ALIASES.get(surface);
+  if (alias) {
+    const entry = await entryFor(alias, importer);
+    if (entry) return { surface: displaySurface, lemma: alias, entry, surfaceEntry: null };
+  }
   for (const lemma of candidateBases(surface)) {
     const kinds = inflectionKindsFor(lemma, surface);
     if (kinds.size === 0) continue;
@@ -2616,6 +2638,11 @@ async function suggest(prefix, n = 8, { importer = defaultImporter } = {}) {
   const chunk = await loadChunk(letter, importer);
   if (!chunk) return [];
   const matches = Object.entries(chunk).filter(([word]) => word.startsWith(normalized));
+  for (const [alias, canonical] of HYPHEN_ALIASES) {
+    if (!alias.startsWith(normalized)) continue;
+    const entry = await entryFor(canonical, importer);
+    if (entry) matches.push([alias, entry]);
+  }
   const lemmaTargets = new Set(matches.map(([, entry]) => exchangeLemma(entry)).filter((lemma) => lemma?.startsWith(normalized)));
   return matches.sort(([leftWord, left], [rightWord, right]) => {
     const leftLemma = exchangeLemma(left);
@@ -3272,6 +3299,10 @@ function appendSelectionRequest(app, context, notify, locale = currentLocale()) 
 
 // src/tools.mjs
 var MAX_ENTRIES = 20;
+var DOCUMENT_SOURCE_RE = /^(?:wiki|docs)\/[^\\\r\n]+$/u;
+function isSafeDocumentSourcePath(path) {
+  return DOCUMENT_SOURCE_RE.test(path) && !String(path).split("/").some((part) => part === "." || part === ".." || part === "");
+}
 function unwrap2(result) {
   if (result && result._tag === "Err") throw new Error(String(result.error ?? "knowledge error"));
   return result;
@@ -3298,7 +3329,7 @@ function validateEntry(entry) {
   const source = entry.source;
   if (source) {
     if (source.path) {
-      if (!source.path.startsWith("wiki/")) throw new Error(`invalid source for ${word}`);
+      if (!isSafeDocumentSourcePath(source.path)) throw new Error(`invalid source for ${word}`);
     } else if (source.url) {
       if (/[\s<>]/.test(source.url)) throw new Error(`invalid source for ${word}`);
       let parsed;
@@ -3312,7 +3343,8 @@ function validateEntry(entry) {
       throw new Error(`invalid source for ${word}`);
     }
   }
-  return { ...entry, word, definition, example };
+  const normalizedSource = source ? { ...source, ...source.title === void 0 ? {} : { title: normalizeSourceTitle(source.title) } } : source;
+  return { ...entry, word, definition, example, source: normalizedSource };
 }
 async function withSoftTimeout(promise, ms) {
   let timer;
@@ -3324,14 +3356,14 @@ async function withSoftTimeout(promise, ms) {
   return result;
 }
 async function resolveSource(app, source, notes, guard) {
-  if (!source?.path || !source.path.startsWith("wiki/")) return source;
+  if (!source?.path || !isSafeDocumentSourcePath(source.path)) return source;
   const doc = await guard.wait(withSoftTimeout(app.knowledge.readDocument({ path: source.path }).then(unwrap2).catch(() => null), 3e3));
   if (!doc) {
     notes.push(`Source ${source.path} was missing or timed out; the example was kept without a link.`);
     return void 0;
   }
-  const rel = source.path.startsWith("wiki/vocab/") ? source.path.slice("wiki/vocab/".length) : `../${source.path.slice("wiki/".length)}`;
-  return { path: rel, title: doc.meta?.title || source.path };
+  const rel = source.path.startsWith("wiki/vocab/") ? source.path.slice("wiki/vocab/".length) : source.path.startsWith("wiki/") ? `../${source.path.slice("wiki/".length)}` : source.path;
+  return { path: rel, title: normalizeSourceTitle(source.title || doc.meta?.title || source.path) };
 }
 async function mapConcurrent(values, limit, mapper) {
   const results = new Array(values.length);
@@ -34140,14 +34172,18 @@ var ReadingRecommender = class {
       counted: scored.counted
     };
   }
-  async scoreDocument(meta, doc, review, entries) {
+  async scoreDocument(meta, doc, review, entries, epoch = this.epoch) {
+    if (epoch !== this.scopeEpoch()) return null;
+    const cacheEpoch = this.cache.epoch;
     const hash = meta.revision?.contentHash ?? "";
     let cached = this.cache.get(meta.path, hash);
     if (!cached) {
       cached = buildLevelCacheEntry(doc.content, this.table);
       cached.title = titleFor(meta, doc, meta.path);
-      await this.cache.set(this.cache.epoch, meta.path, hash, cached);
+      const stored = await this.cache.set(cacheEpoch, meta.path, hash, cached);
+      if (!stored || cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
       await this.cache.flush(cacheShardNameForPath(meta.path));
+      if (cacheEpoch !== this.cache.epoch || epoch !== this.scopeEpoch()) return null;
     }
     return this.scoreCached(meta, cached, review, entries);
   }
@@ -34222,10 +34258,11 @@ function proposalError(error) {
   return String(error?.message ?? error?.code ?? error ?? "proposal failed");
 }
 function readingSource(source) {
-  if (source?.kind === "web" && source.url) return { url: source.url, title: source.title };
-  if (source?.kind === "document" && source.path) return { path: source.path, title: source.title };
-  if (source?.path) return { path: source.path, title: source.title };
-  if (source?.url) return { url: source.url, title: source.title };
+  const title = normalizeSourceTitle(source?.title);
+  if (source?.kind === "web" && source.url) return { url: source.url, title };
+  if (source?.kind === "document" && source.path) return { path: source.path, title };
+  if (source?.path) return { path: source.path, title };
+  if (source?.url) return { url: source.url, title };
   return null;
 }
 var EnglishVocabPlugin = class extends BasePlugin {
@@ -34252,6 +34289,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.submission = 0;
     this.reviewStore = null;
     this.index = null;
+    this.indexBinding = null;
     this.readingHandle = null;
     this.readingStatusHandle = null;
     this.learningSuggestionsHandle = null;
@@ -34318,6 +34356,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
     this.rootGeneration += 1;
     this.recommendationRequest += 1;
     this.index?.reset?.();
+    this.indexBinding = null;
     this.state.entries = [];
     this.state.invalid = [];
     this.state.review = emptyReview();
@@ -34345,8 +34384,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
     const generation = this.rootGeneration;
     const epoch = this.workspaceEpoch();
     const current = () => generation === this.rootGeneration && epoch === this.workspaceEpoch();
+    const indexCurrent = () => this.indexBinding?.generation === generation && this.indexBinding?.epoch === epoch;
     const assertCurrent = () => {
-      if (!current()) throw Object.assign(new Error("knowledge root changed"), { code: "KNOWLEDGE_WRITE_ABORTED" });
+      if (!current() || !indexCurrent()) throw Object.assign(new Error("knowledge root or vocabulary index changed"), { code: "KNOWLEDGE_WRITE_ABORTED" });
     };
     const guard = {
       assertCurrent,
@@ -34365,7 +34405,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
       assertCurrent();
       return await operation(guard);
     } catch (error) {
-      if (error?.code === "KNOWLEDGE_WRITE_ABORTED") return abortedValue;
+      if (error?.code === "KNOWLEDGE_WRITE_ABORTED") {
+        this.refreshIndex().catch(() => void 0);
+        return abortedValue;
+      }
       throw error;
     }
   }
@@ -34484,8 +34527,9 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (generation !== this.rootGeneration) return;
     }
     try {
+      this.indexBinding = { generation, epoch: this.workspaceEpoch() };
       const result = await this.index.refresh();
-      if (generation !== this.rootGeneration) return;
+      if (generation !== this.rootGeneration || this.indexBinding.epoch !== this.workspaceEpoch()) return;
       this.state.entries = result.entries;
       this.state.invalid = result.invalid;
       this.updateReadingTerms();
@@ -34563,7 +34607,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         if (!isCurrent()) return false;
         this.notice(this.t.logSaveFailed);
       }
-      await this.refreshReadingLevelSurfaces();
+      await this.refreshReadingLevelSurfacesBestEffort();
       if (!isCurrent()) return false;
       return mode === "reading-card" ? { ok: true, undoId: id } : true;
     });
@@ -34609,7 +34653,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.readingUndoSnapshots.delete(word);
         this.updateReadingTerms();
         this.emitState();
-        await this.refreshReadingLevelSurfaces();
+        await this.refreshReadingLevelSurfacesBestEffort();
         if (!isCurrent()) return false;
         return true;
       } catch {
@@ -34639,7 +34683,7 @@ var EnglishVocabPlugin = class extends BasePlugin {
         this.state.log = this.reviewStore.effectiveLog();
         this.updateReadingTerms();
         this.emitState();
-        await this.refreshReadingLevelSurfaces();
+        await this.refreshReadingLevelSurfacesBestEffort();
         if (!isCurrent()) return false;
         return true;
       } catch {
@@ -34781,6 +34825,15 @@ var EnglishVocabPlugin = class extends BasePlugin {
     await this.refreshRecommendations();
     await this.refreshLatestReadingStatus();
   }
+  async refreshReadingLevelSurfacesBestEffort() {
+    try {
+      await this.refreshReadingLevelSurfaces();
+      return true;
+    } catch {
+      this.notice(this.t.recommendationFailed);
+      return false;
+    }
+  }
   async refreshLatestReadingStatus() {
     if (!this.latestReadingEvent) return false;
     return this.updateReadingStatus(this.latestReadingEvent);
@@ -34829,11 +34882,13 @@ var EnglishVocabPlugin = class extends BasePlugin {
     } catch {
       return false;
     }
+    if (this.workspaceEpoch() !== epoch) return false;
     if (doc?._tag === "Err") return false;
     const detected = detectEnglish(doc.content);
     if (!detected.english) return this.readingStatusHandle.set(epoch, path, null);
     const meta = { path, title: doc.meta?.title, revision: { contentHash: event?.contentHash ?? doc.revision?.contentHash ?? "" } };
-    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries);
+    const item = await this.recommender.scoreDocument(meta, doc, this.state.review, this.state.entries, epoch);
+    if (!item) return false;
     if ((this.app.workspace?.scope?.().epoch ?? "legacy") !== epoch) return false;
     return this.readingStatusHandle.set(epoch, path, {
       text: this.t.readingStatus(item.rate, item.band),
@@ -34910,6 +34965,10 @@ var EnglishVocabPlugin = class extends BasePlugin {
       if (document2?._tag === "Err") return { outcome: "aborted", summary: proposalError(document2.error) };
       const parsed = parseNote(document2.content);
       if (!parsed.ok) return { outcome: "aborted", summary: parsed.error };
+      if (normalizeWord(parsed.entry.word) !== normalizeWord(word)) {
+        await guard.wait(this.refreshIndex());
+        return { outcome: "aborted", summary: this.t.knowledgeWriteAborted };
+      }
       const target = normalizedSentence2(context.sentence);
       const duplicate = parsed.entry.examples.some((line) => normalizedSentence2(parseExampleLine(line).sentence) === target);
       if (duplicate) return { outcome: "exists", summary: this.t.exampleExists };

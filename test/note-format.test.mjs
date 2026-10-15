@@ -159,4 +159,10 @@ describe('note format', () => {
     const note = buildNote({ word: 'space', definition: '空格', example: 'A\n  spaced\t example.', source: { path: '../sources/a.md', title: 'A [title]' } });
     expect(note).toContain('- A spaced example. — [A \\[title\\]](../sources/a.md)');
   });
+
+  it('should collapse source title newlines before writing one markdown example line', () => {
+    const note = buildNote({ word: 'run', definition: '跑', example: 'Run.', source: { path: 'docs/article.md', title: 'line1\n\tline2' } });
+    expect(note).toContain('- Run. — [line1 line2](docs/article.md)');
+    expect(parseNote(note)).toMatchObject({ ok: true, entry: { examples: ['Run. — [line1 line2](docs/article.md)'] } });
+  });
 });
